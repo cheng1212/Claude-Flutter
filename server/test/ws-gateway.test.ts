@@ -78,13 +78,15 @@ describe('ws gateway', () => {
     const s = createSession(db, { title: 'ws' });
     ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '你好' }));
     const e1 = await next();
-    expect(e1).toMatchObject({ kind: 'text', content: 'echo:你好', seq: 1 });
+    expect(e1).toMatchObject({ kind: 'text', role: 'user', content: '你好', seq: 1 });
     const e2 = await next();
-    expect(e2).toMatchObject({ kind: 'complete', exitCode: 0, seq: 2 });
+    expect(e2).toMatchObject({ kind: 'text', content: 'echo:你好', seq: 2 });
+    const e3 = await next();
+    expect(e3).toMatchObject({ kind: 'complete', exitCode: 0, seq: 3 });
     await new Promise((r) => setTimeout(r, 50)); // 给 finally 一拍,确认没有多余 complete
     expect(pending().filter((m) => m.kind === 'complete')).toHaveLength(0);
 
-    // 3) 重连补发
+    // 3) 重连补发(用户消息也在补发流里)
     const { ws: ws2, next: next2 } = await wsConnect(port);
     ws2.send(JSON.stringify({ type: 'auth', token: 't' }));
     await next2();
@@ -92,9 +94,45 @@ describe('ws gateway', () => {
     expect((await next2()).kind).toBe('subscribed');
     const replay = await next2();
     expect(replay.kind).toBe('replay');
-    expect(replay.events).toHaveLength(2);
+    expect(replay.events).toHaveLength(3);
+    expect(replay.events[0]).toMatchObject({ kind: 'text', role: 'user', content: '你好' });
     ws.close();
     ws2.close();
+    await app.close();
+  });
+
+  it('chat.send 持久化用户消息(text/role=user,meta 带完整事件)', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor: (sessionId: string) => ({
+        send: async (text: string) => {
+          registry.push(sessionId, { kind: 'text', role: 'assistant', content: `r:${text}` });
+          registry.finish(sessionId, 0, false);
+        },
+        answerPermission: () => {},
+        abort: async () => {},
+      }) as unknown as SessionRuntime,
+    });
+    const port = await listen(app);
+    const { ws, next } = await wsConnect(port);
+    ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await next();
+    const s = createSession(db, { title: 'usermsg' });
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '我的问题' }));
+    await next(); // user text
+    await next(); // assistant text
+    await next(); // complete
+
+    const rows = db.prepare(
+      'SELECT kind, role, content, meta FROM messages WHERE session_id=? ORDER BY seq',
+    ).all(s.id) as { kind: string; role: string | null; content: string; meta: string | null }[];
+    expect(rows[0]).toMatchObject({ kind: 'text', role: 'user', content: '我的问题' });
+    const meta = JSON.parse(rows[0].meta ?? '{}') as Record<string, unknown>;
+    expect(meta).toMatchObject({ kind: 'text', role: 'user', content: '我的问题', seq: 1 });
+    ws.close();
     await app.close();
   });
 
@@ -123,7 +161,8 @@ describe('ws gateway', () => {
     await next();
     const s = createSession(db, { title: 'guard' });
     ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'a' }));
-    expect((await next()).kind).toBe('text');
+    expect((await next()).kind).toBe('text'); // 用户消息
+    expect((await next()).kind).toBe('text'); // got:a
 
     // 运行中再发 → RUN_IN_PROGRESS
     ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'b' }));
@@ -160,13 +199,15 @@ describe('ws gateway', () => {
     const s = createSession(db, { title: 'reuse' });
 
     ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'one' }));
-    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:one', seq: 1 });
-    expect(await next()).toMatchObject({ kind: 'complete', seq: 2 });
+    expect(await next()).toMatchObject({ kind: 'text', role: 'user', seq: 1 });
+    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:one', seq: 2 });
+    expect(await next()).toMatchObject({ kind: 'complete', seq: 3 });
 
     // 第二轮:不应 RUN_IN_PROGRESS
     ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'two' }));
-    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:two', seq: 3 });
-    expect(await next()).toMatchObject({ kind: 'complete', seq: 4 });
+    expect(await next()).toMatchObject({ kind: 'text', role: 'user', seq: 4 });
+    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:two', seq: 5 });
+    expect(await next()).toMatchObject({ kind: 'complete', seq: 6 });
     ws.close();
     await app.close();
   });
@@ -202,13 +243,15 @@ describe('ws gateway', () => {
     await connB.next();
 
     connA.ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'hi' }));
+    expect(await connA.next()).toMatchObject({ kind: 'text', role: 'user', content: 'hi' });
     expect(await connA.next()).toMatchObject({ kind: 'text', content: 'r:hi' });
     expect(await connA.next()).toMatchObject({ kind: 'complete' });
-    expect(await connB.next()).toMatchObject({ kind: 'text', content: 'r:hi' }); // B 也在听
+    expect(await connB.next()).toMatchObject({ kind: 'text', role: 'user', content: 'hi' }); // B 也在听
+    expect(await connB.next()).toMatchObject({ kind: 'text', content: 'r:hi' });
     expect(await connB.next()).toMatchObject({ kind: 'complete' });
 
     const rows = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(s.id) as { c: number };
-    expect(rows.c).toBe(1); // 只持久化一份
+    expect(rows.c).toBe(2); // 用户消息 + 助手回复,只持久化一份
     connA.ws.close();
     connB.ws.close();
     await app.close();

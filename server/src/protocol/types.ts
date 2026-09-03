@@ -1,6 +1,6 @@
 export type ProtocolEvent =
   | { kind: 'session_created'; providerSessionId: string }
-  | { kind: 'text'; role: 'assistant'; content: string }
+  | { kind: 'text'; role: 'assistant' | 'user'; content: string }
   | { kind: 'stream_delta'; content: string }
   | { kind: 'thinking'; content: string }
   | { kind: 'thinking_delta'; content: string }

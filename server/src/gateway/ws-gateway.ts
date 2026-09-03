@@ -130,6 +130,9 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
         }
         if (!subs.has(sessionId)) { subs.add(sessionId); ensureSub(sessionId); } // 发送方至少自己收到
         deps.registry.begin(sessionId);
+        // 用户消息走 registry:拿到 seq、进环形缓冲(重连补发)、经 fanout 持久化。
+        // CLI 只回显 assistant 侧,不会重复。
+        deps.registry.push(sessionId, { kind: 'text', role: 'user', content });
         runtime.send(content).catch((error: unknown) => {
           deps.registry.push(sessionId, { kind: 'error', content: error instanceof Error ? error.message : String(error) });
         }).finally(() => {
