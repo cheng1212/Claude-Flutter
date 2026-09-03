@@ -109,7 +109,8 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
     case 'thinking_delta':
       return _with(s, lastSeq: nextSeq, running: true, streamingThinking: (s.streamingThinking ?? '') + (ev['content'] as String? ?? ''));
     case 'text':
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, TextRow(ev['content'] as String? ?? '')], clearStreamText: true);
+      final isUser = (ev['role'] as String? ?? 'assistant') == 'user';
+      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, isUser ? UserRow(ev['content'] as String? ?? '') : TextRow(ev['content'] as String? ?? '')], clearStreamText: !isUser);
     case 'thinking':
       return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ThinkingRow(ev['content'] as String? ?? '')], clearStreamThinking: true);
     case 'tool_use':

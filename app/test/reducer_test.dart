@@ -76,6 +76,14 @@ void main() {
     expect(s.running, isFalse);
   });
 
+  test('text 事件按 role 分流:user → UserRow,assistant → TextRow', () {
+    var s = const ChatState();
+    s = applyEvent(s, ev('text', seq: 1, extra: {'role': 'user', 'content': '我的问题'}));
+    expect((s.rows[0] as UserRow).content, '我的问题');
+    s = applyEvent(s, ev('text', seq: 2, extra: {'role': 'assistant', 'content': '回答'}));
+    expect((s.rows[1] as TextRow).content, '回答');
+  });
+
   test('subscribed.isProcessing 驱动 running;本地 user 行不入 seq 流', () {
     var s = const ChatState();
     s = applyEvent(s, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': true, 'lastSeq': 9}));
