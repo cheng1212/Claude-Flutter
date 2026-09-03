@@ -81,8 +81,8 @@ describe('ws gateway', () => {
     expect(e1).toMatchObject({ kind: 'text', content: 'echo:你好', seq: 1 });
     const e2 = await next();
     expect(e2).toMatchObject({ kind: 'complete', exitCode: 0, seq: 2 });
-    await waitFor(() => true); // 给 finally 一拍,确认没有多余 complete
-    expect(pending().filter((m) => m.kind === 'complete')).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 50)); // 给 finally 一拍,确认没有多余 complete
+    expect(pending().filter((m) => m.kind === 'complete')).toHaveLength(0);
 
     // 3) 重连补发
     const { ws: ws2, next: next2 } = await wsConnect(port);
