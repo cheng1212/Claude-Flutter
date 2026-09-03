@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { RunRegistry } from '../src/runs/run-registry.js';
 
 describe('RunRegistry', () => {
-  it('seq 按会话单调递增,跨 run 不清零', () => {
+  it('seq 按会话单调递增,跨 run 不清零(finish 的 complete 也占 seq)', () => {
     const reg = new RunRegistry();
     reg.begin('s1');
     expect(reg.push('s1', { kind: 'text', role: 'assistant', content: 'a' }).seq).toBe(1);
-    reg.finish('s1', 0, false);
+    const done = reg.finish('s1', 0, false);
+    expect(done.seq).toBe(2);
+    expect(done).toMatchObject({ kind: 'complete', exitCode: 0, aborted: false });
     reg.begin('s1');
-    expect(reg.push('s1', { kind: 'text', role: 'assistant', content: 'b' }).seq).toBe(2);
+    expect(reg.push('s1', { kind: 'text', role: 'assistant', content: 'b' }).seq).toBe(3);
   });
   it('replay(afterSeq) 只回缺的;live 订阅收新事件,退订即停', () => {
     const reg = new RunRegistry();
