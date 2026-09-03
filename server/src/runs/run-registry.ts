@@ -54,6 +54,11 @@ export class RunRegistry {
     return this.seq.get(sessionId) ?? 0;
   }
 
+  /** 只清 running 不发事件:runtime 已自己发过 complete 时用。 */
+  clearRunning(sessionId: string): void {
+    this.running.delete(sessionId);
+  }
+
   lastEvent(sessionId: string): OutboundEvent | null {
     const buf = this.buffer.get(sessionId);
     return buf && buf.length ? buf[buf.length - 1] : null;

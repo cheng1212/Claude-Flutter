@@ -138,6 +138,39 @@ describe('ws gateway', () => {
     await app.close();
   });
 
+  it('runtime 自发 complete 后 running 被清,同一会话可继续下一轮', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor: (sessionId: string) => ({
+        send: async (text: string) => {
+          registry.push(sessionId, { kind: 'text', role: 'assistant', content: `echo:${text}` });
+          registry.finish(sessionId, 0, false); // runtime 自己发 complete
+        },
+        answerPermission: () => {},
+        abort: async () => {},
+      }) as unknown as SessionRuntime,
+    });
+    const port = await listen(app);
+    const { ws, next } = await wsConnect(port);
+    ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await next();
+    const s = createSession(db, { title: 'reuse' });
+
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'one' }));
+    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:one', seq: 1 });
+    expect(await next()).toMatchObject({ kind: 'complete', seq: 2 });
+
+    // 第二轮:不应 RUN_IN_PROGRESS
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'two' }));
+    expect(await next()).toMatchObject({ kind: 'text', content: 'echo:two', seq: 3 });
+    expect(await next()).toMatchObject({ kind: 'complete', seq: 4 });
+    ws.close();
+    await app.close();
+  });
+
   it('双连接订阅同一会话:消息只持久化一份,两边都收到', async () => {
     const db = openDb(':memory:');
     const app = await buildApp({ token: 't' });

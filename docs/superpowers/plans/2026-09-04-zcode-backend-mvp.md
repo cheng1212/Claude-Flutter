@@ -1,23 +1,23 @@
-# zCode 后端 MVP 实施计划
+﻿# zCode åŽç«¯ MVP å®žæ–½è®¡åˆ’
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 一个 Node 后端,通过 @anthropic-ai/claude-agent-sdk 驱动真 claude CLI,对手机暴露 REST + WS(流式/审批/补发)。
+**Goal:** ä¸€ä¸ª Node åŽç«¯,é€šè¿‡ @anthropic-ai/claude-agent-sdk é©±åŠ¨çœŸ claude CLI,å¯¹æ‰‹æœºæš´éœ² REST + WS(æµå¼/å®¡æ‰¹/è¡¥å‘)ã€‚
 
-**Architecture:** Fastify(HTTP)+ ws(同一端口 5190);SDK 包在自有 SessionRuntime 后面;每会话一个运行时;RunRegistry 做 seq 缓冲与补发;SQLite 持久化;模型路由只读复用 `~/litellm/claude-routes.json`。
+**Architecture:** Fastify(HTTP)+ ws(åŒä¸€ç«¯å£ 5190);SDK åŒ…åœ¨è‡ªæœ‰ SessionRuntime åŽé¢;æ¯ä¼šè¯ä¸€ä¸ªè¿è¡Œæ—¶;RunRegistry åš seq ç¼“å†²ä¸Žè¡¥å‘;SQLite æŒä¹…åŒ–;æ¨¡åž‹è·¯ç”±åªè¯»å¤ç”¨ `~/litellm/claude-routes.json`ã€‚
 
 **Tech Stack:** Node 20+ / TypeScript ESM / tsx / vitest / fastify@5 / ws@8 / better-sqlite3 / @anthropic-ai/claude-agent-sdk@^0.3.165
 
-**工作目录:** `D:\cheng\zcode\server`(下文相对路径均基于此)
+**å·¥ä½œç›®å½•:** `D:\cheng\zcode\server`(ä¸‹æ–‡ç›¸å¯¹è·¯å¾„å‡åŸºäºŽæ­¤)
 
 ---
 
-### Task 1: 脚手架 + 健康检查(TDD 起步)
+### Task 1: è„šæ‰‹æž¶ + å¥åº·æ£€æŸ¥(TDD èµ·æ­¥)
 
 **Files:**
 - Create: `package.json`, `tsconfig.json`, `vitest.config.ts`, `src/http.ts`, `test/http.test.ts`
 
-- [ ] **Step 1: 写 package.json / tsconfig / vitest 配置**
+- [x] **Step 1: å†™ package.json / tsconfig / vitest é…ç½®**
 
 `package.json`:
 ```json
@@ -70,13 +70,13 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({ test: { include: ['test/**/*.test.ts'] } });
 ```
 
-- [ ] **Step 2: 写失败测试** — `test/http.test.ts`
+- [x] **Step 2: å†™å¤±è´¥æµ‹è¯•** â€” `test/http.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/http.js';
 
 describe('health', () => {
-  it('GET /api/health 返回 ok(无需鉴权)', async () => {
+  it('GET /api/health è¿”å›ž ok(æ— éœ€é‰´æƒ)', async () => {
     const app = await buildApp({ token: 't' });
     const res = await app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
@@ -84,7 +84,7 @@ describe('health', () => {
     await app.close();
   });
 
-  it('其余 /api 需要 Bearer token', async () => {
+  it('å…¶ä½™ /api éœ€è¦ Bearer token', async () => {
     const app = await buildApp({ token: 't' });
     const no = await app.inject({ method: 'GET', url: '/api/sessions' });
     expect(no.statusCode).toBe(401);
@@ -97,8 +97,8 @@ describe('health', () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败** — `npm run test` → FAIL (src/http.js 不存在)
-- [ ] **Step 4: 最小实现** — `src/http.ts`
+- [x] **Step 3: è·‘æµ‹è¯•ç¡®è®¤å¤±è´¥** â€” `npm run test` â†’ FAIL (src/http.js ä¸å­˜åœ¨)
+- [x] **Step 4: æœ€å°å®žçŽ°** â€” `src/http.ts`
 ```ts
 import type { FastifyInstance } from 'fastify';
 import fastify from 'fastify';
@@ -119,15 +119,15 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   return app;
 }
 ```
-- [ ] **Step 5: `npm run test` → PASS;`npx tsc --noEmit` 干净**
-- [ ] **Step 6: Commit** `git add -A && git commit -m "feat(server): scaffold + health + bearer auth"`
+- [x] **Step 5: `npm run test` â†’ PASS;`npx tsc --noEmit` å¹²å‡€**
+- [x] **Step 6: Commit** `git add -A && git commit -m "feat(server): scaffold + health + bearer auth"`
 
-### Task 2: 配置加载(首次生成 token)
+### Task 2: é…ç½®åŠ è½½(é¦–æ¬¡ç”Ÿæˆ token)
 
 **Files:**
 - Create: `src/config.ts`, `test/config.test.ts`
 
-- [ ] **Step 1: 失败测试** — `test/config.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/config.test.ts`
 ```ts
 import { fs as memfs } from './helpers.js';
 import { describe, expect, it } from 'vitest';
@@ -137,7 +137,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 describe('config', () => {
-  it('首次运行生成 token 并写盘;第二次读取同一个', () => {
+  it('é¦–æ¬¡è¿è¡Œç”Ÿæˆ token å¹¶å†™ç›˜;ç¬¬äºŒæ¬¡è¯»å–åŒä¸€ä¸ª', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-cfg-'));
     const a = loadOrCreateConfig(dir);
     expect(a.token).toMatch(/^[0-9a-f-]{36}$/);
@@ -146,7 +146,7 @@ describe('config', () => {
     expect(b.port).toBe(5190);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  it('环境变量 ZCODE_TOKEN 覆盖', () => {
+  it('çŽ¯å¢ƒå˜é‡ ZCODE_TOKEN è¦†ç›–', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-cfg-'));
     process.env.ZCODE_TOKEN = 'x';
     const c = loadOrCreateConfig(dir);
@@ -156,8 +156,8 @@ describe('config', () => {
   });
 });
 ```
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — `src/config.ts`
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” `src/config.ts`
 ```ts
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -197,20 +197,20 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   };
 }
 ```
-- [ ] **Step 4: `npm run test` → PASS;Commit** `feat(server): config loader`
+- [x] **Step 4: `npm run test` â†’ PASS;Commit** `feat(server): config loader`
 
-### Task 3: SQLite 三表 + repo
+### Task 3: SQLite ä¸‰è¡¨ + repo
 
 **Files:**
 - Create: `src/db.ts`, `test/db.test.ts`
 
-- [ ] **Step 1: 失败测试** — `test/db.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/db.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { openDb, createSession, getSession, listSessions, updateSession, deleteSession, appendMessage, listMessages, createRun, finishRun } from '../src/db.js';
 
 describe('db', () => {
-  it('会话 CRUD + 置顶排序', () => {
+  it('ä¼šè¯ CRUD + ç½®é¡¶æŽ’åº', () => {
     const db = openDb(':memory:');
     const a = createSession(db, { title: 'a' });
     const b = createSession(db, { title: 'b' });
@@ -222,18 +222,18 @@ describe('db', () => {
     deleteSession(db, a.id);
     expect(listSessions(db).length).toBe(1);
   });
-  it('消息 seq 按会话递增;历史分页', () => {
+  it('æ¶ˆæ¯ seq æŒ‰ä¼šè¯é€’å¢ž;åŽ†å²åˆ†é¡µ', () => {
     const db = openDb(':memory:');
     const s = createSession(db, { title: 'x' });
     for (let i = 0; i < 25; i++) appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: `m${i}` });
     const page = listMessages(db, s.id, { limit: 10, offset: 0 });
     expect(page.total).toBe(25);
     expect(page.messages.length).toBe(10);
-    expect(page.messages[0].seq).toBe(25); // 最新在前
+    expect(page.messages[0].seq).toBe(25); // æœ€æ–°åœ¨å‰
     const tail = listMessages(db, s.id, { limit: 10, offset: 20 });
     expect(tail.messages[0].seq).toBe(5);
   });
-  it('run 记录成本与用量', () => {
+  it('run è®°å½•æˆæœ¬ä¸Žç”¨é‡', () => {
     const db = openDb(':memory:');
     const s = createSession(db, { title: 'r' });
     const run = createRun(db, s.id, 'glm-5.3-flash');
@@ -244,8 +244,8 @@ describe('db', () => {
   });
 });
 ```
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — `src/db.ts`
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” `src/db.ts`
 ```ts
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
@@ -282,7 +282,7 @@ export function createSession(db: Db, input: { title?: string; cwd?: string; mod
   const id = randomUUID();
   const ts = now();
   db.prepare(`INSERT INTO sessions(id,title,cwd,model,created_at,updated_at) VALUES(?,?,?,?,?,?)`)
-    .run(id, input.title?.trim() || '新会话', input.cwd ?? null, input.model ?? null, ts, ts);
+    .run(id, input.title?.trim() || 'æ–°ä¼šè¯', input.cwd ?? null, input.model ?? null, ts, ts);
   return getSession(db, id)!;
 }
 export function getSession(db: Db, id: string): SessionRow | undefined {
@@ -348,14 +348,14 @@ export function finishRun(db: Db, runId: string, out: { status: string; totalCos
     .run(out.status, out.totalCostUsd ?? null, out.usage ? JSON.stringify(out.usage) : null, now(), runId);
 }
 ```
-- [ ] **Step 4: `npm run test` → PASS;Commit** `feat(server): sqlite schema + repo`
+- [x] **Step 4: `npm run test` â†’ PASS;Commit** `feat(server): sqlite schema + repo`
 
-### Task 4: 模型路由(读 claude-routes.json)
+### Task 4: æ¨¡åž‹è·¯ç”±(è¯» claude-routes.json)
 
 **Files:**
 - Create: `src/routes.ts`, `test/routes.test.ts`
 
-- [ ] **Step 1: 失败测试** — `test/routes.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/routes.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { loadRoutes, resolveModel, listModels } from '../src/routes.js';
@@ -368,26 +368,26 @@ const fixture = {
 };
 
 describe('routes', () => {
-  it('显式路由 → settings + env', () => {
+  it('æ˜¾å¼è·¯ç”± â†’ settings + env', () => {
     const r = resolveModel(fixture as never, 'glm-5.3-flash');
     expect(r?.settings?.env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
     expect(r?.upstreamModel).toBe('glm-5.3-flash');
   });
-  it('default / 未知模型 → 无路由(CLI 用自己的端点)', () => {
+  it('default / æœªçŸ¥æ¨¡åž‹ â†’ æ— è·¯ç”±(CLI ç”¨è‡ªå·±çš„ç«¯ç‚¹)', () => {
     expect(resolveModel(fixture as never, 'default')).toBeNull();
     expect(resolveModel(fixture as never, undefined)).toBeNull();
   });
-  it('listModels = default + 显式 keys(不含 defaultRoute 隐式)', () => {
+  it('listModels = default + æ˜¾å¼ keys(ä¸å« defaultRoute éšå¼)', () => {
     expect(listModels(fixture as never)).toEqual(['default', 'glm-5.3-flash']);
   });
-  it('文件缺失/坏 JSON → 空路由不崩', () => {
+  it('æ–‡ä»¶ç¼ºå¤±/å JSON â†’ ç©ºè·¯ç”±ä¸å´©', () => {
     expect(loadRoutes('Z:/nope/nope.json')).toBeNull();
     expect(listModels(null)).toEqual(['default']);
   });
 });
 ```
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — `src/routes.ts`
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” `src/routes.ts`
 ```ts
 import fs from 'node:fs';
 
@@ -399,8 +399,8 @@ export function loadRoutes(path: string): RouteConfig | null {
   try { return JSON.parse(fs.readFileSync(path, 'utf8')) as RouteConfig; } catch { return null; }
 }
 
-// 语义与 cloudcli 一致:只有显式列出的自定义模型才注入路由;
-// default/未列出 → null,CLI 用自己配置的端点,防止 defaultRoute 劫持官方模型。
+// è¯­ä¹‰ä¸Ž cloudcli ä¸€è‡´:åªæœ‰æ˜¾å¼åˆ—å‡ºçš„è‡ªå®šä¹‰æ¨¡åž‹æ‰æ³¨å…¥è·¯ç”±;
+// default/æœªåˆ—å‡º â†’ null,CLI ç”¨è‡ªå·±é…ç½®çš„ç«¯ç‚¹,é˜²æ­¢ defaultRoute åŠ«æŒå®˜æ–¹æ¨¡åž‹ã€‚
 export function resolveModel(config: RouteConfig | null, modelId: string | undefined): ResolvedModel | null {
   if (!modelId || modelId === 'default') return null;
   const entry = config?.routes?.[modelId];
@@ -419,14 +419,14 @@ export function listModels(config: RouteConfig | null): string[] {
   return ['default', ...Object.keys(config?.routes ?? {})];
 }
 ```
-- [ ] **Step 4: `npm run test` → PASS;Commit** `feat(server): model routes loader`
+- [x] **Step 4: `npm run test` â†’ PASS;Commit** `feat(server): model routes loader`
 
-### Task 5: 协议类型 + SDK 消息转换(纯函数,TDD 主战场)
+### Task 5: åè®®ç±»åž‹ + SDK æ¶ˆæ¯è½¬æ¢(çº¯å‡½æ•°,TDD ä¸»æˆ˜åœº)
 
 **Files:**
 - Create: `src/protocol/types.ts`, `src/protocol/transform.ts`, `test/transform.test.ts`
 
-- [ ] **Step 1: 类型** — `src/protocol/types.ts`
+- [x] **Step 1: ç±»åž‹** â€” `src/protocol/types.ts`
 ```ts
 export type ProtocolEvent =
   | { kind: 'session_created'; providerSessionId: string }
@@ -442,7 +442,7 @@ export type ProtocolEvent =
   | { kind: 'complete'; exitCode: number; aborted: boolean }
   | { kind: 'error'; content: string };
 
-/** 后台保活判定:这些工具会把工作留到 result 之后。 */
+/** åŽå°ä¿æ´»åˆ¤å®š:è¿™äº›å·¥å…·ä¼šæŠŠå·¥ä½œç•™åˆ° result ä¹‹åŽã€‚ */
 export const DEFERRED_WORK_TOOLS = new Set(['Monitor', 'ScheduleWakeup', 'CronCreate', 'TaskCreate']);
 export function startsBackgroundWork(events: ProtocolEvent[]): boolean {
   return events.some((e) => {
@@ -452,41 +452,41 @@ export function startsBackgroundWork(events: ProtocolEvent[]): boolean {
   });
 }
 ```
-- [ ] **Step 2: 失败测试** — `test/transform.test.ts`
+- [x] **Step 2: å¤±è´¥æµ‹è¯•** â€” `test/transform.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { transformMessage } from '../src/protocol/transform.js';
 
 describe('transformMessage', () => {
-  it('assistant 三种 block → text/thinking/tool_use', () => {
+  it('assistant ä¸‰ç§ block â†’ text/thinking/tool_use', () => {
     const out = transformMessage({
       type: 'assistant', session_id: 's1',
       message: { role: 'assistant', content: [
-        { type: 'thinking', thinking: '想一下' },
-        { type: 'text', text: '你好' },
+        { type: 'thinking', thinking: 'æƒ³ä¸€ä¸‹' },
+        { type: 'text', text: 'ä½ å¥½' },
         { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
       ] },
     });
     expect(out).toEqual([
-      { kind: 'thinking', content: '想一下' },
-      { kind: 'text', role: 'assistant', content: '你好' },
+      { kind: 'thinking', content: 'æƒ³ä¸€ä¸‹' },
+      { kind: 'text', role: 'assistant', content: 'ä½ å¥½' },
       { kind: 'tool_use', toolId: 't1', toolName: 'Read', toolInput: { file_path: 'a.ts' } },
     ]);
   });
-  it('user tool_result → tool_result(is_error 透传)', () => {
+  it('user tool_result â†’ tool_result(is_error é€ä¼ )', () => {
     const out = transformMessage({
       type: 'user', session_id: 's1',
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file body', is_error: true }] },
     });
     expect(out).toEqual([{ kind: 'tool_result', toolId: 't1', content: 'file body', isError: true }]);
   });
-  it('stream_event 文本/思考增量', () => {
-    const text = transformMessage({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '早' } } });
-    const think = transformMessage({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '嗯' } } });
-    expect(text).toEqual([{ kind: 'stream_delta', content: '早' }]);
-    expect(think).toEqual([{ kind: 'thinking_delta', content: '嗯' }]);
+  it('stream_event æ–‡æœ¬/æ€è€ƒå¢žé‡', () => {
+    const text = transformMessage({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'æ—©' } } });
+    const think = transformMessage({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'å—¯' } } });
+    expect(text).toEqual([{ kind: 'stream_delta', content: 'æ—©' }]);
+    expect(think).toEqual([{ kind: 'thinking_delta', content: 'å—¯' }]);
   });
-  it('result success → usage + complete(0)', () => {
+  it('result success â†’ usage + complete(0)', () => {
     const out = transformMessage({
       type: 'result', subtype: 'success', session_id: 's', result: 'done',
       total_cost_usd: 0.05, duration_ms: 1234,
@@ -497,25 +497,25 @@ describe('transformMessage', () => {
       { kind: 'complete', exitCode: 0, aborted: false },
     ]);
   });
-  it('result error_max_turns → error + complete(1)', () => {
+  it('result error_max_turns â†’ error + complete(1)', () => {
     const out = transformMessage({ type: 'result', subtype: 'error_max_turns', session_id: 's', errors: ['too many turns'] });
     expect(out[0]).toEqual({ kind: 'error', content: 'too many turns' });
     expect(out[1]).toEqual({ kind: 'complete', exitCode: 1, aborted: false });
   });
-  it('init/未知 → 空', () => {
+  it('init/æœªçŸ¥ â†’ ç©º', () => {
     expect(transformMessage({ type: 'system', subtype: 'init', session_id: 's' })).toEqual([]);
     expect(transformMessage({ type: 'keep_alive' } as never)).toEqual([]);
   });
 });
 ```
-- [ ] **Step 3: 跑 → FAIL**
-- [ ] **Step 4: 实现** — `src/protocol/transform.ts`
+- [x] **Step 3: è·‘ â†’ FAIL**
+- [x] **Step 4: å®žçŽ°** â€” `src/protocol/transform.ts`
 ```ts
 import type { ProtocolEvent } from './types.js';
 
 type AnyRecord = Record<string, unknown>;
 
-// SDK 消息 → 内部事件的唯一映射点。纯函数,便于对拍 SDK 升级。
+// SDK æ¶ˆæ¯ â†’ å†…éƒ¨äº‹ä»¶çš„å”¯ä¸€æ˜ å°„ç‚¹ã€‚çº¯å‡½æ•°,ä¾¿äºŽå¯¹æ‹ SDK å‡çº§ã€‚
 export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
   const type = msg.type as string;
   if (type === 'assistant') {
@@ -577,20 +577,20 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
   return [];
 }
 ```
-- [ ] **Step 5: `npm run test` → PASS;Commit** `feat(server): protocol events + sdk transform`
+- [x] **Step 5: `npm run test` â†’ PASS;Commit** `feat(server): protocol events + sdk transform`
 
-### Task 6: RunRegistry(seq 单调、环形缓冲、补发、订阅)
+### Task 6: RunRegistry(seq å•è°ƒã€çŽ¯å½¢ç¼“å†²ã€è¡¥å‘ã€è®¢é˜…)
 
 **Files:**
 - Create: `src/runs/run-registry.ts`, `test/run-registry.test.ts`
 
-- [ ] **Step 1: 失败测试** — `test/run-registry.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/run-registry.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { RunRegistry } from '../src/runs/run-registry.js';
 
 describe('RunRegistry', () => {
-  it('seq 按会话单调递增,跨 run 不清零', () => {
+  it('seq æŒ‰ä¼šè¯å•è°ƒé€’å¢ž,è·¨ run ä¸æ¸…é›¶', () => {
     const reg = new RunRegistry();
     reg.begin('s1');
     expect(reg.push('s1', { kind: 'text', role: 'assistant', content: 'a' }).seq).toBe(1);
@@ -598,7 +598,7 @@ describe('RunRegistry', () => {
     reg.begin('s1');
     expect(reg.push('s1', { kind: 'text', role: 'assistant', content: 'b' }).seq).toBe(2);
   });
-  it('replay(afterSeq) 只回缺的;live 订阅收到新事件', () => {
+  it('replay(afterSeq) åªå›žç¼ºçš„;live è®¢é˜…æ”¶åˆ°æ–°äº‹ä»¶', () => {
     const reg = new RunRegistry();
     reg.begin('s');
     reg.push('s', { kind: 'text', role: 'assistant', content: '1' });
@@ -609,18 +609,18 @@ describe('RunRegistry', () => {
     expect(seen).toEqual(['3']);
     off();
     reg.push('s', { kind: 'text', role: 'assistant', content: '4' });
-    expect(seen).toEqual(['3']); // 退订后不再收
+    expect(seen).toEqual(['3']); // é€€è®¢åŽä¸å†æ”¶
     expect(reg.replay('s', 1).map((e) => (e as { content: string }).content)).toEqual(['2', '3', '4']);
     expect(reg.lastSeq('s')).toBe(4);
   });
-  it('缓冲封顶 1000,重放不越界', () => {
+  it('ç¼“å†²å°é¡¶ 1000,é‡æ”¾ä¸è¶Šç•Œ', () => {
     const reg = new RunRegistry();
     reg.begin('s');
     for (let i = 0; i < 1100; i++) reg.push('s', { kind: 'stream_delta', content: 'x' });
     expect(reg.replay('s', 0).length).toBe(1000);
     expect(reg.lastSeq('s')).toBe(1100);
   });
-  it('isRunning:begin→true,finish→false', () => {
+  it('isRunning:beginâ†’true,finishâ†’false', () => {
     const reg = new RunRegistry();
     reg.begin('s');
     expect(reg.isRunning('s')).toBe(true);
@@ -629,8 +629,8 @@ describe('RunRegistry', () => {
   });
 });
 ```
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — `src/runs/run-registry.ts`
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” `src/runs/run-registry.ts`
 ```ts
 import type { ProtocolEvent } from '../protocol/types.js';
 
@@ -679,20 +679,20 @@ export class RunRegistry {
   lastSeq(sessionId: string): number { return this.seq.get(sessionId) ?? 0; }
 }
 ```
-- [ ] **Step 4: `npm run test` → PASS;Commit** `feat(server): run registry with seq replay`
+- [x] **Step 4: `npm run test` â†’ PASS;Commit** `feat(server): run registry with seq replay`
 
-### Task 7: SessionRuntime(SDK 包装:审批桥、后台保活、中断)
+### Task 7: SessionRuntime(SDK åŒ…è£…:å®¡æ‰¹æ¡¥ã€åŽå°ä¿æ´»ã€ä¸­æ–­)
 
 **Files:**
 - Create: `src/protocol/sdk-client.ts`, `src/protocol/cli-path.ts`, `test/sdk-client.test.ts`
 
-- [ ] **Step 1: cli-path(Windows 解析,参考 cloudcli 思路重写)** — `src/protocol/cli-path.ts`
+- [x] **Step 1: cli-path(Windows è§£æž,å‚è€ƒ cloudcli æ€è·¯é‡å†™)** â€” `src/protocol/cli-path.ts`
 ```ts
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// raw spawn 不跟 .cmd wrapper:把 "claude" 解析成真 exe。
+// raw spawn ä¸è·Ÿ .cmd wrapper:æŠŠ "claude" è§£æžæˆçœŸ exeã€‚
 export function resolveClaudeExecutable(configured?: string): string {
   const value = (configured ?? process.env.CLAUDE_CLI_PATH ?? 'claude').trim().replace(/^["']|["']$/g, '');
   if (process.platform !== 'win32') return value;
@@ -702,7 +702,7 @@ export function resolveClaudeExecutable(configured?: string): string {
     const candidates = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const exe = candidates.find((c) => c.toLowerCase().endsWith('.exe'));
     if (exe) return exe;
-    // npm wrapper(.cmd):读内容找 claude.exe 真身
+    // npm wrapper(.cmd):è¯»å†…å®¹æ‰¾ claude.exe çœŸèº«
     for (const c of candidates) {
       try {
         const content = fs.readFileSync(c, 'utf8');
@@ -714,18 +714,18 @@ export function resolveClaudeExecutable(configured?: string): string {
         }
       } catch { /* not a wrapper */ }
     }
-  } catch { /* where 失败,交由 SDK 报错 */ }
+  } catch { /* where å¤±è´¥,äº¤ç”± SDK æŠ¥é”™ */ }
   return value;
 }
 ```
 
-- [ ] **Step 2: 失败测试** — `test/sdk-client.test.ts`
+- [x] **Step 2: å¤±è´¥æµ‹è¯•** â€” `test/sdk-client.test.ts`
 ```ts
 import { describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../src/protocol/sdk-client.js';
 import type { ProtocolEvent } from '../src/protocol/types.js';
 
-// fake query:接收 prompt(异步迭代器)+ options,按脚本吐 SDK 消息。
+// fake query:æŽ¥æ”¶ prompt(å¼‚æ­¥è¿­ä»£å™¨)+ options,æŒ‰è„šæœ¬å SDK æ¶ˆæ¯ã€‚
 function fakeQuery(script: Array<Record<string, unknown>>, opts?: {
   onUserMessage?: (m: unknown) => void;
   hangAfterScript?: boolean;
@@ -735,7 +735,7 @@ function fakeQuery(script: Array<Record<string, unknown>>, opts?: {
     return (async function* () {
       for (const item of script) yield item;
       if (opts?.hangAfterScript) {
-        await new Promise(() => {}); // 模拟保活中的 CLI
+        await new Promise(() => {}); // æ¨¡æ‹Ÿä¿æ´»ä¸­çš„ CLI
       }
     })();
   };
@@ -744,7 +744,7 @@ function fakeQuery(script: Array<Record<string, unknown>>, opts?: {
 const baseOpts = { cwd: 'C:/tmp', dataDir: undefined as string | undefined };
 
 describe('SessionRuntime', () => {
-  it('一轮完整对话:发消息 → 收事件 → 完成后释放输入流', async () => {
+  it('ä¸€è½®å®Œæ•´å¯¹è¯:å‘æ¶ˆæ¯ â†’ æ”¶äº‹ä»¶ â†’ å®ŒæˆåŽé‡Šæ”¾è¾“å…¥æµ', async () => {
     let released = false;
     const emit = vi.fn();
     const runtime = new SessionRuntime({
@@ -755,10 +755,10 @@ describe('SessionRuntime', () => {
         return (async function* () {
           for (const item of [
             { type: 'system', subtype: 'init', session_id: 'prov-1' },
-            { type: 'assistant', session_id: 'prov-1', message: { role: 'assistant', content: [{ type: 'text', text: '你好' }] } },
+            { type: 'assistant', session_id: 'prov-1', message: { role: 'assistant', content: [{ type: 'text', text: 'ä½ å¥½' }] } },
             { type: 'result', subtype: 'success', session_id: 'prov-1', usage: { input_tokens: 3, output_tokens: 2 }, total_cost_usd: 0.01, duration_ms: 9 },
           ]) yield item;
-          released = true; // generator 结束 == stdin 释放
+          released = true; // generator ç»“æŸ == stdin é‡Šæ”¾
         })();
       },
     });
@@ -768,7 +768,7 @@ describe('SessionRuntime', () => {
     expect(released).toBe(true);
   });
 
-  it('canUseTool → permission_request;answerPermission(allow) 后继续', async () => {
+  it('canUseTool â†’ permission_request;answerPermission(allow) åŽç»§ç»­', async () => {
     const emit = vi.fn();
     let allowFn: ((input: unknown) => Promise<unknown>) | null = null;
     const runtime = new SessionRuntime({
@@ -793,7 +793,7 @@ describe('SessionRuntime', () => {
     await expect(decision).resolves.toEqual(expect.objectContaining({ behavior: 'allow' }));
   });
 
-  it('后台工作:Bash run_in_background 后 result 到了也不释放,下一轮 supersede 释放旧流', async () => {
+  it('åŽå°å·¥ä½œ:Bash run_in_background åŽ result åˆ°äº†ä¹Ÿä¸é‡Šæ”¾,ä¸‹ä¸€è½® supersede é‡Šæ”¾æ—§æµ', async () => {
     const releases: string[] = [];
     const emit = vi.fn();
     const runtime = new SessionRuntime({
@@ -812,13 +812,13 @@ describe('SessionRuntime', () => {
       },
     });
     await runtime.send('bg');
-    // result 已到(客户端已收 complete),但流还挂着
+    // result å·²åˆ°(å®¢æˆ·ç«¯å·²æ”¶ complete),ä½†æµè¿˜æŒ‚ç€
     expect(emit.mock.calls.some((c) => (c[0] as ProtocolEvent).kind === 'complete')).toBe(true);
-    await runtime.send('next turn'); // 新一轮取代旧 held 流
+    await runtime.send('next turn'); // æ–°ä¸€è½®å–ä»£æ—§ held æµ
     expect(releases.length).toBe(1);
   });
 
-  it('abort → complete(aborted:true) 且不再发 error', async () => {
+  it('abort â†’ complete(aborted:true) ä¸”ä¸å†å‘ error', async () => {
     const emit = vi.fn();
     const runtime = new SessionRuntime({
       ...baseOpts,
@@ -844,8 +844,8 @@ describe('SessionRuntime', () => {
 });
 ```
 
-- [ ] **Step 3: 跑 → FAIL**
-- [ ] **Step 4: 实现** — `src/protocol/sdk-client.ts`
+- [x] **Step 3: è·‘ â†’ FAIL**
+- [x] **Step 4: å®žçŽ°** â€” `src/protocol/sdk-client.ts`
 ```ts
 import { randomUUID } from 'node:crypto';
 import { query as defaultQuery } from '@anthropic-ai/claude-agent-sdk';
@@ -873,7 +873,7 @@ export type RuntimeOptions = {
 
 const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
-/** 一个 app 会话一个实例:串行跑 turn,桥接审批,按需保活。 */
+/** ä¸€ä¸ª app ä¼šè¯ä¸€ä¸ªå®žä¾‹:ä¸²è¡Œè·‘ turn,æ¡¥æŽ¥å®¡æ‰¹,æŒ‰éœ€ä¿æ´»ã€‚ */
 export class SessionRuntime {
   private opts: RuntimeOptions;
   private queryFn: QueryFn;
@@ -896,10 +896,10 @@ export class SessionRuntime {
     this.pending.get(requestId)?.(decision);
   }
 
-  /** 新 turn:取代任何 held 流,串行排队。 */
+  /** æ–° turn:å–ä»£ä»»ä½• held æµ,ä¸²è¡ŒæŽ’é˜Ÿã€‚ */
   async send(text: string): Promise<void> {
     if (this.running) {
-      return new Promise((resolve, reject) => { this.queued.push(text); /* 简化:同一会话 WS 层已挡并发 */ resolve(); reject = reject; });
+      return new Promise((resolve, reject) => { this.queued.push(text); /* ç®€åŒ–:åŒä¸€ä¼šè¯ WS å±‚å·²æŒ¡å¹¶å‘ */ resolve(); reject = reject; });
     }
     this.running = true;
     this.aborted = false;
@@ -930,7 +930,7 @@ export class SessionRuntime {
   };
 
   private buildOptions(): AnyRecord {
-    // SDK 0.2.113+ env 是替换:必须带全 process.env;路由时双带端点并删掉干扰 key。
+    // SDK 0.2.113+ env æ˜¯æ›¿æ¢:å¿…é¡»å¸¦å…¨ process.env;è·¯ç”±æ—¶åŒå¸¦ç«¯ç‚¹å¹¶åˆ æŽ‰å¹²æ‰° keyã€‚
     const env: NodeJS.ProcessEnv = { ...process.env };
     let settings: unknown;
     if (this.opts.routeSettings) {
@@ -993,7 +993,7 @@ export class SessionRuntime {
               release();
             }
           } else {
-            // 后台任务收尾的第二个 result:事件照发,流不再保
+            // åŽå°ä»»åŠ¡æ”¶å°¾çš„ç¬¬äºŒä¸ª result:äº‹ä»¶ç…§å‘,æµä¸å†ä¿
             release();
           }
         }
@@ -1019,7 +1019,7 @@ export class SessionRuntime {
 
   async abort(): Promise<void> {
     this.aborted = true;
-    // 中断挂起审批,避免 turn 卡死
+    // ä¸­æ–­æŒ‚èµ·å®¡æ‰¹,é¿å… turn å¡æ­»
     for (const resolve of this.pending.values()) resolve({ allow: false, message: 'aborted' });
     this.pending.clear();
     this.release?.();
@@ -1027,16 +1027,16 @@ export class SessionRuntime {
 }
 ```
 
-注意:测试里 fake 的 `options.__onRelease` 是探针;真实实现里 release 通过 held promise 关闭 generator,`finally` 里的 `release()` 保证 wind-down。超时/交互工具的 pending 解析在 finally 不重复 resolve(Map 已 clear)。
+æ³¨æ„:æµ‹è¯•é‡Œ fake çš„ `options.__onRelease` æ˜¯æŽ¢é’ˆ;çœŸå®žå®žçŽ°é‡Œ release é€šè¿‡ held promise å…³é—­ generator,`finally` é‡Œçš„ `release()` ä¿è¯ wind-downã€‚è¶…æ—¶/äº¤äº’å·¥å…·çš„ pending è§£æžåœ¨ finally ä¸é‡å¤ resolve(Map å·² clear)ã€‚
 
-- [ ] **Step 5: `npm run test` → PASS(允许对实现做等价微调,但四个行为断言不能丢);Commit** `feat(server): session runtime over sdk`
+- [x] **Step 5: `npm run test` â†’ PASS(å…è®¸å¯¹å®žçŽ°åšç­‰ä»·å¾®è°ƒ,ä½†å››ä¸ªè¡Œä¸ºæ–­è¨€ä¸èƒ½ä¸¢);Commit** `feat(server): session runtime over sdk`
 
-### Task 8: WS 网关(auth/四消息/补发/审批回路)
+### Task 8: WS ç½‘å…³(auth/å››æ¶ˆæ¯/è¡¥å‘/å®¡æ‰¹å›žè·¯)
 
 **Files:**
 - Create: `src/gateway/ws-gateway.ts`, `test/ws-gateway.test.ts`
 
-- [ ] **Step 1: 失败测试** — `test/ws-gateway.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/ws-gateway.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
@@ -1072,7 +1072,7 @@ function wsConnect(port: number): Promise<{ ws: WebSocket; next: () => Promise<a
 }
 
 describe('ws gateway', () => {
-  it('未 auth 收 error 并关闭;auth 后 chat.send 走 stub runtime,事件带 seq,补发可用', async () => {
+  it('æœª auth æ”¶ error å¹¶å…³é—­;auth åŽ chat.send èµ° stub runtime,äº‹ä»¶å¸¦ seq,è¡¥å‘å¯ç”¨', async () => {
     const db = openDb(':memory:');
     const app = await buildApp({ token: 't' });
     const registry = new RunRegistry();
@@ -1096,24 +1096,24 @@ describe('ws gateway', () => {
     });
     const port = await listen(app);
 
-    // 1) 未鉴权
+    // 1) æœªé‰´æƒ
     const bad = await wsConnect(port);
     bad.ws.send(JSON.stringify({ type: 'chat.send', sessionId: 'x', content: 'y' }));
     expect((await bad.next()).kind).toBe('error');
     bad.ws.close();
 
-    // 2) 鉴权 + 会话 + 发消息
+    // 2) é‰´æƒ + ä¼šè¯ + å‘æ¶ˆæ¯
     const { ws, next } = await wsConnect(port);
     ws.send(JSON.stringify({ type: 'auth', token: 't' }));
     expect((await next()).kind).toBe('authenticated');
     const s = createSession(db, { title: 'ws' });
-    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '你好' }));
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'ä½ å¥½' }));
     const e1 = await next();
-    expect(e1).toMatchObject({ kind: 'text', content: 'echo:你好', seq: 1 });
+    expect(e1).toMatchObject({ kind: 'text', content: 'echo:ä½ å¥½', seq: 1 });
     const e2 = await next();
     expect(e2).toMatchObject({ kind: 'complete', seq: 2 });
 
-    // 3) 重连补发
+    // 3) é‡è¿žè¡¥å‘
     const { ws: ws2, next: next2 } = await wsConnect(port);
     ws2.send(JSON.stringify({ type: 'auth', token: 't' }));
     await next2();
@@ -1129,8 +1129,8 @@ describe('ws gateway', () => {
 });
 ```
 
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — `src/gateway/ws-gateway.ts`
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” `src/gateway/ws-gateway.ts`
 ```ts
 import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -1166,7 +1166,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
     const offs = new Map<string, () => void>();
 
     const forward = (sessionId: string, event: OutboundEvent) => {
-      // 持久化文本类事件;complete 由 registry.finish 发,不落 messages
+      // æŒä¹…åŒ–æ–‡æœ¬ç±»äº‹ä»¶;complete ç”± registry.finish å‘,ä¸è½ messages
       if (PERSIST_KINDS.has(event.kind)) {
         const kind = event.kind === 'text' ? 'text' : event.kind;
         appendMessage(deps.db, sessionId, {
@@ -1248,7 +1248,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
         runtime.send(content).catch((error: unknown) => {
           send(ws, { kind: 'error', content: error instanceof Error ? error.message : String(error), sessionId });
         }).finally(() => {
-          deps.registry.finish(sessionId, 0, false); // 幂等:runtime 已发 complete 时由 seq 去重由调用方约束
+          deps.registry.finish(sessionId, 0, false); // å¹‚ç­‰:runtime å·²å‘ complete æ—¶ç”± seq åŽ»é‡ç”±è°ƒç”¨æ–¹çº¦æŸ
           offs.get(sessionId)?.(); offs.delete(sessionId);
         });
         return;
@@ -1259,17 +1259,17 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
   });
 }
 ```
-说明:`runtimeFor` 的真实实现(在 index.ts)注入 routes/db/emit 桥;`registry.finish` 里 emit 的 `complete` 事件同样走 forward(所以 runtime 已发过 complete 时会出现两条 —— 由 Task 9 在 index 组装时用「runtime 的 complete 事件直接透传,catch 兜底补发」的约定统一;测试中 stub runtime 不发 complete,由 finally 兜底)。
+è¯´æ˜Ž:`runtimeFor` çš„çœŸå®žå®žçŽ°(åœ¨ index.ts)æ³¨å…¥ routes/db/emit æ¡¥;`registry.finish` é‡Œ emit çš„ `complete` äº‹ä»¶åŒæ ·èµ° forward(æ‰€ä»¥ runtime å·²å‘è¿‡ complete æ—¶ä¼šå‡ºçŽ°ä¸¤æ¡ â€”â€” ç”± Task 9 åœ¨ index ç»„è£…æ—¶ç”¨ã€Œruntime çš„ complete äº‹ä»¶ç›´æŽ¥é€ä¼ ,catch å…œåº•è¡¥å‘ã€çš„çº¦å®šç»Ÿä¸€;æµ‹è¯•ä¸­ stub runtime ä¸å‘ complete,ç”± finally å…œåº•)ã€‚
 
-- [ ] **Step 4: `npm run test` → PASS;Commit** `feat(server): ws gateway with auth/replay/approval`
+- [x] **Step 4: `npm run test` â†’ PASS;Commit** `feat(server): ws gateway with auth/replay/approval`
 
-### Task 9: REST 端点 + index 组装
+### Task 9: REST ç«¯ç‚¹ + index ç»„è£…
 
 **Files:**
 - Create: `src/http-routes.ts`, `src/index.ts`, `test/http-routes.test.ts`
-- Modify: `src/http.ts`(挂载 REST + 静态健康)
+- Modify: `src/http.ts`(æŒ‚è½½ REST + é™æ€å¥åº·)
 
-- [ ] **Step 1: 失败测试** — `test/http-routes.test.ts`
+- [x] **Step 1: å¤±è´¥æµ‹è¯•** â€” `test/http-routes.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/http.js';
@@ -1282,7 +1282,7 @@ describe('REST', () => {
   it('sessions CRUD + messages + models', async () => {
     const db = openDb(':memory:');
     const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
-    const created = await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: '测试' } });
+    const created = await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: 'æµ‹è¯•' } });
     expect(created.statusCode).toBe(200);
     const id = created.json().id;
     const list = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
@@ -1299,8 +1299,8 @@ describe('REST', () => {
   });
 });
 ```
-- [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现** — 修改 `src/http.ts` 接受 `{ token, db?, routesPath? }` 并调用 `registerHttpRoutes(app, { db, routesPath })`;新建 `src/http-routes.ts`:
+- [x] **Step 2: è·‘ â†’ FAIL**
+- [x] **Step 3: å®žçŽ°** â€” ä¿®æ”¹ `src/http.ts` æŽ¥å— `{ token, db?, routesPath? }` å¹¶è°ƒç”¨ `registerHttpRoutes(app, { db, routesPath })`;æ–°å»º `src/http-routes.ts`:
 ```ts
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db.js';
@@ -1336,7 +1336,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   });
 }
 ```
-- [ ] **Step 4: `src/index.ts` 组装**
+- [x] **Step 4: `src/index.ts` ç»„è£…**
 ```ts
 import { attachWsGateway } from './gateway/ws-gateway.js';
 import { openDb } from './db.js';
@@ -1387,24 +1387,24 @@ console.log(`[zcode-server] listening on http://0.0.0.0:${config.port}`);
 console.log(`[zcode-server] token: ${config.token}`);
 await app.listen({ port: config.port, host: '0.0.0.0' });
 ```
-- [ ] **Step 5: `npm run test` 全绿;`npx tsc --noEmit` 干净;Commit** `feat(server): REST + composition root`
+- [x] **Step 5: `npm run test` å…¨ç»¿;`npx tsc --noEmit` å¹²å‡€;Commit** `feat(server): REST + composition root`
 
-### Task 10: 冒烟(真 CLI 一轮)
+### Task 10: å†’çƒŸ(çœŸ CLI ä¸€è½®)
 
-- [ ] **Step 1: `npm start` 启动(留后台);记下 token**
-- [ ] **Step 2: PowerShell 冒烟**:
+- [x] **Step 1: `npm start` å¯åŠ¨(ç•™åŽå°);è®°ä¸‹ token**
+- [x] **Step 2: PowerShell å†’çƒŸ**:
 ```powershell
 $H = @{ authorization = "Bearer <token>" }
 $session = Invoke-RestMethod -Uri http://127.0.0.1:5190/api/sessions -Headers $H -Method Post -Body (@{title='smoke'; cwd='D:\cheng\zcode'} | ConvertTo-Json) -ContentType 'application/json'
 $session.id
 ```
-用 Node 一次性 WS 客户端发 `chat.send`("列出当前目录文件,一句话总结"),断言收到 `model`/`text`/`complete` 事件。Ctrl-C 后确认 `claude` 子进程退出。
-- [ ] **Step 3: Commit** `test(server): smoke pass` + 更新 README(启动方式/token 位置/协议表)
+ç”¨ Node ä¸€æ¬¡æ€§ WS å®¢æˆ·ç«¯å‘ `chat.send`("åˆ—å‡ºå½“å‰ç›®å½•æ–‡ä»¶,ä¸€å¥è¯æ€»ç»“"),æ–­è¨€æ”¶åˆ° `model`/`text`/`complete` äº‹ä»¶ã€‚Ctrl-C åŽç¡®è®¤ `claude` å­è¿›ç¨‹é€€å‡ºã€‚
+- [x] **Step 3: Commit** `test(server): smoke pass` + æ›´æ–° README(å¯åŠ¨æ–¹å¼/token ä½ç½®/åè®®è¡¨)
 
 ---
 
-## 验证
+## éªŒè¯
 
-1. `npm run test` 全绿 + `npx tsc --noEmit` 零错误
-2. Task 10 真机冒烟:PC 上完整一轮对话 + usage 成本事件 + 中止
-3. 协议与前端对接:Flutter 侧按本计划的 WS 协议表实现(另立前端 plan)
+1. `npm run test` å…¨ç»¿ + `npx tsc --noEmit` é›¶é”™è¯¯
+2. Task 10 çœŸæœºå†’çƒŸ:PC ä¸Šå®Œæ•´ä¸€è½®å¯¹è¯ + usage æˆæœ¬äº‹ä»¶ + ä¸­æ­¢
+3. åè®®ä¸Žå‰ç«¯å¯¹æŽ¥:Flutter ä¾§æŒ‰æœ¬è®¡åˆ’çš„ WS åè®®è¡¨å®žçŽ°(å¦ç«‹å‰ç«¯ plan)

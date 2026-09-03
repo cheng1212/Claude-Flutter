@@ -3,7 +3,6 @@ import { attachWsGateway } from './gateway/ws-gateway.js';
 import { openDb } from './db.js';
 import { loadOrCreateConfig } from './config.js';
 import { buildApp } from './http.js';
-import { registerHttpRoutes } from './http-routes.js';
 import { loadRoutes, resolveModel } from './routes.js';
 import { RunRegistry } from './runs/run-registry.js';
 import { SessionRuntime } from './protocol/sdk-client.js';
@@ -14,8 +13,7 @@ const registry = new RunRegistry();
 const routes = loadRoutes(config.routesPath);
 const runtimes = new Map<string, SessionRuntime>();
 
-const app = await buildApp({ token: config.token, db, routesPath: config.routesPath });
-registerHttpRoutes(app, { db, routesPath: config.routesPath });
+const app = await buildApp({ token: config.token, db, routesPath: config.routesPath }); // buildApp 内部已挂 REST
 
 attachWsGateway(app.server, {
   db,

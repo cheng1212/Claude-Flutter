@@ -20,7 +20,7 @@ export function resolveClaudeExecutable(configured?: string): string {
         const content = fs.readFileSync(candidate, 'utf8');
         const match = [...content.matchAll(/["']([^"'\r\n]*claude\.exe)["']/gi)][0];
         if (match) {
-          const target = match[1].replace(/^%~dp0[\\/]/i, '').replace(/^\$basedir[\\/]/i, '');
+          const target = match[1].replace(/^(%~dp0|%dp0%|\$basedir)[\\/]/i, '');
           const resolved = path.isAbsolute(target) ? target : path.resolve(path.dirname(candidate), target);
           if (fs.existsSync(resolved)) return resolved;
         }

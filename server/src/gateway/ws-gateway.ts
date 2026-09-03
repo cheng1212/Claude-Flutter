@@ -134,7 +134,8 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           deps.registry.push(sessionId, { kind: 'error', content: error instanceof Error ? error.message : String(error) });
         }).finally(() => {
           const last = deps.registry.lastEvent(sessionId);
-          if (!last || last.kind !== 'complete') deps.registry.finish(sessionId, 1, false); // 兜底,不与 runtime 重复
+          if (last && last.kind === 'complete') deps.registry.clearRunning(sessionId); // runtime 已发过终态
+          else deps.registry.finish(sessionId, 1, false); // 兜底补发
         });
         return;
       }
