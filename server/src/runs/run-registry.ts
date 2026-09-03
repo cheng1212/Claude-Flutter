@@ -20,10 +20,11 @@ export class RunRegistry {
     return this.running.has(sessionId);
   }
 
-  /** 发终态事件并结束 run。 */
-  finish(sessionId: string, exitCode: number, aborted: boolean): void {
-    this.push(sessionId, { kind: 'complete', exitCode, aborted });
+  /** 发终态事件并结束 run;返回带 seq 的 complete 事件。 */
+  finish(sessionId: string, exitCode: number, aborted: boolean): OutboundEvent {
+    const event = this.push(sessionId, { kind: 'complete', exitCode, aborted });
     this.running.delete(sessionId);
+    return event;
   }
 
   push(sessionId: string, event: ProtocolEvent): OutboundEvent {
