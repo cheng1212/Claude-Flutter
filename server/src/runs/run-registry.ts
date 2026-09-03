@@ -53,4 +53,9 @@ export class RunRegistry {
   lastSeq(sessionId: string): number {
     return this.seq.get(sessionId) ?? 0;
   }
+
+  lastEvent(sessionId: string): OutboundEvent | null {
+    const buf = this.buffer.get(sessionId);
+    return buf && buf.length ? buf[buf.length - 1] : null;
+  }
 }
