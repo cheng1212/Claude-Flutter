@@ -7,7 +7,6 @@ export type ProtocolEvent =
   | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown }
   | { kind: 'tool_result'; toolId: string; content: string; isError: boolean }
   | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown }
-  | { kind: 'model'; model: string; endpoint: string | null }
   | {
     kind: 'usage';
     inputTokens: number;

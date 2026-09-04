@@ -13,16 +13,7 @@ const db = openDb(path.join(config.dataDir, 'zcode.db'));
 const staleRuns = failStaleRuns(db);
 if (staleRuns > 0) console.log(`[zcode-server] marked ${staleRuns} stale run(s) as interrupted`);
 const registry = new RunRegistry();
-const routes = loadRoutes(config.routesPath);
 const runtimes = new Map<string, SessionRuntime>();
-
-// 启动时导入本机 Claude Code 真会话(幂等,失败不阻断启动)。
-try {
-  const sum = importLocalSessions(db);
-  if (sum.imported > 0) console.log(`[zcode-server] imported ${sum.imported} local sessions (${sum.skipped} skipped)`);
-} catch (error) {
-  console.warn('[zcode-server] local session import failed:', error instanceof Error ? error.message : error);
-}
 
 const app = await buildApp({
   token: config.token,
@@ -52,7 +43,9 @@ attachWsGateway(app.server, {
       | undefined;
     if (!session) throw new Error(`session not found: ${sessionId}`);
     const modelId = opts.model ?? session.model ?? 'default';
-    const resolved = resolveModel(routes, modelId);
+    // 路由表现读(不缓存启动快照):运行中改 routes.json,聊天路由与 /api/models 立即一致,
+    // 不会出现"列表有新模型、聊天却按旧表裸名透传报错"的行为分裂。
+    const resolved = resolveModel(loadRoutes(config.routesPath), modelId);
     // 会话配置每次现算:用户 PATCH 过 model/permission_mode 后,下一条 send 自动带上新值,
     // 不用重启 server / 不用重建运行时。
     const cfg = {
@@ -83,3 +76,26 @@ attachWsGateway(app.server, {
 console.log(`[zcode-server] listening on http://0.0.0.0:${config.port}`);
 console.log(`[zcode-server] token: ${config.token}`);
 await app.listen({ port: config.port, host: '0.0.0.0' });
+
+// 本机会话导入在 listen 之后异步跑:不让手机连上来干等(会话多时全量解析要一会儿)。
+void (async () => {
+  try {
+    const sum = importLocalSessions(db);
+    if (sum.imported > 0) console.log(`[zcode-server] imported ${sum.imported} local sessions (${sum.skipped} skipped)`);
+  } catch (error) {
+    console.warn('[zcode-server] local session import failed:', error instanceof Error ? error.message : error);
+  }
+})();
+
+// 优雅停机:中断在跑的回合,给落库/finishRun 一点宽限再退,别靠 failStaleRuns 兜底。
+let shuttingDown = false;
+const shutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const live = [...runtimes.entries()].filter(([id]) => registry.isRunning(id));
+  console.log(`[zcode-server] ${signal}: aborting ${live.length} running session(s)...`);
+  for (const [, rt] of live) void rt.abort().catch(() => {});
+  setTimeout(() => process.exit(0), 3000).unref();
+};
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

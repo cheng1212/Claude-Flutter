@@ -22,6 +22,13 @@ describe('REST', () => {
     const patched = await app.inject({ method: 'PATCH', url: `/api/sessions/${id}`, headers: H, payload: { isPinned: true } });
     expect((patched.json() as { is_pinned: number }).is_pinned).toBe(1);
 
+    // 白名单收敛:字符串 'true' 也认;越界 permissionMode 拒收(保持原值)
+    const strPin = await app.inject({ method: 'PATCH', url: `/api/sessions/${id}`, headers: H, payload: { isPinned: 'false', permissionMode: 'bogus' } });
+    expect((strPin.json() as { is_pinned: number }).is_pinned).toBe(0);
+    expect((strPin.json() as { permission_mode: string }).permission_mode).toBe('default');
+    const mode = await app.inject({ method: 'PATCH', url: `/api/sessions/${id}`, headers: H, payload: { permissionMode: 'plan' } });
+    expect((mode.json() as { permission_mode: string }).permission_mode).toBe('plan');
+
     const single = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: H });
     expect((single.json() as { id: string }).id).toBe(id);
     const missing = await app.inject({ method: 'GET', url: '/api/sessions/nope', headers: H });

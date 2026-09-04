@@ -29,6 +29,7 @@ export function openDb(file: string): Db {
     CREATE TABLE IF NOT EXISTS runs(
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, status TEXT NOT NULL,
       model TEXT, total_cost_usd REAL, usage TEXT, started_at TEXT NOT NULL, ended_at TEXT);
+    CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
     CREATE TABLE IF NOT EXISTS session_tombstones(
       provider_session_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
   `);

@@ -29,8 +29,19 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     return row;
   });
 
+  // PATCH 白名单 + 类型收敛:字符串 "false" 不再被真值判断成置顶;
+  // permissionMode 只认 CLI 认识的六个值,未知值会被下一轮 buildOptions 原样透传给 CLI 拒掉。
+  const PERMISSION_MODES = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto']);
   app.patch('/api/sessions/:id', async (req, reply) => {
-    const row = updateSession(deps.db, (req.params as { id: string }).id, (req.body ?? {}) as never);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const patch: { title?: string; isPinned?: boolean; providerSessionId?: string; model?: string; permissionMode?: string; cwd?: string } = {};
+    if (typeof body.title === 'string') patch.title = body.title;
+    if (body.isPinned !== undefined) patch.isPinned = body.isPinned === true || body.isPinned === 'true';
+    if (typeof body.providerSessionId === 'string') patch.providerSessionId = body.providerSessionId;
+    if (typeof body.model === 'string') patch.model = body.model;
+    if (typeof body.permissionMode === 'string' && PERMISSION_MODES.has(body.permissionMode)) patch.permissionMode = body.permissionMode;
+    if (typeof body.cwd === 'string') patch.cwd = body.cwd;
+    const row = updateSession(deps.db, (req.params as { id: string }).id, patch);
     if (!row) return reply.code(404).send({ error: 'not found' });
     return row;
   });

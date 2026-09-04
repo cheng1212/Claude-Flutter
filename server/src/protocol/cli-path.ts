@@ -3,7 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // raw spawn 不跟 .cmd wrapper:把 "claude" 解析成真 exe(Windows)。
+// 结果进程生命周期内不变:模块级缓存,别每轮 send 都 spawn 一个 where.exe。
+let cachedResolved: string | null = null;
+
 export function resolveClaudeExecutable(configured?: string): string {
+  // 显式 configured 不缓存(调用方要的是确定性);环境变量/默认路径才走缓存
+  if (configured === undefined && cachedResolved !== null) return cachedResolved;
+  const resolved = resolveUncached(configured);
+  if (configured === undefined) cachedResolved = resolved;
+  return resolved;
+}
+
+function resolveUncached(configured?: string): string {
   const value = (configured ?? process.env.CLAUDE_CLI_PATH ?? 'claude').trim().replace(/^["']|["']$/g, '');
   if (process.platform !== 'win32') return value;
   if (/\.(exe|cjs|js|mjs)$/i.test(value) && (value.includes('/') || value.includes('\\'))) return value;

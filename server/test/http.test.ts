@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/http.js';
 
 describe('health + auth', () => {
-  it('GET /api/health 返回 ok(无需鉴权)', async () => {
-    const app = await buildApp({ token: 't' });
+  it('GET /api/health 返回 ok + 版本/运行信息(无需鉴权)', async () => {
+    const app = await buildApp({ token: 't', runningCount: () => 2 });
     const res = await app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    const body = res.json() as { ok: boolean; version: string; uptimeSec: number; runningSessions: number };
+    expect(body.ok).toBe(true);
+    expect(typeof body.version).toBe('string');
+    expect(body.version).not.toBe('unknown'); // npm 布局下必能读到
+    expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
+    expect(body.runningSessions).toBe(2);
     await app.close();
   });
 

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 export type ServerConfig = {
   token: string;
@@ -28,7 +29,10 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   } catch {
     // 首次运行,文件不存在
   }
-  const token = process.env.ZCODE_TOKEN ?? stored.token ?? '123456';
+  // token 不再兜底 '123456':0.0.0.0 + 弱令牌 = 局域网内任何设备可驱动 CLI 执行任意命令。
+  // 首启随机生成;发现遗留弱令牌一次性升级。env 显式指定永远最优先(自部署覆盖)。
+  const legacy = stored.token === '123456';
+  const token = process.env.ZCODE_TOKEN ?? (stored.token && !legacy ? stored.token : randomBytes(18).toString('base64url'));
   if (stored.token !== token) {
     fs.writeFileSync(file, JSON.stringify({ token }, null, 2));
   }
