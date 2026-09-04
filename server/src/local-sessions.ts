@@ -307,6 +307,13 @@ export function importLocalSessions(db: Db, opts: { projectsDir?: string } = {})
       skipped += 1;
       continue;
     }
+    // 文件名 stem 就是 CLI 的 sessionId:先查库/墓碑,命中就不必白读整个 jsonl
+    // (启动导入的大头是反复全量读已入库文件)。内容级判重在下面保留兜底。
+    const stem = path.basename(filePath, '.jsonl');
+    if (tombstones.has(stem) || getSessionByProviderSessionId(db, stem)) {
+      skipped += 1;
+      continue;
+    }
     const lines = readAllLines(filePath);
     if (lines.length === 0) {
       skipped += 1;
