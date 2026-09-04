@@ -32,6 +32,17 @@ export type QueryFn = (args: { prompt: AsyncIterable<unknown>; options: AnyRecor
 export type PermissionDecision = { allow: boolean; message?: string; updatedInput?: unknown };
 type CanUseToolResult = { behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown };
 
+/** 在等用户审批的请求:resolve 之外保留详情,App 重启后经 subscribed 带回重建审批卡。 */
+type PendingEntry = {
+  resolve: (d: PermissionDecision | null) => void;
+  toolName: string;
+  input: unknown;
+};
+
+/** 看门狗"忙碌续期"上限:每次续期间隔 = approvalTimeoutMs,默认 10min × 6 = 1 小时。
+ *  覆盖正常的长构建/长测试;真僵死(工具结果永远不回)最终仍会被裁。 */
+const BUSY_REARM_LIMIT = 6;
+
 export type RuntimeOptions = {
   appSessionId: string;
   providerSessionId?: string | null;
@@ -61,7 +72,9 @@ export class SessionRuntime {
   private turnChain: Promise<void> = Promise.resolve();
   private release: (() => void) | null = null;
   private currentInstance: QueryInstance | null = null;
-  private pending = new Map<string, (d: PermissionDecision | null) => void>();
+  private pending = new Map<string, PendingEntry>();
+  /** 已发 tool_use 还没等到 tool_result 的工具:看门狗判"忙碌"的依据(静默 ≠ 卡死)。 */
+  private openTools = new Set<string>();
   private providerSessionId: string | null;
   private aborted = false;
   private turnGen = 0; // 回合代数:强裁定时器不误伤下一轮
@@ -83,10 +96,15 @@ export class SessionRuntime {
     return run;
   }
 
+  /** 当前在等用户审批的请求快照(gateway 经 subscribed 带给重连的客户端,重建审批卡)。 */
+  pendingPermissions(): { requestId: string; toolName: string; input: unknown }[] {
+    return [...this.pending.entries()].map(([requestId, p]) => ({ requestId, toolName: p.toolName, input: p.input }));
+  }
+
   /** 中止当前回合 / 掐断后台挂着的流。CLI 僵死时延时强裁,保证回合一定落定。 */
   async abort(): Promise<void> {
     this.aborted = true;
-    for (const resolve of this.pending.values()) resolve({ allow: false, message: 'aborted' });
+    for (const p of this.pending.values()) p.resolve({ allow: false, message: 'aborted' });
     this.pending.clear();
     try {
       await this.currentInstance?.interrupt?.();
@@ -104,10 +122,10 @@ export class SessionRuntime {
   }
 
   answerPermission(requestId: string, decision: PermissionDecision): void {
-    const resolve = this.pending.get(requestId);
-    if (!resolve) return;
+    const entry = this.pending.get(requestId);
+    if (!entry) return;
     this.pending.delete(requestId);
-    resolve(decision);
+    entry.resolve(decision);
   }
 
   /**
@@ -167,9 +185,13 @@ export class SessionRuntime {
       const timer = INTERACTIVE_TOOLS.has(toolName)
         ? null
         : setTimeout(() => resolve(null), this.opts.approvalTimeoutMs ?? 10 * 60 * 1000);
-      this.pending.set(requestId, (d) => {
-        if (timer) clearTimeout(timer);
-        resolve(d);
+      this.pending.set(requestId, {
+        resolve: (d) => {
+          if (timer) clearTimeout(timer);
+          resolve(d);
+        },
+        toolName,
+        input,
       });
     });
     this.pending.delete(requestId);
@@ -225,9 +247,11 @@ export class SessionRuntime {
       };
       this.forceTurnFinish = forceFinish;
 
-      // 静默看门狗:整整 approvalTimeoutMs 没有任何 CLI 输出且不在等审批 → 判卡死,
-      // 发 error 并自动 abort(abort 内部还有强裁兜底)。等审批期间重新武装。
+      // 静默看门狗:整整 approvalTimeoutMs 没有任何 CLI 输出且不在等审批 → 检查是否
+      // "忙碌静默"(还有没回结果的 tool_use,比如十几分钟的构建)——合法,续期而非误杀;
+      // 连续 BUSY_REARM_LIMIT 个周期仍无任何输出才判真卡死。等审批期间同样续期。
       const stallMs = this.opts.approvalTimeoutMs ?? 10 * 60 * 1000;
+      let busyRears = 0;
       const armStall = () => {
         if (stallTimer) clearTimeout(stallTimer);
         stallTimer = setTimeout(() => {
@@ -236,9 +260,14 @@ export class SessionRuntime {
             armStall(); // 在等用户审批,再给一个周期
             return;
           }
+          if (this.openTools.size > 0 && busyRears < BUSY_REARM_LIMIT) {
+            busyRears += 1; // 工具还在跑:前台长命令静默是常态,不是卡死
+            armStall();
+            return;
+          }
           this.opts.emit({
             kind: 'error',
-            content: `回合超过 ${Math.round(stallMs / 60000)} 分钟没有任何输出,已自动中断;请重发`,
+            content: `回合超过 ${Math.round((stallMs * (1 + Math.min(busyRears, BUSY_REARM_LIMIT))) / 60000)} 分钟没有任何输出,已自动中断;请重发`,
           });
           void this.abort();
         }, stallMs);
@@ -249,7 +278,8 @@ export class SessionRuntime {
       void (async () => {
         try {
           for await (const raw of instance) {
-            armStall(); // 有输出就续期
+            armStall(); // 有输出就续期(忙碌计数也归零)
+            busyRears = 0;
             if (raw.type === 'system' && raw.subtype === 'init') {
               const sessionId = raw.session_id;
               if (!this.providerSessionId && typeof sessionId === 'string' && sessionId) {
@@ -261,6 +291,8 @@ export class SessionRuntime {
             if (this.aborted) break;
             const events = transformMessage(raw);
             for (const event of events) {
+              if (event.kind === 'tool_use') this.openTools.add(event.toolId);
+              else if (event.kind === 'tool_result') this.openTools.delete(event.toolId);
               if (event.kind === 'complete') emitTerminal(event.exitCode, event.aborted);
               else this.opts.emit(event);
             }

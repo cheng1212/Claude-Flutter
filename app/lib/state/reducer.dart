@@ -238,8 +238,26 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
       // isProcessing=false(如服务重启后重连):上一世的悬空工具卡已成孤儿,一并收尾;
       // 迟到的真结果靠 tool_result 的放宽匹配覆盖回来。
+      // pending:服务器带回的待审批清单(重连/App 重启后确定性重建审批卡);
+      // 显式空数组 = 没有在等的审批,清掉本地旧卡;无该字段(旧服务器)保持原状。
       final isProcessing = ev['isProcessing'] as bool? ?? false;
-      return _with(s, running: isProcessing, rows: isProcessing ? s.rows : _closeDanglingTools(s.rows));
+      final pendingList = ev['pending'] as List?;
+      final rows = isProcessing ? s.rows : _closeDanglingTools(s.rows);
+      if (pendingList == null) {
+        return _with(s, running: isProcessing, rows: rows);
+      }
+      Map? lastPending;
+      for (final item in pendingList) {
+        if (item is Map) lastPending = item;
+      }
+      if (lastPending == null) {
+        return _with(s, running: isProcessing, clearPermission: true, rows: rows);
+      }
+      return _with(s, running: isProcessing, rows: rows, pendingPermission: PermissionReq(
+        requestId: '${lastPending['requestId'] ?? ''}',
+        toolName: '${lastPending['toolName'] ?? ''}',
+        input: (lastPending['input'] as Map?)?.cast<String, dynamic>() ?? const {},
+      ));
     default:
       return seq != null ? _with(s, lastSeq: nextSeq) : s;
   }

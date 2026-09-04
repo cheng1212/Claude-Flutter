@@ -145,6 +145,27 @@ void main() {
     expect(s.lastSeq, 9); // 本地行不动 seq
   });
 
+  test('subscribed.pending 重建审批卡;空数组清旧卡;无字段保持原状', () {
+    var s = const ChatState(pendingPermission: PermissionReq(requestId: 'old', toolName: 'Bash', input: {}));
+    // 服务器明确说没在等审批(空数组)→ 清掉旧卡,不再挂着没人能批的僵尸卡
+    s = applyEvent(s, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': false, 'lastSeq': 1, 'pending': []}));
+    expect(s.pendingPermission, isNull);
+    // 等审批时重连(App 重启后):pending 非空 → 确定性重建审批卡
+    s = applyEvent(s, ev('subscribed', extra: {
+      'sessionId': 'x', 'isProcessing': true, 'lastSeq': 2,
+      'pending': [
+        {'requestId': 'r1', 'toolName': 'Bash', 'input': {'command': 'flutter build apk'}},
+      ],
+    }));
+    expect(s.pendingPermission?.requestId, 'r1');
+    expect(s.pendingPermission?.toolName, 'Bash');
+    expect(s.pendingPermission?.input, {'command': 'flutter build apk'});
+    expect(s.running, isTrue);
+    // 无 pending 字段(旧服务器)→ 不动现有卡
+    s = applyEvent(s, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': true, 'lastSeq': 3}));
+    expect(s.pendingPermission?.requestId, 'r1');
+  });
+
   test('乐观用户行:pending 标记,服务器回显就地确认不重复', () {
     var s = applyLocalUser(const ChatState(), '你好');
     expect((s.rows.single as UserRow).pending, isTrue);

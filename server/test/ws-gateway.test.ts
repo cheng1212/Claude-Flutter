@@ -53,6 +53,73 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
 }
 
 describe('ws gateway', () => {
+  it('审批恢复:App 重启重连后,subscribed.pending 与 replay 双通道找回待审批', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    const runtimes = new Map<string, SessionRuntime>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let captured: any = null;
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor(sessionId: string, opts: { model?: string | null; permissionMode?: string }) {
+        const existing = runtimes.get(sessionId);
+        if (existing) return existing;
+        const rt = new SessionRuntime({
+          appSessionId: sessionId,
+          cwd: 'C:/tmp',
+          model: opts.model ?? null,
+          permissionMode: opts.permissionMode,
+          approvalTimeoutMs: 60000,
+          emit: (e) => registry.push(sessionId, e),
+          queryFn: ({ options, prompt }) => {
+            captured = options;
+            return (async function* () {
+              for await (const _ of prompt) void _; // 回合挂住:等审批,永不 result
+            })();
+          },
+        });
+        runtimes.set(sessionId, rt);
+        return rt;
+      },
+    });
+    const port = await listen(app);
+    const s = createSession(db, { title: 'perm' });
+
+    // 第一台"手机":开跑 → CLI 调 canUseTool → 审批挂起 → 掉线(App 重启)
+    const a = await wsConnect(port);
+    a.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await a.next();
+    a.ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '构建 apk' }));
+    await waitFor(() => captured !== null);
+    const allowing = (captured as { canUseTool: (t: string, i: unknown) => Promise<{ behavior: string }> })
+      .canUseTool('Bash', { command: 'flutter build apk' });
+    await waitFor(() =>
+      (db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(s.id) as { c: number }).c === 1);
+    a.ws.close();
+
+    // 第二台"手机":REST 只能锚到 DB max(permission_request 占号不落库),重连订阅
+    const b = await wsConnect(port);
+    b.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await b.next();
+    const maxSeq = (db.prepare('SELECT COALESCE(MAX(seq),0) AS m FROM messages WHERE session_id=?').get(s.id) as { m: number }).m;
+    b.ws.send(JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: s.id, lastSeq: maxSeq }] }));
+    const sub = await b.next();
+    expect(sub).toMatchObject({ kind: 'subscribed', isProcessing: true });
+    const pendings = sub.pending as { requestId: string; toolName: string }[];
+    expect(pendings.some((p) => p.toolName === 'Bash')).toBe(true);
+    // 通道一(确定性):pending 里的 requestId 直接应答,CLI 侧放行
+    b.ws.send(JSON.stringify({ type: 'chat.permission-response', sessionId: s.id, requestId: pendings[0].requestId, allow: true }));
+    await expect(allowing).resolves.toEqual(expect.objectContaining({ behavior: 'allow' }));
+    // 通道二(缓冲补发):permission_request 占号进环形缓冲,replay 会重放它
+    const replay = await b.next();
+    expect(replay.kind).toBe('replay');
+    expect(replay.events.some((e: { kind: string }) => e.kind === 'permission_request')).toBe(true);
+    b.ws.close();
+    for (const rt of runtimes.values()) void rt.abort(); // 收尾:挂着的回合 abort 掉
+    await app.close();
+  });
+
   it('未 auth 报 error 并关闭;auth 后 chat.send 事件带 seq;重连可补发', async () => {
     const db = openDb(':memory:');
     const app = await buildApp({ token: 't' });

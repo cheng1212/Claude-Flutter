@@ -8,6 +8,8 @@ type RuntimeLike = {
   send(text: string, images?: string[]): Promise<void>;
   abort(): Promise<void>;
   answerPermission(requestId: string, decision: { allow: boolean; updatedInput?: unknown; message?: string }): void;
+  /** 在等用户审批的请求:subscribed(isProcessing=true) 带回,客户端重建审批卡。 */
+  pendingPermissions?(): { requestId: string; toolName: string; input: unknown }[];
 };
 
 export type WsGatewayDeps = {
@@ -128,7 +130,10 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           const clientSeq = Number(entry.lastSeq ?? 0);
           if (Number.isFinite(clientSeq) && clientSeq > 0) deps.registry.seedSeq(sessionId, clientSeq);
           const live = deps.registry.isRunning(sessionId);
-          send(ws, { kind: 'subscribed', sessionId, isProcessing: live, lastSeq: deps.registry.lastSeq(sessionId) });
+          // pending:等审批的请求随 subscribed 带回(App 重启后重建审批卡,不再丢卡卡死)。
+          // replay 也会补发 permission_request(占号进缓冲),这里是确定性通道,双保险。
+          const pending = live ? runtimes.get(sessionId)?.pendingPermissions?.() ?? [] : [];
+          send(ws, { kind: 'subscribed', sessionId, isProcessing: live, lastSeq: deps.registry.lastSeq(sessionId), pending });
           const replayed = deps.registry.replay(sessionId, entry.lastSeq ?? 0);
           if (replayed.length) send(ws, { kind: 'replay', sessionId, events: replayed });
         }

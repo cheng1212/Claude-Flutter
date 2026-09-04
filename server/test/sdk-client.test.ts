@@ -97,6 +97,52 @@ describe('SessionRuntime', () => {
     await expect(options.canUseTool('Bash', {})).resolves.toEqual({ behavior: 'deny', message: 'approval timeout' });
   });
 
+  it('pendingPermissions 暴露等待中的审批详情;abort 一并拒绝', async () => {
+    let captured: Record<string, unknown> | null = null;
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options as Record<string, unknown>;
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const { events, emit } = collector();
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a3', emit, queryFn, approvalTimeoutMs: 60000 });
+    await runtime.send('go');
+    const options = captured as unknown as { canUseTool: (t: string, i: unknown) => Promise<{ behavior: string; message?: string }> };
+    const asking = options.canUseTool('PowerShell', { command: 'npm test' });
+    expect(runtime.pendingPermissions()).toHaveLength(1);
+    expect(runtime.pendingPermissions()[0]).toMatchObject({ toolName: 'PowerShell', input: { command: 'npm test' } });
+    expect(events.filter((e) => e.kind === 'permission_request')).toHaveLength(1);
+    await runtime.abort();
+    await expect(asking).resolves.toEqual({ behavior: 'deny', message: 'aborted' });
+    expect(runtime.pendingPermissions()).toHaveLength(0);
+  });
+
+  it('看门狗不误杀:前台工具静默期(有 tool_use 未回结果)续期,结果回来照常完成', async () => {
+    const { events, emit } = collector();
+    const queryFn: QueryFn = ({ prompt }) => (async function* () {
+      yield {
+        type: 'assistant', session_id: 'p',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'long-build' } }] },
+      };
+      // 静默 150ms ≈ 3 个看门狗周期(50ms):旧逻辑第 2 个周期就误杀了
+      await new Promise((r) => setTimeout(r, 150));
+      yield {
+        type: 'user', session_id: 'p',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Built in 150ms' }] },
+      };
+      yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      for await (const _ of prompt) void _;
+    })();
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'w1', emit, queryFn, approvalTimeoutMs: 50 });
+    await runtime.send('go');
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain('tool_use');
+    expect(kinds).toContain('tool_result');
+    expect(kinds).not.toContain('error'); // 没被看门狗打断
+    expect(events.at(-1)).toMatchObject({ kind: 'complete', exitCode: 0 });
+  });
+
   it('后台工作:result 后 prompt 流仍挂;下一轮 send 取代旧流', async () => {
     const { events, emit } = collector();
     const ended: number[] = [];
