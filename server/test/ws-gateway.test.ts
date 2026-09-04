@@ -558,6 +558,69 @@ describe('ws gateway', () => {
     ws.close();
     await app.close();
   });
+
+  it('图片瘦身:线上(广播+补发)剥 base64 → imageCount,超限图丢弃,DB meta 仍存原图', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor: (sessionId: string) => ({
+        send: async () => { registry.finish(sessionId, 0, false); },
+        answerPermission: () => {},
+        abort: async () => {},
+      }) as unknown as SessionRuntime,
+    });
+    const port = await listen(app);
+
+    // 第二台手机先订阅:验证实时广播也是瘦身载荷
+    const watcher = await wsConnect(port);
+    watcher.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await watcher.nextAny();
+    const s = createSession(db, { title: 'img' });
+    watcher.ws.send(JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: s.id, lastSeq: 0 }] }));
+    expect((await watcher.nextAny()).kind).toBe('subscribed');
+
+    const { ws, next, nextAny } = await wsConnect(port);
+    ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await nextAny();
+    const tiny = `data:image/png;base64,${'A'.repeat(1000)}`;
+    const oversized = `data:image/png;base64,${'B'.repeat(5 * 1024 * 1024)}`;
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '看图', images: [tiny, oversized] }));
+    const echo = await next(); // 发送方自己的回显
+    expect(echo).toMatchObject({ kind: 'text', role: 'user', imageCount: 1 });
+    expect(JSON.stringify(echo)).not.toContain('AAAA'); // base64 不上线
+    await next(); // complete
+
+    const liveWire = await watcher.next(); // 旁听者收到的实时广播
+    expect(liveWire).toMatchObject({ kind: 'text', role: 'user', imageCount: 1 });
+    expect(JSON.stringify(liveWire)).not.toContain('AAAA');
+
+    // 重连补发视角:lastSeq 0 → replay 整段历史,同样没有 base64
+    const rejoin = await wsConnect(port);
+    rejoin.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await rejoin.nextAny();
+    rejoin.ws.send(JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: s.id, lastSeq: 0 }] }));
+    expect((await rejoin.nextAny()).kind).toBe('subscribed');
+    const replay = await rejoin.nextAny();
+    expect(replay.kind).toBe('replay');
+    const userEv = replay.events.find((e: AnyMessage) => e.kind === 'text' && e.role === 'user');
+    expect(userEv).toMatchObject({ imageCount: 1 });
+    expect(JSON.stringify(replay)).not.toContain('AAAA');
+
+    // DB meta 仍存完整 data URI(REST 历史回显的数据源),超限图在入口就被丢掉
+    const meta = (db.prepare("SELECT meta FROM messages WHERE session_id=? AND role='user'").get(s.id) as { meta: string }).meta;
+    expect(meta).toContain(tiny);
+    expect(meta).not.toContain(oversized);
+
+    // 只带超限图、没文字 → 过滤后空手,直接报参数错,不进运行时
+    ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: '', images: [oversized] }));
+    expect(await nextAny()).toMatchObject({ kind: 'error', content: 'sessionId and content required' });
+    ws.close();
+    watcher.ws.close();
+    rejoin.ws.close();
+    await app.close();
+  }, 15000);
 });
 
 // 引用 ProtocolEvent 类型,防止未使用告警

@@ -324,12 +324,24 @@ class ZApp extends ChangeNotifier {
     if (sid == null) return;
     chat = applyPermissionAnswer(chat);
     notifyListeners();
-    _socket.answerPermission(sid, requestId, allow: allow, message: message);
+    try {
+      _socket.answerPermission(sid, requestId, allow: allow, message: message);
+    } on Object {
+      // 断线发不出去:面板已收起;服务器侧 10 分钟超时自动 deny,
+      // 或重连后 subscribed.pending 把审批卡带回来重批。
+      error = '审批发送失败: 连接断开';
+      notifyListeners();
+    }
   }
 
   void abort() {
     final sid = currentSessionId;
     if (sid == null) return;
-    _socket.abort(sid);
+    try {
+      _socket.abort(sid);
+    } on Object {
+      error = '停止失败: 连接断开';
+      notifyListeners();
+    }
   }
 }

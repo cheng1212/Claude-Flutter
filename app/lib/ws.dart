@@ -30,8 +30,10 @@ class ZSocket {
     this.backoffBase = const Duration(seconds: 1),
     this.maxBackoff = const Duration(seconds: 30),
     this.pingEvery = const Duration(seconds: 25),
+    DateTime Function()? clock,
     this.onChanged,
-  })  : _factory = factory ?? ioChannelFactory;
+  })  : _factory = factory ?? ioChannelFactory,
+        _now = clock ?? DateTime.now;
 
   final Uri uri; // ws://host:5190
   final String token;
@@ -39,6 +41,8 @@ class ZSocket {
   final Duration backoffBase;
   final Duration maxBackoff;
   final Duration pingEvery;
+  /// 时钟 seam:测试注入假时针,判活逻辑不依赖真实时间的快慢。
+  final DateTime Function() _now;
   /// 连接状态变化回调(ZApp 挂 notifyListeners;可换绑)。
   void Function()? onChanged;
 
@@ -55,7 +59,9 @@ class ZSocket {
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _retry;
   Timer? _ping;
+  DateTime _lastInbound = DateTime.now();
   bool _disposed = false;
+
 
   /// 连接并鉴权;失败抛 ZSocketException。
   Future<void> connect() async {
@@ -106,6 +112,7 @@ class ZSocket {
   }
 
   void _onData(Map<String, dynamic> m) {
+    _lastInbound = _now();
     final kind = m['kind'];
     final sessionId = m['sessionId'] as String?;
     if (kind == 'replay') {
@@ -157,7 +164,14 @@ class ZSocket {
 
   void _startPing() {
     _ping?.cancel();
+    _lastInbound = _now();
     _ping = Timer.periodic(pingEvery, (_) {
+      // 假死连接:TCP 没断但对面早不在了(服务器重启/中间设备静默丢弃),
+      // 本地永远等不到 onDone。两个周期没收到任何来包(含 pong)→ 主动判死重连。
+      if (_now().difference(_lastInbound) > pingEvery * 2) {
+        _onDown();
+        return;
+      }
       try {
         _channel?.send({'type': 'ping'});
       } on Object {

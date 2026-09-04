@@ -19,7 +19,23 @@ export type WsGatewayDeps = {
   runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
 };
 
-type StateWs = WebSocket & { authed?: boolean; subs?: Set<string> };
+type StateWs = WebSocket & { authed?: boolean; subs?: Set<string>; alive?: boolean };
+
+/** 单帧消息上限(32MB):4 张图(各 ≤5MB data URI)+ JSON 开销也够用,再大直接掐连接。 */
+const MAX_WS_FRAME = 32 * 1024 * 1024;
+/** 单图 data URI 上限(≈3.7MB 二进制):防一条消息塞几十 MB base64 拖垮 WS、DB 和 CLI。 */
+const MAX_IMAGE_URI = 5 * 1024 * 1024;
+
+/** 广播/补发线上的用户图片剥成 imageCount:几 MB 的 base64 不该在实时流和重连补发里
+ *  重复传输(手机流量/内存都扛不住);完整 data URI 只进 DB meta(REST 历史仍可回显)。 */
+function toWire(event: OutboundEvent): OutboundEvent {
+  const images = (event as { images?: string[] }).images;
+  if (!images || images.length === 0) return event;
+  const wire = { ...event } as OutboundEvent & { images?: string[]; imageCount?: number };
+  delete wire.images;
+  wire.imageCount = images.length;
+  return wire;
+}
 
 // 这些 kind 一律落 messages(带行号 seq),保证 registry seq 与 DB seq 严格 lockstep;
 // session_created 额外回填 sessions 表。落库与 WS 订阅解耦(见 ensureSub 常驻订阅)。
@@ -38,7 +54,7 @@ function broadcastDirty(wss: WebSocketServer, sessionId: string): void {
 }
 
 export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, maxPayload: MAX_WS_FRAME });
   const runtimes = new Map<string, RuntimeLike>();
   // 每会话一条全局订阅(持久化+广播只做一次);refs = 订阅中的连接数
   const sessionSubs = new Map<string, { off: () => void; refs: number }>();
@@ -80,9 +96,12 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
     if (event.kind === 'session_created') {
       updateSession(deps.db, sessionId, { providerSessionId: (event as { providerSessionId: string }).providerSessionId });
     }
+    // 线上载荷剥图 + 全体订阅者复用同一串 JSON(每事件只 stringify 一次)
+    const wire = toWire(event);
+    const payload = JSON.stringify({ ...wire, sessionId });
     for (const client of wss.clients) {
       const c = client as StateWs;
-      if (c.authed && c.subs?.has(sessionId)) send(c, { ...event, sessionId });
+      if (c.authed && c.subs?.has(sessionId) && c.readyState === c.OPEN) c.send(payload);
     }
   };
 
@@ -99,10 +118,25 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
     if (entry.refs <= 0 && !permanentSubs.has(sessionId)) { entry.off(); sessionSubs.delete(sessionId); }
   };
 
+  // 服务端心跳验活:30s 一轮 ping,两轮无 pong 的死连接(手机杀后台没断干净)强制摘除,
+  // 不然 wss.clients 越积越多,fanout 还在往死连接上写。
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      const c = client as StateWs;
+      if (c.alive === false) { c.terminate(); continue; }
+      c.alive = false;
+      c.ping();
+    }
+  }, 30_000);
+  heartbeat.unref();
+  wss.on('close', () => clearInterval(heartbeat));
+
   wss.on('connection', (raw: WebSocket) => {
     const ws = raw as StateWs;
     const subs = new Set<string>();
     ws.subs = subs;
+    ws.alive = true;
+    ws.on('pong', () => { ws.alive = true; });
 
     ws.on('message', (rawMsg) => {
       let data: Record<string, unknown>;
@@ -135,7 +169,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           const pending = live ? runtimes.get(sessionId)?.pendingPermissions?.() ?? [] : [];
           send(ws, { kind: 'subscribed', sessionId, isProcessing: live, lastSeq: deps.registry.lastSeq(sessionId), pending });
           const replayed = deps.registry.replay(sessionId, entry.lastSeq ?? 0);
-          if (replayed.length) send(ws, { kind: 'replay', sessionId, events: replayed });
+          if (replayed.length) send(ws, { kind: 'replay', sessionId, events: replayed.map(toWire) });
         }
         return;
       }
@@ -161,7 +195,8 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
         const sessionId = String(data.sessionId ?? '');
         const content = typeof data.content === 'string' ? data.content : '';
         const images = Array.isArray(data.images)
-          ? data.images.filter((x: unknown): x is string => typeof x === 'string' && /^data:image\//.test(x)).slice(0, 4)
+          ? data.images.filter((x: unknown): x is string =>
+              typeof x === 'string' && x.length <= MAX_IMAGE_URI && /^data:image\//.test(x)).slice(0, 4)
           : [];
         const options = (data.options ?? {}) as { model?: string; permissionMode?: string };
         if (!sessionId || (!content && images.length === 0)) { send(ws, { kind: 'error', content: 'sessionId and content required' }); return; }

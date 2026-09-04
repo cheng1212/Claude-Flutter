@@ -74,11 +74,13 @@ void main() {
 
   late FakeChannel channel;
   final channels = <FakeChannel>[];
-  ZSocket makeSocket({Duration backoff = const Duration(milliseconds: 5)}) {
+  ZSocket makeSocket({Duration backoff = const Duration(milliseconds: 5), Duration? pingEvery, DateTime Function()? clock}) {
     return ZSocket(
       uri: Uri.parse('ws://h:5190'),
       token: 'tk',
       backoffBase: backoff,
+      pingEvery: pingEvery ?? const Duration(seconds: 25),
+      clock: clock,
       factory: (uri) async {
         channel = FakeChannel();
         channels.add(channel);
@@ -179,6 +181,37 @@ void main() {
       factory: (_) async => denyCh,
     );
     await expectLater(s.connect(), throwsA(isA<ZSocketException>()));
+  });
+
+  test('假死连接判活:周期性来包保活;静默超两个周期主动判死重连', () async {
+    // 假时针驱动:判活只看"来包间隔",与真实定时器快慢解耦,不抖
+    var now = DateTime.now();
+    final s = makeSocket(
+      pingEvery: const Duration(milliseconds: 10),
+      clock: () => now,
+    );
+    final sub = s.events.listen((_) {});
+    final baseChannels = channels.length; // channels 跨测试共享,用差值断言
+    await s.connect();
+    expect(s.state, ZSocketState.open);
+    expect(channels.length, baseChannels + 1);
+
+    // 有来包(pong/事件都算入站):时针小步走(间隔 < 2×周期),永不判死
+    for (var i = 0; i < 6; i++) {
+      now = now.add(const Duration(milliseconds: 4));
+      channel.serverPush(const {'kind': 'pong'});
+    }
+    await pump(const Duration(milliseconds: 25)); // 让真实 ping 周期跑几拍做检查
+    expect(channels.length, baseChannels + 1, reason: '来包正常时不应判死重连');
+
+    // 来包停了:时针跳过两个周期(>20ms)无任何入站(本地 onDone 不会来)→ 判死重连
+    now = now.add(const Duration(milliseconds: 100));
+    await pump(const Duration(milliseconds: 25)); // 周期拍检查 → _onDown → 退避 5ms 重连
+    await pump(const Duration(milliseconds: 10));
+    expect(channels.length, baseChannels + 2, reason: '静默超两个周期应判死并重连');
+    expect(s.state, ZSocketState.open);
+    await sub.cancel();
+    await s.close();
   });
 }
 

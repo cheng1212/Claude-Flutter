@@ -1,4 +1,5 @@
 // 浏览器实现:package:http(底层 fetch/XHR)。跨域靠 server 的 CORS 头。
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -12,12 +13,17 @@ HttpFn platformHttp({required String baseUrl, required String token}) {
       ..headers['Authorization'] = 'Bearer $token'
       ..headers['Content-Type'] = 'application/json';
     if (body != null) req.bodyBytes = utf8.encode(jsonEncode(body));
-    final res = await http.Response.fromStream(await client.send(req));
-    if (res.statusCode >= 300) {
-      throw ZApiException(
-          res.body.isEmpty ? (res.reasonPhrase ?? 'error') : res.body,
-          status: res.statusCode);
+    try {
+      final res = await http.Response.fromStream(await client.send(req))
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode >= 300) {
+        throw ZApiException(
+            res.body.isEmpty ? (res.reasonPhrase ?? 'error') : res.body,
+            status: res.statusCode);
+      }
+      return res.body.isEmpty ? null : jsonDecode(res.body);
+    } on TimeoutException {
+      throw const ZApiException('服务器没有响应(超时)');
     }
-    return res.body.isEmpty ? null : jsonDecode(res.body);
   };
 }

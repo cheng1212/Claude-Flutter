@@ -21,13 +21,17 @@ export type AppOptions = {
 // /download 只认安全文件名:杜绝路径穿越(../、反斜杠、隐藏文件)
 const DOWNLOAD_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-// server 自身版本(health 暴露):从 cwd 读 package.json(npm start 的 cwd 就是 server/),
-// 读不到就 'unknown',不影响启动。
+// server 自身版本(health 暴露):模块相对定位优先(vitest/任意目录直启都对),
+// cwd 兜底;都读不到就 'unknown',不影响启动。
 let SERVER_VERSION = 'unknown';
 try {
-  SERVER_VERSION = (JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as { version?: string }).version ?? SERVER_VERSION;
+  SERVER_VERSION = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string }).version ?? SERVER_VERSION;
 } catch {
-  // cwd 不是 server 目录(编译产物直启),忽略
+  try {
+    SERVER_VERSION = (JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as { version?: string }).version ?? SERVER_VERSION;
+  } catch {
+    // 编译产物挪了窝也找不到 → 保持 'unknown'
+  }
 }
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
