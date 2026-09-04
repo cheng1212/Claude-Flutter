@@ -1,23 +1,12 @@
-import 'dart:convert';
-import 'dart:io';
+// zcode-server REST 客户端(Bearer token)。HTTP 实现按平台条件导入。
+import 'http_default.dart';
+import 'http_fn.dart';
 
-/// REST 异常:非 2xx 或网络错误统一包一层。
-class ZApiException implements Exception {
-  final int? status;
-  final String message;
-  const ZApiException(this.message, {this.status});
+export 'http_fn.dart' show HttpFn, ZApiException;
 
-  @override
-  String toString() => status == null ? message : 'HTTP $status: $message';
-}
-
-/// JSON HTTP 传输 seam:测试注入假件,运行时走 HttpClient。
-typedef HttpFn = Future<Object?> Function(String method, String path, Object? body);
-
-/// zcode-server REST 客户端(Bearer token)。
 class ZApi {
   ZApi({required this.baseUrl, required this.token, HttpFn? http})
-      : _http = http ?? io(baseUrl: baseUrl, token: token);
+      : _http = http ?? platformHttp(baseUrl: baseUrl, token: token);
 
   final String baseUrl; // 形如 http://192.168.x.x:5190
   final String token;
@@ -31,28 +20,6 @@ class ZApi {
     } on Object catch (e) {
       throw ZApiException('$e');
     }
-  }
-
-  /// 默认 HttpClient 实现(工厂方法里绑 baseUrl/token)。
-  static HttpFn io({required String baseUrl, required String token}) {
-    return (method, path, body) async {
-      final client = HttpClient();
-      try {
-        final req = await client.openUrl(method, Uri.parse('$baseUrl$path'));
-        req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-        if (body != null) req.add(utf8.encode(jsonEncode(body)));
-        final res = await req.close();
-        final text = await res.transform(utf8.decoder).join();
-        if (res.statusCode >= 300) {
-          throw ZApiException(text.isEmpty ? res.reasonPhrase : text,
-              status: res.statusCode);
-        }
-        return text.isEmpty ? null : jsonDecode(text);
-      } finally {
-        client.close(force: true);
-      }
-    };
   }
 
   Future<List<String>> models() async {
