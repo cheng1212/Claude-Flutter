@@ -6,3 +6,4 @@ server/data/
 *.db-shm
 dist/
 .zcode-config.local.json
+server/*.log
