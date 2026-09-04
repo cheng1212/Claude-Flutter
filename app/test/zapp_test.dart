@@ -112,6 +112,37 @@ void main() {
     expect((sub['sessions'] as List).first, {'sessionId': 's1', 'lastSeq': 3});
   });
 
+  test('openSession 锚 DB 行号:meta 里旧服务器的天文数字 seq 不得毒化去重指针', () async {
+    await openEmpty();
+    // 服务器重启前 delta 把事件 seq 灌到天文数字;DB 行号才是连续权威
+    http.responder = (c) => {
+          'messages': [
+            {'seq': 3, 'meta': jsonEncode({'kind': 'complete', 'seq': 17203})},
+            {'seq': 2, 'meta': jsonEncode({'kind': 'text', 'role': 'assistant', 'content': '回答', 'seq': 17102})},
+            {'seq': 1, 'meta': jsonEncode({'kind': 'text', 'role': 'user', 'content': '问题', 'seq': 17101})},
+          ],
+          'total': 3,
+        };
+    await app.openSession('s1');
+    expect(app.chat.lastSeq, 3); // 用行号,不是 meta 的 17203
+    expect(app.chat.rows.first, isA<UserRow>());
+    final sub = channel.sent.last;
+    expect((sub['sessions'] as List).first, {'sessionId': 's1', 'lastSeq': 3});
+  });
+
+  test('openSession 同会话刷新保留待审批卡片(审批不落库,丢了没人能批)', () async {
+    await openEmpty();
+    channel.serverPush({
+      'kind': 'permission_request', 'requestId': 'r9', 'toolName': 'Bash', 'input': {}, 'sessionId': 's1',
+    });
+    await pump();
+    expect(app.chat.pendingPermission?.requestId, 'r9');
+    // 刷新:REST 历史里没有审批事件
+    http.responder = (c) => {'messages': <Map>[], 'total': 0};
+    await app.openSession('s1');
+    expect(app.chat.pendingPermission?.requestId, 'r9'); // 保留,审批卡不丢
+  });
+
   test('实时事件归约进 chat;complete 后刷新会话列表', () async {
     await openEmpty();
     channel.serverPush({'kind': 'stream_delta', 'seq': 1, 'sessionId': 's1', 'content': 'he'});

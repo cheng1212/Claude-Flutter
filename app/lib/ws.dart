@@ -189,7 +189,7 @@ class ZSocket {
     if (state == ZSocketState.open) _resubscribe();
   }
 
-  void sendChat(String sessionId, String content, {String? model, String? permissionMode}) {
+  void sendChat(String sessionId, String content, {String? model, String? permissionMode, List<String> images = const []}) {
     final options = <String, dynamic>{
       if (model != null && model.isNotEmpty && model != 'default') 'model': model,
       if (permissionMode != null && permissionMode.isNotEmpty) 'permissionMode': permissionMode,
@@ -198,6 +198,7 @@ class ZSocket {
       'type': 'chat.send',
       'sessionId': sessionId,
       'content': content,
+      if (images.isNotEmpty) 'images': images,
       if (options.isNotEmpty) 'options': options,
     });
   }

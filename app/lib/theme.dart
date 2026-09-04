@@ -1,40 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// 磷光终端风:深黑绿底 + 磷光绿 + 琥珀,全等宽,方角,辉光。
+/// 明快奶油 Framer 风:奶油底 + 焦糖橙主色 + 暖棕文字,干净无辉光。
 /// widget API 与 zremote theme.dart 同形(HardCard/StatusChip/PulseDot/BigButton),
-/// 页面代码可近乎照搬。
+/// 页面代码可近乎照搬;仅把 token 换成浅色系。
 abstract final class ZT {
   // ---- palette -----------------------------------------------------------
-  static const Color bg = Color(0xFF0A0E0A); // 深黑绿底
-  static const Color surface = Color(0xFF101710); // 面板
-  static const Color surfaceHi = Color(0xFF162216); // 高亮面板
-  static const Color ink = Color(0xFFC9F2D2); // 主文字/亮填充(绿白)
-  static const Color inkSoft = Color(0xFF7FA88A); // 次级文字
-  static const Color inkFaint = Color(0xFF4A6B52); // 暗文字
-  static const Color line = Color(0xFF1C2B1E); // 发丝线
-  static const Color edge = Color(0xFF2E4A34); // 默认描边(暗绿)
+  static const Color bg = Color(0xFFFAF6EF); // 奶油底
+  static const Color surface = Color(0xFFFFFFFF); // 卡片
+  static const Color surfaceHi = Color(0xFFFFF8F0); // 高亮面板
+  static const Color ink = Color(0xFF2B2118); // 主文字(暖深棕)
+  static const Color inkSoft = Color(0xFF8A8275); // 次级文字
+  static const Color inkFaint = Color(0xFFB9B1A4); // 暗文字
+  static const Color line = Color(0xFFEDE5D8); // 发丝线
+  static const Color edge = Color(0xFFE2D7C6); // 默认描边(浅暖)
 
-  static const Color primary = Color(0xFF33FF66); // 磷光绿
-  static const Color primaryDeep = Color(0xFF1FBF4A); // 深磷光绿(浅底上可读)
-  static const Color aqua = Color(0xFF4AE8D8); // 青绿(工具/信息)
-  static const Color lemon = Color(0xFFFFB000); // 琥珀(等待/警示)
-  static const Color rose = Color(0xFFFF5566); // 错误
-  static const Color grape = Color(0xFFB48CFF); // 思考/紫
-  static const Color onInk = Color(0xFF071009); // 亮填充上的深字
+  static const Color primary = Color(0xFFE8590C); // 焦糖橙
+  static const Color primaryDeep = Color(0xFFC74405); // 深橙(浅底上可读)
+  static const Color aqua = Color(0xFF4C8A7E); // 哑光青(工具/信息)
+  static const Color lemon = Color(0xFFE9A13B); // 琥珀(等待/警示)
+  static const Color rose = Color(0xFFD65745); // 珊瑚红(错误)
+  static const Color grape = Color(0xFF9B6FC9); // 柔紫(思考)
+  static const Color onInk = Color(0xFFFFFFFF); // 主色填充上的文字
 
-  static const double radius = 3; // 方角
+  static const double radius = 12; // Framer 柔和圆角
 
-  static const String mono = 'monospace';
+  static const String mono = 'monospace'; // 代码块保留等宽
+  static const String sans = 'Roboto'; // 主 UI 干净无衬线
 
   // ---- shadows / borders -------------------------------------------------
 
-  /// 辉光:磷光绿柔光。dx/dy 保留 zremote 签名(按压位移仍有效),但渲染为辉光。
+  /// 柔和暖阴影(取代原辉光)。dx/dy 保留 zremote 签名(按压位移仍有效),
+  /// 但渲染为低透明度的双层柔影,符合浅色界面。
   static List<BoxShadow> hard({double dx = 2.5, double dy = 2.5, Color? color}) {
-    final c = color ?? primary.withValues(alpha: 0.35);
+    final c = (color ?? primary).withValues(alpha: 0.16);
     return [
-      BoxShadow(color: c, offset: Offset(dx * 0.4, dy * 0.4), blurRadius: 10, spreadRadius: 0),
-      BoxShadow(color: c.withValues(alpha: 0.35), offset: Offset.zero, blurRadius: 22, spreadRadius: 1),
+      BoxShadow(color: c, offset: Offset(0, dy * 1.4), blurRadius: 16, spreadRadius: -6),
+      BoxShadow(color: c.withValues(alpha: 0.10), offset: Offset(0, dy * 0.5), blurRadius: 5, spreadRadius: -1),
     ];
   }
 
@@ -46,9 +48,9 @@ abstract final class ZT {
   static ThemeData theme() {
     final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: Brightness.light,
       scaffoldBackgroundColor: bg,
-      colorScheme: const ColorScheme.dark(
+      colorScheme: const ColorScheme.light(
         primary: primary,
         onPrimary: onInk,
         secondary: aqua,
@@ -58,15 +60,15 @@ abstract final class ZT {
         onError: onInk,
       ),
     );
-    final monoStyle = TextStyle(fontFamily: mono, color: ink);
+    final sansStyle = TextStyle(fontFamily: sans, color: ink);
     return base.copyWith(
       textTheme: base.textTheme.copyWith(
-        bodyLarge: monoStyle.copyWith(fontSize: 14),
-        bodyMedium: monoStyle.copyWith(fontSize: 13),
-        bodySmall: monoStyle.copyWith(fontSize: 11.5, color: inkSoft),
-        titleLarge: monoStyle.copyWith(fontSize: 17, fontWeight: FontWeight.w700),
-        titleMedium: monoStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w700),
-        titleSmall: monoStyle.copyWith(fontSize: 13, fontWeight: FontWeight.w700),
+        bodyLarge: sansStyle.copyWith(fontSize: 14),
+        bodyMedium: sansStyle.copyWith(fontSize: 13),
+        bodySmall: sansStyle.copyWith(fontSize: 11.5, color: inkSoft),
+        titleLarge: sansStyle.copyWith(fontSize: 17, fontWeight: FontWeight.w700),
+        titleMedium: sansStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w700),
+        titleSmall: sansStyle.copyWith(fontSize: 13, fontWeight: FontWeight.w700),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: bg,
@@ -75,14 +77,14 @@ abstract final class ZT {
         centerTitle: false,
         systemOverlayStyle: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
+          statusBarIconBrightness: Brightness.dark,
         ),
       ),
       dividerTheme: const DividerThemeData(color: line, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: bg,
-        hintStyle: const TextStyle(color: inkFaint, fontSize: 13),
+        fillColor: surface,
+        hintStyle: const TextStyle(color: inkFaint, fontSize: 13, fontFamily: sans),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
           borderSide: inkSide(),
@@ -99,7 +101,7 @@ abstract final class ZT {
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: surface,
-        contentTextStyle: monoStyle.copyWith(fontSize: 12.5),
+        contentTextStyle: sansStyle.copyWith(fontSize: 12.5),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
@@ -108,8 +110,8 @@ abstract final class ZT {
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: surface,
-        titleTextStyle: monoStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
-        contentTextStyle: monoStyle.copyWith(fontSize: 13, color: inkSoft),
+        titleTextStyle: sansStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
+        contentTextStyle: sansStyle.copyWith(fontSize: 13, color: inkSoft),
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
@@ -123,7 +125,7 @@ abstract final class ZT {
   }
 }
 
-/// 硬卡:磷光边 + 可选辉光;Material+Ink 让涟漪盖住底色。
+/// 硬卡:浅暖底 + 柔和阴影;Material+Ink 让涟漪盖住底色。
 class HardCard extends StatelessWidget {
   final Widget child;
   final Color? color;
@@ -173,7 +175,7 @@ class HardCard extends StatelessWidget {
   }
 }
 
-/// 状态徽章:running 绿 / 等待琥珀 / 其余暗。
+/// 状态徽章:running 橙 / 等待琥珀 / 其余浅暖。
 class StatusChip extends StatelessWidget {
   final String phase;
   final bool compact;
@@ -187,7 +189,7 @@ class StatusChip extends StatelessWidget {
       'running' || 'working' || 'processing' => (ZT.primary, '运行中'),
       'waiting' || 'permission' => (ZT.lemon, '待确认'),
       'error' || 'failed' => (ZT.rose, '异常'),
-      'done' || 'idle' || '' => (ZT.inkFaint, '空闲'),
+      'done' || 'idle' || '' => (ZT.inkSoft, '空闲'),
       _ => (ZT.aqua, phase),
     };
     return Container(
@@ -195,7 +197,7 @@ class StatusChip extends StatelessWidget {
       decoration: ShapeDecoration(
         color: color.withValues(alpha: 0.12),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(2),
+          borderRadius: BorderRadius.circular(6),
           side: BorderSide(width: 1, color: color.withValues(alpha: 0.7)),
         ),
       ),
@@ -207,13 +209,13 @@ class StatusChip extends StatelessWidget {
                 fontSize: compact ? 10 : 11,
                 fontWeight: FontWeight.w700,
                 color: color,
-                fontFamily: ZT.mono)),
+                fontFamily: ZT.sans)),
       ]),
     );
   }
 }
 
-/// 脉冲点:CRT 光标呼吸。控制器必须在 initState 里创建(不要用 late 懒初始化——
+/// 脉冲点:呼吸指示。控制器必须在 initState 里创建(不要用 late 懒初始化——
 /// unmount 时才首次创建会在 deactivated 树上查 TickerMode,触发断言崩溃)。
 class PulseDot extends StatefulWidget {
   final Color color;
@@ -262,7 +264,7 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
   }
 }
 
-/// 大按钮:磷光填充 + 辉光 + 按压下沉。
+/// 大按钮:焦糖橙填充 + 柔和阴影 + 按压下沉。
 class BigButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -308,7 +310,7 @@ class BigButton extends StatelessWidget {
           ],
           Text(label,
               style: TextStyle(
-                  fontSize: 13.5, fontWeight: FontWeight.w700, color: enabled ? fg : ZT.inkFaint, fontFamily: ZT.mono)),
+                  fontSize: 13.5, fontWeight: FontWeight.w700, color: enabled ? fg : ZT.inkFaint, fontFamily: ZT.sans)),
         ]),
       ),
     );

@@ -20,6 +20,7 @@ class ZApp extends ChangeNotifier {
   bool _disposed = false;
 
   List<String> models = const [];
+  List<Map<String, dynamic>> modelGroups = const [];
   List<Map<String, dynamic>> sessions = const [];
   String? currentSessionId;
   ChatState chat = const ChatState();
@@ -32,6 +33,11 @@ class ZApp extends ChangeNotifier {
   bool get linked => _socket.state == ZSocketState.open;
   String? get linkFailure => _socket.failure;
   bool get historyEmpty => !historyLoading && chat.rows.isEmpty;
+
+  void clearError() {
+    error = null;
+    notifyListeners();
+  }
 
   // ---------------------------------------------------------------- lifecycle
 
@@ -129,9 +135,17 @@ class ZApp extends ChangeNotifier {
   Future<void> _loadModels() async {
     try {
       models = await _api.models();
+      modelGroups = await _api.modelGroups();
     } on Object catch (e) {
       error = '$e';
     }
+  }
+
+  /// 选择器打开时的兜底重拉,成功后刷新状态。
+  Future<List<Map<String, dynamic>>> apiGroups() async {
+    modelGroups = await _api.modelGroups();
+    notifyListeners();
+    return modelGroups;
   }
 
   Future<void> _loadSessions() async {
@@ -149,6 +163,9 @@ class ZApp extends ChangeNotifier {
 
   /// 打开(或重开刷新)会话:先 REST 历史(meta 是完整出站事件)重建,再带 lastSeq 订阅续传。
   Future<void> openSession(String id) async {
+    // 同会话刷新时保留待审批卡片:审批请求不落库,REST 重建不出来;
+    // 丢了卡片没人能批,服务端 runtime 会一直等(INTERACTIVE 工具无超时)→ 会话卡死。
+    final keepPermission = currentSessionId == id ? chat.pendingPermission : null;
     currentSessionId = id;
     chat = const ChatState();
     historyLoading = true;
@@ -161,9 +178,11 @@ class ZApp extends ChangeNotifier {
       for (final row in hist.messages) {
         final ev = _rowEvent(row);
         if (ev == null) continue;
+        // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
+        // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
+        final sq = (row['seq'] as num?)?.toInt() ?? 0;
+        ev['seq'] = sq;
         events.add(ev);
-        final sq = (ev['seq'] as num?)?.toInt() ?? (row['seq'] as num?)?.toInt() ?? 0;
-        ev['seq'] ??= sq;
         if (sq > maxSeq) maxSeq = sq;
       }
       // REST 按 seq 倒序返回;归约要按时间正序,否则末尾事件先应用、其余全被去重。
@@ -185,6 +204,17 @@ class ZApp extends ChangeNotifier {
         );
       }
       chat = st;
+      if (keepPermission != null && chat.pendingPermission == null) {
+        chat = ChatState(
+          rows: chat.rows,
+          lastSeq: chat.lastSeq,
+          running: chat.running,
+          streamingText: chat.streamingText,
+          streamingThinking: chat.streamingThinking,
+          usage: chat.usage,
+          pendingPermission: keepPermission,
+        );
+      }
       historyLoading = false;
       notifyListeners();
       _socket.seedLastSeq(id, maxSeq > st.lastSeq ? maxSeq : st.lastSeq);
@@ -229,6 +259,28 @@ class ZApp extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 批量删除:一次请求;当前打开中的会话被删则清空聊天态。返回 {deleted, missing}。
+  Future<({int deleted, List<String> missing})> deleteSessions(List<String> ids) async {
+    if (ids.isEmpty) return (deleted: 0, missing: const <String>[]);
+    final r = await _api.deleteSessions(ids);
+    if (currentSessionId != null && ids.contains(currentSessionId)) {
+      currentSessionId = null;
+      chat = const ChatState();
+    }
+    await _loadSessions();
+    notifyListeners();
+    return r;
+  }
+
+  /// 会话用量聚合(累计 token/缓存 + 上下文占用 + 构成);拉不到返回 null。
+  Future<Map<String, dynamic>?> sessionUsage(String id) async {
+    try {
+      return await _api.sessionUsage(id);
+    } on Object {
+      return null;
+    }
+  }
+
   Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode}) async {
     await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode);
     await _loadSessions();
@@ -237,15 +289,15 @@ class ZApp extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 对话动作
 
-  /// 发消息:本地乐观行(pending),WS 发出;发不出去就回滚。
-  void sendChat(String content, {String? model, String? permissionMode}) {
+  /// 发消息:本地乐观行(pending),WS 发出;发不出去就回滚。images = data URI 列表。
+  void sendChat(String content, {String? model, String? permissionMode, List<String> images = const []}) {
     final sid = currentSessionId;
     final text = content.trim();
-    if (sid == null || text.isEmpty) return;
-    chat = applyLocalUser(chat, text);
+    if (sid == null || (text.isEmpty && images.isEmpty)) return;
+    chat = applyLocalUser(chat, text.isEmpty ? '[图片] ×${images.length}' : text);
     notifyListeners();
     try {
-      _socket.sendChat(sid, text, model: model, permissionMode: permissionMode);
+      _socket.sendChat(sid, text, model: model, permissionMode: permissionMode, images: images);
     } on Object {
       chat = rollbackLocalUser(chat);
       error = '发送失败: 连接断开,等重连后再试';

@@ -53,9 +53,33 @@ class ErrorRow extends ChatRow {
 class UsageInfo {
   final int inputTokens;
   final int outputTokens;
+  final int cacheReadInputTokens;
+  final int cacheCreationInputTokens;
   final double totalCostUsd;
   final int durationMs;
-  const UsageInfo({required this.inputTokens, required this.outputTokens, required this.totalCostUsd, required this.durationMs});
+  final int numTurns;
+  final int contextWindow;
+  final int maxOutputTokens;
+  const UsageInfo({
+    required this.inputTokens,
+    required this.outputTokens,
+    this.cacheReadInputTokens = 0,
+    this.cacheCreationInputTokens = 0,
+    required this.totalCostUsd,
+    required this.durationMs,
+    this.numTurns = 0,
+    this.contextWindow = 0,
+    this.maxOutputTokens = 0,
+  });
+
+  /// 上一轮的上下文占用 ≈ 输入 + 缓存读 + 缓存写(result 时的 prompt 就是全部历史)。
+  int get contextTokens => inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+
+  /// 缓存命中率:缓存读 / (输入 + 缓存读 + 缓存写)。
+  double get cacheHitRate {
+    final total = contextTokens;
+    return total == 0 ? 0 : cacheReadInputTokens / total;
+  }
 }
 
 @immutable
@@ -155,17 +179,33 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       return _with(s, lastSeq: nextSeq, usage: UsageInfo(
         inputTokens: (ev['inputTokens'] as num?)?.toInt() ?? 0,
         outputTokens: (ev['outputTokens'] as num?)?.toInt() ?? 0,
+        cacheReadInputTokens: (ev['cacheReadInputTokens'] as num?)?.toInt() ?? 0,
+        cacheCreationInputTokens: (ev['cacheCreationInputTokens'] as num?)?.toInt() ?? 0,
         totalCostUsd: (ev['totalCostUsd'] as num?)?.toDouble() ?? 0,
         durationMs: (ev['durationMs'] as num?)?.toInt() ?? 0,
+        numTurns: (ev['numTurns'] as num?)?.toInt() ?? 0,
+        contextWindow: (ev['contextWindow'] as num?)?.toInt() ?? 0,
+        maxOutputTokens: (ev['maxOutputTokens'] as num?)?.toInt() ?? 0,
       ));
     case 'complete':
       return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true);
     case 'error':
-      return _with(s, lastSeq: nextSeq, running: false, rows: [...s.rows, ErrorRow(ev['content'] as String? ?? '')]);
+      final content = ev['content'] as String? ?? '';
+      if (content == 'RUN_IN_PROGRESS') {
+        // 服务器上一轮仍在跑(可能已卡死):本轮被拒,消息没落库。
+        // 撤回乐观行(否则刷新前一直挂着假气泡)、恢复 running 让停止按钮出现,并提示怎么解。
+        final rolled = rollbackLocalUser(s);
+        return _with(rolled, lastSeq: nextSeq, running: true, rows: [
+          ...rolled.rows,
+          const ErrorRow('上一轮仍在运行(可能已卡住):点输入框旁的停止按钮 ■,然后再重发'),
+        ]);
+      }
+      return _with(s, lastSeq: nextSeq, running: false, rows: [...s.rows, ErrorRow(content)]);
     case 'subscribed':
+      // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
+      // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
       final isProcessing = ev['isProcessing'] as bool? ?? false;
-      final serverLastSeq = ev['lastSeq'] as int?;
-      return _with(s, running: isProcessing, lastSeq: serverLastSeq != null && serverLastSeq > s.lastSeq ? serverLastSeq : s.lastSeq);
+      return _with(s, running: isProcessing);
     default:
       return seq != null ? _with(s, lastSeq: nextSeq) : s;
   }

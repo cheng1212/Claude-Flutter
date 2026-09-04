@@ -22,8 +22,11 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  late final _base = TextEditingController(text: widget.initialBaseUrl ?? '');
-  late final _token = TextEditingController(text: widget.initialToken ?? '');
+  // 默认值 = 家里局域网的实际地址/令牌,开箱即连;连不上再手改。
+  static const _defaultBase = 'http://192.168.31.194:5190';
+  static const _defaultToken = '123456';
+  late final _base = TextEditingController(text: widget.initialBaseUrl ?? _defaultBase);
+  late final _token = TextEditingController(text: widget.initialToken ?? _defaultToken);
   bool _hideToken = true;
 
   @override

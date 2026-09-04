@@ -10,8 +10,12 @@ HttpFn platformHttp({required String baseUrl, required String token}) {
     try {
       final req = await client.openUrl(method, Uri.parse('$baseUrl$path'));
       req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      if (body != null) req.add(utf8.encode(jsonEncode(body)));
+      if (body != null) {
+        // 无 body 的 DELETE/GET 不能带 application/json,Fastify 会 400
+        // (FST_ERR_CTP_EMPTY_JSON_BODY)
+        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        req.add(utf8.encode(jsonEncode(body)));
+      }
       final res = await req.close();
       final text = await res.transform(utf8.decoder).join();
       if (res.statusCode >= 300) {

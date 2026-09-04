@@ -27,6 +27,16 @@ class ZApi {
     return [if (res is List) for (final m in res) '$m'];
   }
 
+  /// 分组模型:/api/models/grouped → [{id,label,models:[{id,label}]}]
+  Future<List<Map<String, dynamic>>> modelGroups() async {
+    final res = await _call('GET', '/api/models/grouped', null);
+    final groups = (res is Map ? res['groups'] : null);
+    if (groups is List) {
+      return [for (final g in groups) (g as Map).cast<String, dynamic>()];
+    }
+    return const [];
+  }
+
   Future<List<Map<String, dynamic>>> sessions() async {
     final res = await _call('GET', '/api/sessions', null);
     if (res is List) {
@@ -55,6 +65,22 @@ class ZApi {
 
   Future<void> deleteSession(String id) async {
     await _call('DELETE', '/api/sessions/$id', null);
+  }
+
+  /// 批量删除:一次请求;幂等,已删过的 id 记入 missing 不报错。
+  Future<({int deleted, List<String> missing})> deleteSessions(List<String> ids) async {
+    final res = await _call('POST', '/api/sessions/batch-delete', {'ids': ids});
+    final map = res is Map ? res : const {};
+    return (
+      deleted: (map['deleted'] as num?)?.toInt() ?? 0,
+      missing: [if (map['missing'] is List) for (final m in map['missing'] as List) '$m'],
+    );
+  }
+
+  /// 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成。
+  Future<Map<String, dynamic>?> sessionUsage(String id) async {
+    final res = await _call('GET', '/api/sessions/$id/usage', null);
+    return res is Map ? res.cast<String, dynamic>() : null;
   }
 
   /// 历史消息:{messages:[…], total};行内 meta 是完整出站事件(含 seq)。

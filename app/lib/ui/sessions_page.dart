@@ -83,15 +83,17 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
     );
     if (ok != true) return;
-    for (final id in _picked.toList()) {
-      try {
-        await app.deleteSession(id);
-      } on Object catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('删除失败: $e')));
-        }
-        break;
+    final ids = _picked.toList();
+    try {
+      final r = await app.deleteSessions(ids);
+      if (mounted && r.missing.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('已删 ${r.deleted} 个;${r.missing.length} 个此前已删过')));
+      }
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除失败: $e')));
       }
     }
     setState(() => _picked.clear());
@@ -142,6 +144,61 @@ class _SessionsPageState extends State<SessionsPage> {
     }
   }
 
+  /// 设置面板:显示当前连接信息;「切换服务器」才走登出。别再一点齿轮就掉登录页。
+  Future<void> _openSettings() async {
+    final link = app.linked ? '已连接' : (app.linkFailure ?? '连接中…');
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.settings_outlined, size: 18, color: ZT.primary),
+              SizedBox(width: 8),
+              Text('设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+            ]),
+            const SizedBox(height: 14),
+            _settingsRow('连接状态', link),
+            _settingsRow('会话数', '${app.sessions.length}'),
+            _settingsRow('模型数', '${app.models.length}'),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: BigButton(
+                label: '切换服务器(登出)',
+                icon: Icons.swap_horiz_rounded,
+                color: ZT.rose,
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  widget.onLogout();
+                },
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _settingsRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        Text(label, style: const TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+        const Spacer(),
+        Text(value,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
+      ]),
+    );
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -162,8 +219,8 @@ class _SessionsPageState extends State<SessionsPage> {
                 onPressed: _toggleManage, child: const Text('完成'))
           else ...[
             IconButton(
-                tooltip: '切换服务器',
-                onPressed: widget.onLogout,
+                tooltip: '设置',
+                onPressed: _openSettings,
                 icon: const Icon(Icons.settings_outlined, size: 20)),
             IconButton(
                 tooltip: '管理',
@@ -296,6 +353,21 @@ class _SessionsPageState extends State<SessionsPage> {
                       fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               Row(children: [
+                if (s['source'] == 'local')
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                    decoration: ShapeDecoration(
+                      color: ZT.lemon.withValues(alpha: 0.1),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(2),
+                          side: BorderSide(
+                              width: 1, color: ZT.lemon.withValues(alpha: 0.5))),
+                    ),
+                    child: const Text('本地',
+                        style: TextStyle(
+                            fontSize: 10, color: ZT.lemon, fontFamily: ZT.sans)),
+                  ),
+                if (s['source'] == 'local') const SizedBox(width: 8),
                 if (model.isNotEmpty && model != 'default') ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),

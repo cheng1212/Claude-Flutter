@@ -36,6 +36,20 @@ void main() {
     expect(tool.result!.isError, isFalse);
   });
 
+  test('RUN_IN_PROGRESS:撤回乐观行、恢复 running、给停止提示;普通错误照旧落定', () {
+    var s = const ChatState();
+    s = applyLocalUser(s, '帮我查');
+    expect((s.rows.single as UserRow).pending, isTrue);
+    s = applyEvent(s, ev('error', seq: 9, extra: {'content': 'RUN_IN_PROGRESS'}));
+    expect(s.running, isTrue); // 服务器上一轮还在跑 → 停止按钮要出现
+    expect(s.rows.whereType<UserRow>(), isEmpty); // 没落库的假气泡撤回
+    expect(s.rows.single, isA<ErrorRow>());
+
+    final t = applyEvent(const ChatState(), ev('error', seq: 1, extra: {'content': '上游 500'}));
+    expect(t.running, isFalse);
+    expect((t.rows.single as ErrorRow).content, '上游 500');
+  });
+
   test('usage 更新;complete 结束运行并清流缓冲', () {
     var s = const ChatState(running: true, streamingText: '残流');
     s = applyEvent(s, ev('usage', seq: 1, extra: {'inputTokens': 10, 'outputTokens': 5, 'totalCostUsd': 0.05, 'durationMs': 1234}));
@@ -84,11 +98,19 @@ void main() {
     expect((s.rows[1] as TextRow).content, '回答');
   });
 
-  test('subscribed.isProcessing 驱动 running;本地 user 行不入 seq 流', () {
+  test('subscribed.isProcessing 驱动 running;不抬 lastSeq(replay 不被毒化);本地 user 行不入 seq 流', () {
     var s = const ChatState();
     s = applyEvent(s, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': true, 'lastSeq': 9}));
     expect(s.running, isTrue);
-    expect(s.lastSeq, 9); // subscribed 的 lastSeq 是服务器视角
+    expect(s.lastSeq, 0); // 服务器指针 ≠ 已应用内容,抬门槛会让 replay 整批被去重
+    // subscribed 之后到达的 replay(≤ 服务器指针)必须照常应用
+    s = applyReplay(s, [
+      ev('text', seq: 7, extra: {'role': 'assistant', 'content': '补'}),
+      ev('complete', seq: 9, extra: {'exitCode': 0, 'aborted': false}),
+    ]);
+    expect((s.rows.single as TextRow).content, '补');
+    expect(s.lastSeq, 9);
+    expect(s.running, isFalse);
     s = applyLocalUser(s, '帮我看看');
     expect(s.rows.last, isA<UserRow>());
     expect(s.lastSeq, 9); // 本地行不动 seq

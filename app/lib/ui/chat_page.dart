@@ -3,6 +3,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
 
 import '../state/reducer.dart';
 import '../state/zapp.dart';
@@ -22,6 +24,8 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
+  final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
+  final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
 
   ZApp get app => widget.app;
@@ -38,6 +42,7 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     app.removeListener(_onApp);
     _input.dispose();
+    _pendingImages.dispose();
     super.dispose();
   }
 
@@ -88,48 +93,79 @@ class _ChatPageState extends State<ChatPage> {
 
   void _send() {
     final text = _input.text.trim();
-    if (text.isEmpty) return;
+    final images = _pendingImages.value;
+    if (text.isEmpty && images.isEmpty) return;
     _input.clear();
-    app.sendChat(text);
+    _pendingImages.value = const [];
+    app.sendChat(text, images: images);
   }
 
+  /// 相册选图 → 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
+  Future<void> _pickImage() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2048,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (bytes.lengthInBytes > 5 * 1024 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('图片超过 5MB,换个小的')));
+        }
+        return;
+      }
+      final mime = lookupMimeType(picked.path) ?? 'image/jpeg';
+      final uri = 'data:$mime;base64,${base64Encode(bytes)}';
+      final next = [..._pendingImages.value, uri];
+      if (next.length > 4) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('一次最多 4 张')));
+        }
+        return;
+      }
+      _pendingImages.value = next;
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('选图失败: $e')));
+      }
+    }
+  }
+
+  /// 二级模型选择:第一级供应商(智谱/深度求索/英伟达…),点进去第二级模型列表。
   Future<void> _pickModel() async {
     final current = _model;
+    // 分组数据还没拉到就现拉一次
+    if (app.modelGroups.isEmpty) {
+      try {
+        app.modelGroups = await app.apiGroups();
+      } on Object {
+        // 拉不到就退回一级平铺
+      }
+    }
+    if (!mounted) return;
+    final sheetHeight = MediaQuery.of(context).size.height * 0.7;
     final picked = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: ZT.surface,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
       builder: (ctx) => SafeArea(
         child: Container(
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.6),
+          constraints: BoxConstraints(maxHeight: sheetHeight),
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
-              Icon(Icons.dns_rounded, size: 18, color: ZT.primary),
-              SizedBox(width: 8),
-              Text('模型',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            ]),
-            const SizedBox(height: 10),
-            Flexible(
-              child: ListView(shrinkWrap: true, children: [
-                for (final m in ['default', ...app.models.where((m) => m != 'default')])
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: _OptionRow(
-                      name: m,
-                      selected: m == current,
-                      accent: ZT.primary,
-                      onTap: () => Navigator.pop(ctx, m),
-                    ),
-                  ),
-              ]),
-            ),
-          ]),
+          child: _ModelGroupPicker(
+            groups: app.modelGroups,
+            current: current,
+            onPick: (m) => Navigator.pop(ctx, m),
+          ),
         ),
       ),
     );
@@ -273,10 +309,13 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  /// 用量面板:最近一轮走 WS 实时状态,累计/上下文快照/构成走 REST 聚合。
   Future<void> _openUsageSheet() async {
+    final summaryFuture = app.sessionUsage(widget.sessionId); // 打开时拉一次,不随重建刷
     await showModalBottomSheet(
       context: context,
       backgroundColor: ZT.surface,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
@@ -286,35 +325,178 @@ class _ChatPageState extends State<ChatPage> {
           animation: app,
           builder: (ctx, _) {
             final u = chat.usage;
-            return Container(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Row(children: [
-                  Icon(Icons.query_stats_rounded, size: 18, color: ZT.aqua),
-                  SizedBox(width: 8),
-                  Text('用量',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                ]),
-                const SizedBox(height: 12),
-                if (u == null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Text('这一轮还没产生用量。',
-                        style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
-                  )
-                else ...[
-                  _usageRow('输入 tokens', '${u.inputTokens}'),
-                  _usageRow('输出 tokens', '${u.outputTokens}'),
-                  _usageRow('费用', '\$${u.totalCostUsd.toStringAsFixed(4)}'),
-                  _usageRow('耗时', u.durationMs >= 1000
-                      ? '${(u.durationMs / 1000).toStringAsFixed(1)} s'
-                      : '${u.durationMs} ms'),
-                ],
-              ]),
+            return FutureBuilder<Map<String, dynamic>?>(
+              future: summaryFuture,
+              builder: (ctx, snap) {
+                final agg = snap.data;
+                final totals = (agg?['totals'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+                final last = (agg?['last'] as Map?)?.cast<String, dynamic>();
+                final composition = (agg?['composition'] as List?) ?? const [];
+                final tools = (agg?['tools'] as List?) ?? const [];
+                final runs = (agg?['runs'] as num?)?.toInt() ?? 0;
+                // 上下文占用:WS 实时优先;没跑过这轮就退回 REST 里最近一次快照
+                final liveCtx = u?.contextTokens ?? 0;
+                final ctxTokens = liveCtx > 0
+                    ? liveCtx
+                    : ((last?['contextTokens'] as num?)?.toInt() ?? 0);
+                final ctxWindow = (u?.contextWindow ?? 0) > 0
+                    ? u!.contextWindow
+                    : ((last?['contextWindow'] as num?)?.toInt() ?? 0);
+                final hitRate = (u != null && liveCtx > 0) ? u.cacheHitRate : null;
+                final totalBytes = composition.fold<int>(
+                    0, (s, c) => s + (((c as Map)['bytes'] as num?) ?? 0).toInt());
+                return Container(
+                  constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(ctx).size.height * 0.78),
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                  child: SingleChildScrollView(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const Row(children: [
+                        Icon(Icons.query_stats_rounded, size: 18, color: ZT.aqua),
+                        SizedBox(width: 8),
+                        Text('用量',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w900)),
+                      ]),
+                      const SizedBox(height: 12),
+                      // —— 上下文:当前窗口占用 + 缓存命中 ——
+                      _usageSection('上下文(最近一轮)', [
+                        if (ctxTokens > 0)
+                          _usageBar(
+                            '窗口占用',
+                            ctxWindow > 0
+                                ? '${_fmtTokens(ctxTokens)} / ${_fmtTokens(ctxWindow)}'
+                                    ' (${(ctxTokens / ctxWindow * 100).toStringAsFixed(1)}%)'
+                                : '${_fmtTokens(ctxTokens)} tokens',
+                            ctxWindow > 0
+                                ? (ctxTokens / ctxWindow).clamp(0.0, 1.0)
+                                : null,
+                          ),
+                        if (hitRate != null)
+                          _usageRow('缓存命中率', '${(hitRate * 100).toStringAsFixed(1)}%'),
+                        if ((u?.maxOutputTokens ?? 0) > 0)
+                          _usageRow('单轮输出上限', _fmtTokens(u!.maxOutputTokens)),
+                        if (ctxTokens == 0)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Text('还没有用量数据;发一条消息跑完一轮后这里会有完整统计。',
+                                style: TextStyle(
+                                    fontSize: 12.5, color: ZT.inkFaint)),
+                          ),
+                      ]),
+                      // —— 最近一轮(WS 实时)——
+                      if (u != null)
+                        _usageSection('最近一轮', [
+                          _usageRow('输入',
+                              '${_fmtTokens(u.inputTokens)}(缓存读 ${_fmtTokens(u.cacheReadInputTokens)} / 写 ${_fmtTokens(u.cacheCreationInputTokens)})'),
+                          _usageRow('输出', _fmtTokens(u.outputTokens)),
+                          if (u.numTurns > 0) _usageRow('轮次', '${u.numTurns}'),
+                          _usageRow('耗时', u.durationMs >= 1000
+                              ? '${(u.durationMs / 1000).toStringAsFixed(1)} s'
+                              : '${u.durationMs} ms'),
+                          _usageRow('费用', '\$${u.totalCostUsd.toStringAsFixed(4)}'),
+                        ]),
+                      // —— 累计(REST 聚合)——
+                      if (runs > 0)
+                        _usageSection('累计($runs 轮)', [
+                          _usageRow('输入合计',
+                              '${_fmtTokens((totals['inputTokens'] as num?)?.toInt() ?? 0)}(缓存读 ${_fmtTokens((totals['cacheReadInputTokens'] as num?)?.toInt() ?? 0)})'),
+                          _usageRow('输出合计',
+                              _fmtTokens((totals['outputTokens'] as num?)?.toInt() ?? 0)),
+                          _usageRow('费用合计',
+                              '\$${((totals['costUsd'] as num?) ?? 0).toStringAsFixed(4)}'),
+                          if (((totals['durationMs'] as num?)?.toInt() ?? 0) > 0)
+                            _usageRow('耗时合计',
+                                '${((totals['durationMs'] as num?)!.toInt() / 1000).toStringAsFixed(0)} s'),
+                        ]),
+                      // —— 构成:哪类消息占了多少(按字符量估算)——
+                      if (composition.isNotEmpty)
+                        _usageSection('消息构成(按字符量估算)', [
+                          for (final c in composition)
+                            if (c is Map)
+                              _usageBar(
+                                '${_kindLabel['${c['kind']}'] ?? c['kind']} ×${c['count']}',
+                                totalBytes > 0
+                                    ? '${((((c['bytes'] as num?) ?? 0).toInt()) / totalBytes * 100).toStringAsFixed(1)}%'
+                                    : '0%',
+                                totalBytes > 0
+                                    ? ((((c['bytes'] as num?) ?? 0).toInt()) / totalBytes)
+                                        .clamp(0.0, 1.0)
+                                    : null,
+                              ),
+                          if (tools.isNotEmpty)
+                            _usageRow(
+                                '工具',
+                                tools
+                                    .map((t) =>
+                                        '${t['toolName']}×${t['count']}')
+                                    .join(' · ')),
+                        ]),
+                    ]),
+                  ),
+                );
+              },
             );
           },
         ),
       ),
+    );
+  }
+
+  static const Map<String, String> _kindLabel = {
+    'user': '用户消息',
+    'text': '回复文本',
+    'thinking': '思考',
+    'tool_use': '工具调用',
+    'tool_result': '工具结果',
+    'error': '错误',
+  };
+
+  String _fmtTokens(int n) =>
+      n >= 10000 ? '${(n / 1000).toStringAsFixed(n >= 100000 ? 0 : 1)}k' : '$n';
+
+  Widget _usageSection(String title, List<Widget> rows) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+        Text(title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        ...rows,
+      ]),
+    );
+  }
+
+  /// 带占比条的行(上下文占用、构成比例)。
+  Widget _usageBar(String label, String value, double? fraction) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: ZT.inkFaint)),
+          const Spacer(),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
+        ]),
+        if (fraction != null) ...[
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              value: fraction,
+              minHeight: 4,
+              backgroundColor: ZT.edge,
+              valueColor: AlwaysStoppedAnimation(
+                  fraction > 0.85 ? ZT.rose : ZT.aqua),
+            ),
+          ),
+        ],
+      ]),
     );
   }
 
@@ -324,9 +506,12 @@ class _ChatPageState extends State<ChatPage> {
       child: Row(children: [
         Text(label, style: const TextStyle(fontSize: 12, color: ZT.inkFaint)),
         const Spacer(),
-        Text(value,
-            style: const TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
+        Flexible(
+          child: Text(value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
+        ),
       ]),
     );
   }
@@ -354,7 +539,6 @@ class _ChatPageState extends State<ChatPage> {
         child: Column(children: [
           if (app.socket.state == ZSocketState.reconnecting) _reconnectStrip(),
           if (app.error != null) _errorStrip(),
-          _quickBar(),
           const Divider(height: 1),
           Expanded(child: _list()),
           if (chat.pendingPermission != null)
@@ -367,6 +551,7 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
           _composer(),
+          _quickBar(),
         ]),
       ),
     );
@@ -419,26 +604,46 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 图标快捷条:等宽均分。有自定状态时点亮。
+  /// 当前模型的展示名:分组里的 label 优先,没有就退回 id。
+  String _modelLabel() {
+    final id = _model;
+    if (id == 'default') return '默认模型';
+    for (final g in app.modelGroups) {
+      for (final m in (g['models'] as List? ?? const [])) {
+        if (m is Map && '${m['id']}' == id) return '${m['label'] ?? id}';
+      }
+    }
+    return id;
+  }
+
+  /// 底部快捷条:模型用文字芯片直显当前模型名(超宽省略号,参考桌面端底栏),
+  /// 权限/计划/用量/刷新是紧凑图标钮,有状态时点亮。
   Widget _quickBar() {
     final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
-    final chips = <(IconData, String, Color?, VoidCallback)>[
-      (Icons.dns_rounded, '模型', _model == 'default' ? null : ZT.aqua, _pickModel),
-      (Icons.shield_rounded, '权限模式', _mode == 'default' ? null : ZT.lemon, _pickMode),
-      (Icons.account_tree_rounded, '执行计划', planOn ? ZT.primary : null, _openPlanSheet),
-      (Icons.query_stats_rounded, '用量', chat.usage == null ? null : ZT.aqua, _openUsageSheet),
-      (Icons.refresh_rounded, '刷新历史', null, () => app.openSession(widget.sessionId)),
+    final chips = <(IconData, String, Color?, bool, VoidCallback)>[
+      (Icons.shield_rounded, '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
+      (Icons.account_tree_rounded, '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
+      (Icons.query_stats_rounded, '用量', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
+      // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
+      (Icons.refresh_rounded, '刷新历史', null, app.historyLoading, () => app.openSession(widget.sessionId)),
     ];
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 2),
       child: Row(
         children: [
-          for (final (icon, tooltip, accent, onTap) in chips)
-            Expanded(
-              child: Center(
-                child: _QuickChip(icon: icon, tooltip: tooltip, accent: accent, onTap: onTap),
+          Expanded(
+            child: Center(
+              child: _ModelChip(
+                label: _modelLabel(),
+                fullName: _model,
+                accent: _model == 'default' ? null : ZT.aqua,
+                onTap: _pickModel,
               ),
             ),
+          ),
+          const SizedBox(width: 8),
+          for (final (icon, tooltip, accent, busy, onTap) in chips)
+            _QuickChip(icon: icon, tooltip: tooltip, accent: accent, busy: busy, onTap: onTap),
         ],
       ),
     );
@@ -572,31 +777,81 @@ class _ChatPageState extends State<ChatPage> {
         border: Border(top: BorderSide(width: 1.2, color: ZT.edge)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: TextField(
-            controller: _input,
-            minLines: 1,
-            maxLines: 5,
-            textInputAction: TextInputAction.newline,
-            style: const TextStyle(fontSize: 14, fontFamily: ZT.mono, color: ZT.ink),
-            decoration: const InputDecoration(
-              hintText: '让它干活…',
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // 已选图片预览条
+        ValueListenableBuilder<List<String>>(
+          valueListenable: _pendingImages,
+          builder: (context, images, _) {
+            if (images.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                height: 64,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: images.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) => Stack(children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(ZT.radius),
+                      child: Image.network(images[i], width: 64, height: 64, fit: BoxFit.cover),
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: () {
+                          final next = [...images]..removeAt(i);
+                          _pendingImages.value = next;
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: ZT.ink.withValues(alpha: 0.6),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.close_rounded, size: 12, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            );
+          },
+        ),
+        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          // 添加图片按钮
+          IconButton(
+            tooltip: '添加图片',
+            onPressed: _pickImage,
+            icon: const Icon(Icons.image_outlined, size: 22, color: ZT.inkSoft),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _input,
+              minLines: 1,
+              maxLines: 5,
+              textInputAction: TextInputAction.newline,
+              style: const TextStyle(fontSize: 14, fontFamily: ZT.mono, color: ZT.ink),
+              decoration: const InputDecoration(
+                hintText: '让它干活…',
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        // 逐字刷新:不依赖页面重建
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: _input,
-          builder: (context, value, _) => _SendOrStop(
-            canStop: chat.running,
-            hasText: value.text.trim().isNotEmpty,
-            onSend: _send,
-            onStop: app.abort,
+          const SizedBox(width: 8),
+          // 逐字刷新:不依赖页面重建
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: _input,
+            builder: (context, value, _) => _SendOrStop(
+              canStop: chat.running,
+              hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
+              onSend: _send,
+              onStop: app.abort,
+            ),
           ),
-        ),
+        ]),
       ]),
     );
   }
@@ -604,11 +859,159 @@ class _ChatPageState extends State<ChatPage> {
 
 // ---------------------------------------------------------------- widgets
 
+/// 二级模型选择器:一级供应商列表,点供应商展开该组的模型列表。
+class _ModelGroupPicker extends StatefulWidget {
+  final List<Map<String, dynamic>> groups;
+  final String current;
+  final void Function(String modelId) onPick;
+
+  const _ModelGroupPicker({
+    required this.groups,
+    required this.current,
+    required this.onPick,
+  });
+
+  @override
+  State<_ModelGroupPicker> createState() => _ModelGroupPickerState();
+}
+
+class _ModelGroupPickerState extends State<_ModelGroupPicker> {
+  Map<String, dynamic>? _openGroup; // null = 显示一级供应商列表
+
+  @override
+  Widget build(BuildContext context) {
+    if (_openGroup != null) return _level2(_openGroup!);
+    return _level1();
+  }
+
+  Widget _header(String title, {VoidCallback? onBack}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(children: [
+        if (onBack != null)
+          GestureDetector(
+            onTap: onBack,
+            child: const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Icon(Icons.arrow_back_rounded, size: 20, color: ZT.inkSoft),
+            ),
+          ),
+        const Icon(Icons.dns_rounded, size: 18, color: ZT.primary),
+        const SizedBox(width: 8),
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+      ]),
+    );
+  }
+
+  /// 一级:供应商(Claude 默认 / 智谱 GLM / 深度求索 / 英伟达…)。
+  Widget _level1() {
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _header('选择供应商'),
+      Flexible(
+        child: widget.groups.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Text('模型列表为空(后端 /api/models/grouped 没拉到)',
+                    style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+              )
+            : ListView(shrinkWrap: true, children: [
+                for (final g in widget.groups)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: _GroupRow(
+                      group: g,
+                      containsCurrent: _groupHasCurrent(g),
+                      onTap: () => setState(() => _openGroup = g),
+                    ),
+                  ),
+              ]),
+      ),
+    ]);
+  }
+
+  /// 二级:该供应商下的模型。
+  Widget _level2(Map<String, dynamic> g) {
+    final models = (g['models'] as List? ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _header('${g['label'] ?? g['id']}', onBack: () => setState(() => _openGroup = null)),
+      Flexible(
+        child: ListView(shrinkWrap: true, children: [
+          for (final m in models)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _OptionRow(
+                name: '${m['label'] ?? m['id']}',
+                selected: '${m['id']}' == widget.current,
+                accent: ZT.primary,
+                onTap: () => widget.onPick('${m['id']}'),
+              ),
+            ),
+        ]),
+      ),
+    ]);
+  }
+
+  bool _groupHasCurrent(Map<String, dynamic> g) {
+    final models = (g['models'] as List? ?? const []).whereType<Map>();
+    return models.any((m) => '${m['id']}' == widget.current);
+  }
+}
+
+/// 一级供应商行:组名 + 模型数 + 右箭头;当前模型在该组时高亮。
+class _GroupRow extends StatelessWidget {
+  final Map<String, dynamic> group;
+  final bool containsCurrent;
+  final VoidCallback onTap;
+
+  const _GroupRow({required this.group, required this.containsCurrent, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = (group['models'] as List? ?? const []).length;
+    final accent = containsCurrent ? ZT.primary : ZT.ink;
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: ShapeDecoration(
+          color: containsCurrent ? ZT.primary.withValues(alpha: 0.08) : ZT.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(ZT.radius),
+            side: ZT.inkSide(w: containsCurrent ? 1.5 : 1.2, color: containsCurrent ? ZT.primary : ZT.edge),
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(children: [
+              Expanded(
+                child: Text('${group['label'] ?? group['id']}',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: accent)),
+              ),
+              Text('$count 个模型',
+                  style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+              const SizedBox(width: 6),
+              Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkFaint),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 底部快捷按钮:纯图标小方块。
 class _QuickChip extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final Color? accent;
+
+  /// true = 用小转圈代替图标(如刷新历史拉取中)。
+  final bool busy;
   final VoidCallback onTap;
 
   const _QuickChip({
@@ -616,6 +1019,7 @@ class _QuickChip extends StatelessWidget {
     required this.tooltip,
     required this.onTap,
     this.accent,
+    this.busy = false,
   });
 
   @override
@@ -638,7 +1042,74 @@ class _QuickChip extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(ZT.radius),
             onTap: onTap,
-            child: Icon(icon, size: 19, color: accent),
+            child: busy
+                ? SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: accent),
+                  )
+                : Icon(icon, size: 19, color: accent),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 模型文字芯片:直显当前模型名,空间不足省略号;长按(Tooltip)看完整 id。
+class _ModelChip extends StatelessWidget {
+  final String label;
+  final String fullName;
+  final Color? accent;
+  final VoidCallback onTap;
+
+  const _ModelChip({
+    required this.label,
+    required this.fullName,
+    required this.onTap,
+    this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = accent ?? ZT.inkSoft;
+    return Tooltip(
+      message: '模型:$fullName',
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: ShapeDecoration(
+            color: ZT.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(ZT.radius),
+              side: ZT.inkSide(w: 1.2),
+            ),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(ZT.radius),
+            onTap: onTap,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.bolt_rounded, size: 15, color: c),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: c,
+                        fontFamily: ZT.mono),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
