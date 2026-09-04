@@ -21,4 +21,16 @@ describe('health + auth', () => {
     expect(ok.statusCode).toBe(404);
     await app.close();
   });
+
+  it('CORS:带浏览器头,OPTIONS 预检 204 且不要求鉴权', async () => {
+    const app = await buildApp({ token: 't' });
+    const pre = await app.inject({ method: 'OPTIONS', url: '/api/sessions', headers: { origin: 'http://192.168.31.194:8090' } });
+    expect(pre.statusCode).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe('*');
+    expect(pre.headers['access-control-allow-headers']).toContain('Authorization');
+
+    const get = await app.inject({ method: 'GET', url: '/api/health', headers: { origin: 'http://192.168.31.194:8090' } });
+    expect(get.headers['access-control-allow-origin']).toBe('*');
+    await app.close();
+  });
 });
