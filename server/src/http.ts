@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import fastify from 'fastify';
 import { registerHttpRoutes } from './http-routes.js';
@@ -7,7 +9,13 @@ export type AppOptions = {
   token: string;
   db?: Db;
   routesPath?: string;
+  /** 静态分发目录:/download/:name 按精确文件名发送,免鉴权(给手机下载 APK 用) */
+  publicDir?: string;
+  onSessionDeleted?: (sessionId: string) => void;
 };
+
+// /download 只认安全文件名:杜绝路径穿越(../、反斜杠、隐藏文件)
+const DOWNLOAD_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const app = fastify();
@@ -21,8 +29,27 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     }
   });
   app.get('/api/health', async () => ({ ok: true }));
+  if (opts.publicDir) {
+    // 不在 /api/ 前缀下 → 鉴权钩子放行;手机浏览器直接打开链接即可下载
+    app.get('/download/:name', async (req, reply) => {
+      const name = (req.params as { name: string }).name;
+      if (!DOWNLOAD_NAME_RE.test(name)) return reply.code(404).send({ error: 'not found' });
+      const file = path.join(opts.publicDir!, name);
+      let st: fs.Stats;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      if (!st.isFile()) return reply.code(404).send({ error: 'not found' });
+      reply.header('Content-Length', st.size);
+      reply.header('Content-Disposition', `attachment; filename="${name}"`);
+      reply.type(name.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'application/octet-stream');
+      return reply.send(fs.createReadStream(file));
+    });
+  }
   if (opts.db && opts.routesPath) {
-    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath });
+    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted });
   }
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/') || req.url.startsWith('/api/health')) return;

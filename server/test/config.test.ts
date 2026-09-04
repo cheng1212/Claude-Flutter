@@ -8,7 +8,7 @@ describe('config', () => {
   it('首次运行生成 token 并写盘;第二次读取同一个', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-cfg-'));
     const a = loadOrCreateConfig(dir);
-    expect(a.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(a.token).toBe('123456'); // 默认简单令牌(用户要求)
     const b = loadOrCreateConfig(dir);
     expect(b.token).toBe(a.token);
     expect(b.port).toBe(5190);

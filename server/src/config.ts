@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,6 +7,7 @@ export type ServerConfig = {
   port: number;
   dataDir: string;
   routesPath: string;
+  publicDir: string;
   bgCeilingMs: number;
   approvalTimeoutMs: number;
 };
@@ -18,6 +18,9 @@ export function defaultDataDir(): string {
 
 export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   fs.mkdirSync(dataDir, { recursive: true });
+  // 静态分发目录(/download/*):放 APK 等给手机直接下载的文件,免鉴权
+  const publicDir = process.env.ZCODE_PUBLIC_DIR ?? path.join(dataDir, 'public');
+  fs.mkdirSync(publicDir, { recursive: true });
   const file = path.join(dataDir, 'config.json');
   let stored: { token?: string } = {};
   try {
@@ -25,7 +28,7 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   } catch {
     // 首次运行,文件不存在
   }
-  const token = process.env.ZCODE_TOKEN ?? stored.token ?? randomUUID();
+  const token = process.env.ZCODE_TOKEN ?? stored.token ?? '123456';
   if (stored.token !== token) {
     fs.writeFileSync(file, JSON.stringify({ token }, null, 2));
   }
@@ -35,6 +38,7 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
     dataDir,
     routesPath: process.env.ZCODE_CLAUDE_ROUTES_PATH
       ?? path.join(os.homedir(), 'litellm', 'claude-routes.json'),
+    publicDir,
     bgCeilingMs: Number(process.env.ZCODE_BG_CEILING_MS) || 30 * 60 * 1000,
     approvalTimeoutMs: Number(process.env.ZCODE_APPROVAL_TIMEOUT_MS) || 10 * 60 * 1000,
   };

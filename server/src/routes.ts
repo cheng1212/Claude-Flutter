@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-export type RouteEntry = { baseUrl?: string; authToken?: string; model?: string };
+export type RouteEntry = { baseUrl?: string; authToken?: string; model?: string; label?: string };
 export type RouteConfig = { defaultRoute?: RouteEntry; routes?: Record<string, RouteEntry> };
 export type ResolvedModel = {
   id: string;
@@ -37,4 +37,37 @@ export function resolveModel(config: RouteConfig | null, modelId: string | undef
 
 export function listModels(config: RouteConfig | null): string[] {
   return ['default', ...Object.keys(config?.routes ?? {})];
+}
+
+export type ModelEntry = { id: string; label: string };
+export type ModelGroup = { id: string; label: string; models: ModelEntry[] };
+
+/** modelId → 供应商分组(对齐 CloudCLI deriveModelSourceGroup:厂商 API 独立分组,代理端口归 NVIDIA)。 */
+export function modelGroupOf(modelId: string): { id: string; label: string } {
+  const id = modelId.toLowerCase();
+  if (id === 'default') return { id: 'default', label: 'Claude 默认' };
+  if (id.startsWith('go-') || id.startsWith('anthropic/go-')) return { id: 'opencode', label: 'OpenCode' };
+  if (id.includes('glm')) return { id: 'zhipu', label: '智谱 GLM' };
+  // -nim 结尾是 NVIDIA 托管,要在 deepseek 之前判
+  if (/nvidia|nemotron|minimax|-nim$/.test(id)) return { id: 'nvidia', label: '英伟达' };
+  if (id.includes('deepseek')) return { id: 'deepseek', label: '深度求索' };
+  return { id: 'other', label: '其他' };
+}
+
+/** /api/models 的分组结构:一级供应商、二级模型。 */
+export function listModelGroups(config: RouteConfig | null): ModelGroup[] {
+  const groups = new Map<string, ModelGroup>();
+  const push = (group: { id: string; label: string }, entry: ModelEntry) => {
+    let g = groups.get(group.id);
+    if (!g) {
+      g = { id: group.id, label: group.label, models: [] };
+      groups.set(group.id, g);
+    }
+    g.models.push(entry);
+  };
+  push({ id: 'default', label: 'Claude 默认' }, { id: 'default', label: '默认 (Claude 官方)' });
+  for (const [id, entry] of Object.entries(config?.routes ?? {})) {
+    push(modelGroupOf(id), { id, label: entry.label ?? id });
+  }
+  return [...groups.values()];
 }
