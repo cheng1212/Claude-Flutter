@@ -226,6 +226,20 @@ void main() {
     expect(app.chat.pendingPermission, isNull);
     app.abort();
     expect(channel.sent.last, {'type': 'chat.abort', 'sessionId': 's1'});
+
+    // 「本会话总是允许」:rememberTool 透传上服务器
+    channel.serverPush(
+        {'kind': 'permission_request', 'requestId': 'r2', 'toolName': 'Write', 'input': {}, 'sessionId': 's1'});
+    await pump();
+    app.answerPermission('r2', allow: true, rememberTool: true);
+    expect(channel.sent.last, {
+      'type': 'chat.permission-response',
+      'sessionId': 's1',
+      'requestId': 'r2',
+      'allow': true,
+      'message': '',
+      'rememberTool': true,
+    });
   });
 
   test('replay 事件灌入当前会话', () async {

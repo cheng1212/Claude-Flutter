@@ -7,7 +7,7 @@ import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
 type RuntimeLike = {
   send(text: string, images?: string[]): Promise<void>;
   abort(): Promise<void>;
-  answerPermission(requestId: string, decision: { allow: boolean; updatedInput?: unknown; message?: string }): void;
+  answerPermission(requestId: string, decision: { allow: boolean; updatedInput?: unknown; message?: string; rememberTool?: boolean }): void;
   /** 在等用户审批的请求:subscribed(isProcessing=true) 带回,客户端重建审批卡。 */
   pendingPermissions?(): { requestId: string; toolName: string; input: unknown }[];
 };
@@ -80,6 +80,9 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
         });
       }
       broadcastDirty(wss, sessionId); // 跑完:各端列表的"运行中"徽章该灭了
+    } else if (event.kind === 'permission_request') {
+      // 弹审批也喊一嗓子:会话列表亮琥珀"待确认",那才是最需要用户回去处理的会话
+      broadcastDirty(wss, sessionId);
     }
     if (PERSIST_KINDS.has(event.kind)) {
       const content = event.kind === 'tool_use'
@@ -180,6 +183,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           allow: Boolean(data.allow),
           updatedInput: data.updatedInput,
           message: typeof data.message === 'string' ? data.message : undefined,
+          rememberTool: data.rememberTool === true,
         });
         return;
       }

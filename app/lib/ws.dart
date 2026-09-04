@@ -220,7 +220,7 @@ class ZSocket {
     });
   }
 
-  void answerPermission(String sessionId, String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput}) {
+  void answerPermission(String sessionId, String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput, bool rememberTool = false}) {
     _send({
       'type': 'chat.permission-response',
       'sessionId': sessionId,
@@ -229,6 +229,8 @@ class ZSocket {
       'message': message,
       // AskUserQuestion 等交互工具靠它回填选择结果(空值不带键)
       'updatedInput': ?updatedInput,
+      // 本会话记住该工具:server 端 sessionAllowed 记名,同工具后续免弹
+      if (rememberTool) 'rememberTool': true,
     });
   }
 

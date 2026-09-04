@@ -252,6 +252,39 @@ describe('SessionRuntime', () => {
     expect(events.filter((e) => e.kind === 'complete')).toHaveLength(2);
   });
 
+  it('rememberTool:本会话记住的工具后续自动放行,其他工具照旧弹审批', async () => {
+    const { events, emit } = collector();
+    let captured: Record<string, unknown> | null = null;
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options as Record<string, unknown>;
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'rm', emit, queryFn, approvalTimeoutMs: 5000 });
+    await runtime.send('go');
+    const options = captured as unknown as { canUseTool: (t: string, i: unknown) => Promise<{ behavior: string; message?: string; updatedInput?: unknown }> };
+    const ask = (n: number) => (events.filter((e) => e.kind === 'permission_request') as { requestId: string }[])[n];
+
+    // 第一次 Bash:弹审批,允许时勾「本会话记住」
+    const first = options.canUseTool('Bash', { command: 'npm test' });
+    runtime.answerPermission(ask(0).requestId, { allow: true, rememberTool: true });
+    await expect(first).resolves.toEqual(expect.objectContaining({ behavior: 'allow' }));
+    expect(events.filter((e) => e.kind === 'permission_request')).toHaveLength(1);
+
+    // 第二次同工具:不再弹审批直接放行(带原 input)
+    await expect(options.canUseTool('Bash', { command: 'dir' })).resolves.toEqual({
+      behavior: 'allow', updatedInput: { command: 'dir' },
+    });
+    expect(events.filter((e) => e.kind === 'permission_request')).toHaveLength(1);
+
+    // 其他工具不受影响,照旧弹
+    const third = options.canUseTool('Write', { file_path: 'x' });
+    expect(events.filter((e) => e.kind === 'permission_request')).toHaveLength(2);
+    runtime.answerPermission(ask(1).requestId, { allow: false, message: '不写' });
+    await expect(third).resolves.toEqual({ behavior: 'deny', message: '不写' });
+  });
+
   it('CLI 僵死(interrupt 无效):abort 强裁兜底让回合落定,下一轮可继续', async () => {
     const { events, emit } = collector();
     let turn = 0;

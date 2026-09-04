@@ -31,6 +31,8 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
   String? _baseUrl;
   String? _token;
   bool _ready = false;
+  bool _connecting = false;
+  String? _loginError;
 
   @override
   void initState() {
@@ -78,10 +80,32 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
     unawaited(app.bootstrap());
   }
 
+  /// 登录:先探连(真 WS 握手),成功才存配置进主界面;失败留在登录页给具体错误,
+  /// 不再「切过去看黄条」。探连多花一次握手,换来失败可见、按钮有 loading。
   Future<void> _saveAndWire(String base, String token) async {
+    if (_connecting) return;
+    setState(() {
+      _connecting = true;
+      _loginError = null;
+    });
+    final probe = ZSocket(uri: ZApp.wsUriOf(base), token: token);
+    try {
+      await probe.connect(); // 连不上/鉴权失败都会抛
+    } on Object catch (e) {
+      await probe.close();
+      if (mounted) {
+        setState(() {
+          _connecting = false;
+          _loginError = '连不上服务器: $e';
+        });
+      }
+      return;
+    }
+    await probe.close();
     final p = await SharedPreferences.getInstance();
     await p.setString(_kBase, base);
     await p.setString(_kToken, token);
+    if (mounted) setState(() => _connecting = false);
     _wire(base, token);
   }
 
@@ -109,6 +133,8 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
                   initialBaseUrl: _baseUrl,
                   initialToken: _token,
                   onDone: _saveAndWire,
+                  error: _loginError,
+                  busy: _connecting,
                 )
               : SessionsPage(app: _app!, onLogout: _logout),
     );

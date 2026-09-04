@@ -6,6 +6,8 @@ export type SessionRow = {
   id: string; title: string; cwd: string | null; provider_session_id: string | null;
   model: string | null; permission_mode: string; is_pinned: number; source: string;
   created_at: string; updated_at: string;
+  /** 列表副标题:最后一条文本消息截 120 字(listSessions 附带,非表列) */
+  last_message?: string | null;
 };
 export type MessageRow = {
   id: string; session_id: string; seq: number; kind: string; role: string | null;
@@ -72,7 +74,15 @@ export function maxSeq(db: Db, sessionId: string): number {
 }
 
 export function listSessions(db: Db): SessionRow[] {
-  return db.prepare('SELECT * FROM sessions ORDER BY is_pinned DESC, updated_at DESC').all() as SessionRow[];
+  // last_message:最后一条文本消息截 120 字做列表副标题(认会话全靠它,不全靠标题)
+  return db.prepare(`
+    SELECT s.*,
+      (SELECT substr(m.content, 1, 120) FROM messages m
+        WHERE m.session_id = s.id AND m.kind = 'text'
+        ORDER BY m.seq DESC LIMIT 1) AS last_message
+    FROM sessions s
+    ORDER BY s.is_pinned DESC, s.updated_at DESC
+  `).all() as SessionRow[];
 }
 
 export function updateSession(

@@ -42,6 +42,11 @@ const app = await buildApp({
   publicDir: config.publicDir,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),
+  // "待确认"徽章数据源:在跑且 runtime 手里有等审批的请求
+  isAwaiting: (sessionId) => {
+    const runtime = runtimes.get(sessionId);
+    return registry.isRunning(sessionId) && (runtime?.pendingPermissions().length ?? 0) > 0;
+  },
   // 会话被删:中止还在跑的 runtime 并清 registry,防幽灵事件继续给已删会话发号落库
   onSessionDeleted(sessionId) {
     const runtime = runtimes.get(sessionId);

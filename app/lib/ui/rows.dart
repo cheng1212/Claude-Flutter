@@ -17,8 +17,34 @@ Widget buildChatRow(ChatRow row) {
     TextRow() => AssistantBlock(text: row.content),
     ThinkingRow() => ReasoningCard(text: row.content),
     ToolRow() => ToolCallCard(row: row),
-    ErrorRow() => ErrorBlock(content: row.content),
+    ErrorRow() => ErrorBlock(content: row.content, neutral: row.neutral),
   };
+}
+
+/// data URI 缩略图:data: scheme 移动端 Image.network 拉不到,解 base64 走内存。
+/// 解不开(坏图)给占位图标,不让气泡崩。聊天页预览条与用户气泡共用。
+Widget chatImageThumb(String uri, {double size = 64}) {
+  final Uint8List? bytes = _tryDecodeDataUri(uri);
+  if (bytes == null) {
+    return Container(
+      width: size,
+      height: size,
+      color: ZT.line,
+      alignment: Alignment.center,
+      child: const Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
+    );
+  }
+  return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover, gaplessPlayback: true);
+}
+
+Uint8List? _tryDecodeDataUri(String uri) {
+  final match = RegExp(r'^data:image/[^;]+;base64,(.+)$').firstMatch(uri);
+  if (match == null) return null;
+  try {
+    return base64Decode(match.group(1)!);
+  } on FormatException {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------- memoized md
@@ -229,11 +255,27 @@ class UserBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              SelectableText(
-                row.content,
-                style: const TextStyle(
-                    fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
-              ),
+              if (row.images.isNotEmpty) ...[
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    for (final uri in row.images)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: chatImageThumb(uri),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (row.content.isNotEmpty)
+                SelectableText(
+                  row.content,
+                  style: const TextStyle(
+                      fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
+                ),
               if (row.pending) ...[
                 const SizedBox(height: 4),
                 Row(mainAxisSize: MainAxisSize.min, children: [
@@ -554,32 +596,35 @@ class _MonoSection extends StatelessWidget {
   }
 }
 
-/// 错误行:红字块。
+/// 错误行:红字块;已知可恢复的中断提示(neutral)用琥珀降噪,不和真错误一个观感。
 class ErrorBlock extends StatelessWidget {
   final String content;
+  final bool neutral;
 
-  const ErrorBlock({super.key, required this.content});
+  const ErrorBlock({super.key, required this.content, this.neutral = false});
 
   @override
   Widget build(BuildContext context) {
+    final color = neutral ? ZT.lemon : ZT.rose;
     return Container(
       margin: const EdgeInsets.only(top: 8, right: 20),
       padding: const EdgeInsets.all(10),
       decoration: ShapeDecoration(
-        color: ZT.rose.withValues(alpha: 0.1),
+        color: color.withValues(alpha: 0.1),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ZT.radius),
-          side: ZT.inkSide(w: 1.3, color: ZT.rose),
+          side: ZT.inkSide(w: 1.3, color: color),
         ),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.error_outline_rounded, size: 14, color: ZT.rose),
+        Icon(neutral ? Icons.info_outline_rounded : Icons.error_outline_rounded,
+            size: 14, color: color),
         const SizedBox(width: 7),
         Expanded(
           child: SelectableText(
             content,
-            style: const TextStyle(
-                fontSize: 12.5, height: 1.45, color: ZT.rose, fontFamily: ZT.mono),
+            style: TextStyle(
+                fontSize: 12.5, height: 1.45, color: color, fontFamily: ZT.mono),
           ),
         ),
       ]),

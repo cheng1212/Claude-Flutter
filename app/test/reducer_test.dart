@@ -196,6 +196,35 @@ void main() {
     expect(s.lastSeq, 6);
   });
 
+  test('发图回显:纯图回显按 imageCount 占位对上,不双气泡;图片随行保留', () {
+    var s = const ChatState();
+    // 乐观行:纯图发送,占位文案 + 本地 data URI
+    s = applyLocalUser(s, '[图片] ×2', images: ['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+    var row = s.rows.single as UserRow;
+    expect(row.pending, isTrue);
+    expect(row.images.length, 2);
+    // 回显:实时线上图片被剥成 imageCount,content 为空 → 占位文案对上,不追加空气泡
+    s = applyEvent(s, ev('text', seq: 1, extra: {'role': 'user', 'content': '', 'imageCount': 2}));
+    final confirmed = s.rows.whereType<UserRow>().toList();
+    expect(confirmed.length, 1);
+    expect(confirmed.single.pending, isFalse);
+    expect(confirmed.single.content, '[图片] ×2');
+    expect(confirmed.single.images.length, 2); // 乐观行的图保留
+    // 历史重建(REST meta 带完整 images):直接随行
+    var h = const ChatState();
+    h = applyEvent(h, ev('text', seq: 1, extra: {'role': 'user', 'content': '看这张', 'images': ['data:image/jpeg;base64,CCC']}));
+    expect((h.rows.single as UserRow).images.length, 1);
+  });
+
+  test('中断类提示走中性 ErrorRow,真错误保持红色语义', () {
+    var s = applyEvent(const ChatState(), ev('error', seq: 1, extra: {'content': '服务重启打断了上一轮运行,之后的输出没有记录;请重发或继续'}));
+    expect((s.rows.single as ErrorRow).neutral, isTrue);
+    s = applyEvent(s, ev('error', seq: 2, extra: {'content': '回合超过 10 分钟没有任何输出,已自动中断;请重发'}));
+    expect((s.rows.last as ErrorRow).neutral, isTrue);
+    s = applyEvent(s, ev('error', seq: 3, extra: {'content': '上游 500'}));
+    expect((s.rows.last as ErrorRow).neutral, isFalse);
+  });
+
   test('乐观用户行:pending 标记,服务器回显就地确认不重复', () {
     var s = applyLocalUser(const ChatState(), '你好');
     expect((s.rows.single as UserRow).pending, isTrue);

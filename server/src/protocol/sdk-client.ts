@@ -33,7 +33,7 @@ export type QueryInstance = AsyncIterable<AnyRecord> & {
 };
 export type QueryFn = (args: { prompt: AsyncIterable<unknown>; options: AnyRecord }) => QueryInstance;
 
-export type PermissionDecision = { allow: boolean; message?: string; updatedInput?: unknown };
+export type PermissionDecision = { allow: boolean; message?: string; updatedInput?: unknown; rememberTool?: boolean };
 type CanUseToolResult = { behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown };
 
 /** 在等用户审批的请求:resolve 之外保留详情,App 重启后经 subscribed 带回重建审批卡。 */
@@ -77,6 +77,8 @@ export class SessionRuntime {
   private release: (() => void) | null = null;
   private currentInstance: QueryInstance | null = null;
   private pending = new Map<string, PendingEntry>();
+  /** 本会话「总是允许」的工具:审批卡勾选后免弹,内存态,重启/删会话即清。 */
+  private sessionAllowed = new Set<string>();
   /** 已发 tool_use 还没等到 tool_result 的工具:看门狗判"忙碌"的依据(静默 ≠ 卡死)。 */
   private openTools = new Set<string>();
   private providerSessionId: string | null;
@@ -129,6 +131,8 @@ export class SessionRuntime {
     const entry = this.pending.get(requestId);
     if (!entry) return;
     this.pending.delete(requestId);
+    // 「本会话总是允许」:记住工具名,同工具后续调用直接放行(canUseTool 头部短路)
+    if (decision.allow && decision.rememberTool) this.sessionAllowed.add(entry.toolName);
     entry.resolve(decision);
   }
 
@@ -201,6 +205,10 @@ export class SessionRuntime {
   }
 
   private canUseTool = async (toolName: string, input: unknown): Promise<CanUseToolResult> => {
+    // 会话级记住的工具直接放行:审批疲劳是手机端最大的日常摩擦,用户显式勾选过就是授权
+    if (this.sessionAllowed.has(toolName)) {
+      return { behavior: 'allow', updatedInput: input };
+    }
     const requestId = randomUUID();
     this.opts.emit({ kind: 'permission_request', requestId, toolName, input });
     const decision = await new Promise<PermissionDecision | null>((resolve) => {

@@ -7,7 +7,12 @@ class LoginPage extends StatefulWidget {
   final String? initialBaseUrl;
   final String? initialToken;
   final void Function(String baseUrl, String token) onDone;
+
+  /// 连不上时留在本页显示的具体错误(上层探连失败回传)。
   final String? error;
+
+  /// true = 上层正在探连:按钮禁用转提示,防止重复点。
+  final bool busy;
 
   const LoginPage({
     super.key,
@@ -15,6 +20,7 @@ class LoginPage extends StatefulWidget {
     this.initialToken,
     required this.onDone,
     this.error,
+    this.busy = false,
   });
 
   @override
@@ -28,6 +34,7 @@ class _LoginPageState extends State<LoginPage> {
   late final _base = TextEditingController(text: widget.initialBaseUrl ?? _defaultBase);
   late final _token = TextEditingController(text: widget.initialToken);
   bool _hideToken = true;
+  String? _localError;
 
   @override
   void dispose() {
@@ -37,10 +44,19 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _go() {
-    final base = _base.text.trim();
+    if (widget.busy) return;
+    var base = _base.text.trim();
     final token = _token.text.trim();
-    if (base.isEmpty || token.isEmpty) return;
+    // 地址规范化:少打 http:// 不该连不上;格式错了当场说,别让人对着一排黄条猜
+    if (base.isNotEmpty && !base.contains('://')) base = 'http://$base';
+    final uri = Uri.tryParse(base);
+    if (uri == null || uri.host.isEmpty || token.isEmpty) {
+      setState(() => _localError = '地址格式应形如 192.168.1.5:5190,令牌不能为空');
+      return;
+    }
+    _base.text = base; // 回填规范化结果
     FocusScope.of(context).unfocus();
+    setState(() => _localError = null);
     widget.onDone(base, token);
   }
 
@@ -86,6 +102,7 @@ class _LoginPageState extends State<LoginPage> {
                   controller: _base,
                   keyboardType: TextInputType.url,
                   autocorrect: false,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: '服务器地址',
                     hintText: 'http://192.168.1.5:5190',
@@ -98,6 +115,8 @@ class _LoginPageState extends State<LoginPage> {
                   controller: _token,
                   obscureText: _hideToken,
                   autocorrect: false,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _go(), // 填完键盘确认直接连
                   decoration: InputDecoration(
                     labelText: '访问令牌',
                     prefixIcon: const Icon(Icons.key_rounded, size: 19),
@@ -113,8 +132,13 @@ class _LoginPageState extends State<LoginPage> {
                   style: const TextStyle(fontFamily: ZT.mono, fontSize: 13.5),
                 ),
                 const SizedBox(height: 22),
-                BigButton(label: '连接', icon: Icons.bolt_rounded, onPressed: _go, expand: true),
-                if (widget.error != null) ...[
+                BigButton(
+                  label: widget.busy ? '连接中…' : '连接',
+                  icon: widget.busy ? Icons.hourglass_top_rounded : Icons.bolt_rounded,
+                  onPressed: widget.busy ? null : _go,
+                  expand: true,
+                ),
+                if (_localError != null || widget.error != null) ...[
                   const SizedBox(height: 14),
                   Container(
                     padding: const EdgeInsets.all(10),
@@ -125,7 +149,7 @@ class _LoginPageState extends State<LoginPage> {
                         side: ZT.inkSide(w: 1.2, color: ZT.rose),
                       ),
                     ),
-                    child: Text('${widget.error}',
+                    child: Text('${_localError ?? widget.error}',
                         style: const TextStyle(
                             fontSize: 12, color: ZT.rose, fontFamily: ZT.mono)),
                   ),

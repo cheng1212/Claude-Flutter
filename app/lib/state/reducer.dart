@@ -10,9 +10,12 @@ sealed class ChatRow {
 class UserRow extends ChatRow {
   final String content;
 
+  /// 随消息发的图(data URI):乐观行本地就有,历史重建时 meta 里有,零网络成本回显。
+  final List<String> images;
+
   /// true = 本地乐观插入还没收到服务器回显;发送失败会被回滚。
   final bool pending;
-  const UserRow(this.content, {this.pending = false});
+  const UserRow(this.content, {this.pending = false, this.images = const []});
 }
 
 @immutable
@@ -50,7 +53,10 @@ class ToolRow extends ChatRow {
 @immutable
 class ErrorRow extends ChatRow {
   final String content;
-  const ErrorRow(this.content);
+
+  /// 已知可恢复的中断类提示(服务重启打断/看门狗自动中断):中性琥珀,别和真错误一样红。
+  final bool neutral;
+  const ErrorRow(this.content, {this.neutral = false});
 }
 
 @immutable
@@ -165,13 +171,19 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       final isUser = (ev['role'] as String? ?? 'assistant') == 'user';
       if (isUser) {
         // 服务器回显用户消息:就地转正第一条同内容的 pending 行,不追加(防双气泡)。
-        final content = ev['content'] as String? ?? '';
+        // 实时线上图片被剥成 imageCount(瘦身);纯图消息 content 为空,用占位文案对上;
+        // 历史重建(REST meta)带完整 images 列表,直接随行回显。
+        var content = ev['content'] as String? ?? '';
+        final imageCount = (ev['imageCount'] as num?)?.toInt() ?? 0;
+        final historyImages = (ev['images'] as List?)?.whereType<String>().toList();
+        if (content.isEmpty && imageCount > 0) content = '[图片] ×$imageCount';
         final rows = [...s.rows];
         final idx = rows.indexWhere((r) => r is UserRow && r.pending && r.content == content);
         if (idx >= 0) {
-          rows[idx] = UserRow(content);
+          final pendingRow = rows[idx] as UserRow;
+          rows[idx] = UserRow(content, images: historyImages ?? pendingRow.images);
         } else {
-          rows.add(UserRow(content));
+          rows.add(UserRow(content, images: historyImages ?? const <String>[]));
         }
         return _with(s, lastSeq: nextSeq, running: true, rows: rows);
       }
@@ -259,10 +271,12 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         final rolled = rollbackLocalUser(s);
         return _with(rolled, lastSeq: nextSeq, running: true, rows: [
           ...rolled.rows,
-          const ErrorRow('上一轮仍在运行(可能已卡住):点输入框旁的停止按钮 ■,然后再重发'),
+          const ErrorRow('上一轮仍在运行(可能已卡住):点输入框旁的停止按钮 ■,然后再重发', neutral: true),
         ]);
       }
-      return _with(s, lastSeq: nextSeq, running: false, rows: [...s.rows, ErrorRow(content)]);
+      // 已知可恢复的中断提示(服务重启打断/看门狗自动中断)视觉降噪:中性而非红
+      final neutral = content.contains('打断了上一轮') || content.startsWith('回合超过');
+      return _with(s, lastSeq: nextSeq, running: false, rows: [...s.rows, ErrorRow(content, neutral: neutral)]);
     case 'subscribed':
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
       // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
@@ -302,9 +316,9 @@ ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
   return cur;
 }
 
-/// 本地乐观插入用户消息(不占 seq)。
-ChatState applyLocalUser(ChatState s, String content) {
-  return _with(s, running: true, rows: [...s.rows, UserRow(content, pending: true)]);
+/// 本地乐观插入用户消息(不占 seq)。images 随行带:气泡里直接回显缩略图(本地就有 base64)。
+ChatState applyLocalUser(ChatState s, String content, {List<String> images = const []}) {
+  return _with(s, running: true, rows: [...s.rows, UserRow(content, pending: true, images: images)]);
 }
 
 /// 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。

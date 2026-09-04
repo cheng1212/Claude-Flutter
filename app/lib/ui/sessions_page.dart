@@ -18,8 +18,20 @@ class SessionsPage extends StatefulWidget {
 class _SessionsPageState extends State<SessionsPage> {
   bool _manage = false;
   final _picked = <String>{};
+  String _query = '';
 
   ZApp get app => widget.app;
+
+  /// 搜索过滤:标题或最后消息命中(大小写不敏感)。
+  List<Map<String, dynamic>> get _filtered {
+    final q = _query.toLowerCase();
+    if (q.isEmpty) return app.sessions;
+    return app.sessions.where((s) {
+      final title = '${s['title'] ?? ''}'.toLowerCase();
+      final last = '${s['last_message'] ?? ''}'.toLowerCase();
+      return title.contains(q) || last.contains(q);
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -203,7 +215,7 @@ class _SessionsPageState extends State<SessionsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final sessions = app.sessions;
+    final sessions = _filtered;
     return Scaffold(
       backgroundColor: ZT.bg,
       appBar: AppBar(
@@ -214,10 +226,23 @@ class _SessionsPageState extends State<SessionsPage> {
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         ]),
         actions: [
-          if (_manage)
+          if (_manage) ...[
+            // 全选/反选:批量清理旧会话不用一个个点
             TextButton(
-                onPressed: _toggleManage, child: const Text('完成'))
-          else ...[
+                onPressed: sessions.isEmpty ? null : () {
+                  setState(() {
+                    if (_picked.length == sessions.length) {
+                      _picked.clear();
+                    } else {
+                      _picked
+                        ..clear()
+                        ..addAll(sessions.map((s) => '${s['id']}'));
+                    }
+                  });
+                },
+                child: Text(_picked.isNotEmpty && _picked.length == sessions.length ? '取消' : '全选')),
+            TextButton(onPressed: _toggleManage, child: const Text('完成')),
+          ] else ...[
             // 手动刷新:除了下拉,给个一眼能看到的按钮;"运行中"徽章数据也靠它和 dirty 广播
             IconButton(
                 tooltip: '刷新',
@@ -251,6 +276,26 @@ class _SessionsPageState extends State<SessionsPage> {
           : null,
       body: Column(children: [
         if (!app.linked) _linkStrip(),
+        if (app.sessions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+            child: TextField(
+              onChanged: (v) => setState(() => _query = v.trim()),
+              style: const TextStyle(fontSize: 13.5),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '搜索会话…',
+                prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        onPressed: () => setState(() => _query = ''),
+                      ),
+              ),
+            ),
+          ),
         Expanded(
           child: RefreshIndicator(
             color: ZT.primary,
@@ -319,8 +364,10 @@ class _SessionsPageState extends State<SessionsPage> {
     final id = '${s['id']}';
     final title = '${s['title'] ?? '未命名会话'}';
     final model = '${s['model'] ?? ''}';
+    final lastMessage = '${s['last_message'] ?? ''}'.trim();
     final pinned = _isPinned(s);
     final running = s['isRunning'] == true;
+    final awaiting = s['awaitingApproval'] == true;
     final picked = _picked.contains(id);
 
     return HardCard(
@@ -357,8 +404,39 @@ class _SessionsPageState extends State<SessionsPage> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w700)),
+              if (lastMessage.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(lastMessage,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, color: ZT.inkSoft)),
+                ),
               const SizedBox(height: 4),
               Row(children: [
+                // 待确认徽章:等审批的会话最需要用户回去处理,琥珀色优先于"运行中"
+                if (awaiting)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                    decoration: ShapeDecoration(
+                      color: ZT.lemon.withValues(alpha: 0.12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(2),
+                          side: BorderSide(
+                              width: 1, color: ZT.lemon.withValues(alpha: 0.7))),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const PulseDot(color: ZT.lemon, animate: true, size: 5),
+                      const SizedBox(width: 4),
+                      Text('待确认',
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: ZT.lemon,
+                              fontFamily: ZT.sans)),
+                    ]),
+                  ),
                 if (running)
                   Container(
                     margin: const EdgeInsets.only(right: 8),

@@ -1,9 +1,10 @@
 // 聊天页:reversed 列表 + 六枚图标快捷条 + 权限面板 + 输入条。
 // 布局参考 zremote chat_page(quick chips/选项弹层/计划弹层/SendOrStop),状态走 ZApp。
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
@@ -98,10 +99,13 @@ class _ChatPageState extends State<ChatPage> {
     final text = _input.text.trim();
     final images = _pendingImages.value;
     if (text.isEmpty && images.isEmpty) return;
+    // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
+    final ok = app.sendChat(text, model: _model, permissionMode: _mode, images: images);
+    if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
     _input.clear();
     _pendingImages.value = const [];
-    // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
-    app.sendChat(text, model: _model, permissionMode: _mode, images: images);
+    HapticFeedback.lightImpact();
+    FocusScope.of(context).unfocus(); // 发完收起键盘,别压着半屏看回复
   }
 
   /// 相册选图 → 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
@@ -550,12 +554,16 @@ class _ChatPageState extends State<ChatPage> {
           if (chat.pendingPermission != null)
             _PermissionCard(
               req: chat.pendingPermission!,
-              onAnswer: (allow, message, updatedInput) => app.answerPermission(
-                chat.pendingPermission!.requestId,
-                allow: allow,
-                message: message,
-                updatedInput: updatedInput,
-              ),
+              onAnswer: (allow, message, updatedInput, [rememberTool = false]) {
+                HapticFeedback.lightImpact();
+                app.answerPermission(
+                  chat.pendingPermission!.requestId,
+                  allow: allow,
+                  message: message,
+                  updatedInput: updatedInput,
+                  rememberTool: rememberTool,
+                );
+              },
             ),
           _composer(),
           _quickBar(),
@@ -707,7 +715,13 @@ class _ChatPageState extends State<ChatPage> {
     final thinking = chat.streamingThinking;
     final text = chat.streamingText;
     if ((thinking == null || thinking.isEmpty) && (text == null || text.isEmpty)) {
-      return const SizedBox.shrink();
+      // 静默期骨架行:回显之后、模型开口之前的 2~10s 主视线区零反馈,是"世界消失了"的主诉。
+      // 等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊"正在思考"。
+      final quiet = chat.pendingPermission == null &&
+          chat.rows.whereType<ToolRow>().every((r) => r.result != null);
+      return quiet
+          ? const Padding(padding: EdgeInsets.only(top: 10), child: _SilenceHint())
+          : const SizedBox.shrink();
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -783,30 +797,7 @@ class _ChatPageState extends State<ChatPage> {
 
   // ---------------------------------------------------------------- composer
 
-  /// data URI 预览:data: scheme 在移动端 Image.network 拉不到,解 base64 走内存。
-  /// 解不开(坏图)给占位图标,不让预览条崩。
-  Widget _imagePreview(String uri) {
-    final match = RegExp(r'^data:image/[^;]+;base64,(.+)$').firstMatch(uri);
-    final Uint8List? bytes = match == null ? null : tryBase64Decode(match.group(1)!);
-    if (bytes == null) {
-      return Container(
-        width: 64,
-        height: 64,
-        color: ZT.line,
-        alignment: Alignment.center,
-        child: const Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
-      );
-    }
-    return Image.memory(bytes, width: 64, height: 64, fit: BoxFit.cover, gaplessPlayback: true);
-  }
-
-  Uint8List? tryBase64Decode(String input) {
-    try {
-      return base64Decode(input);
-    } on FormatException {
-      return null;
-    }
-  }
+  /// data URI 预览:统一走 rows.dart 的 chatImageThumb(解 base64 走内存,坏图占位)。
 
   Widget _composer() {
     return Container(
@@ -832,7 +823,7 @@ class _ChatPageState extends State<ChatPage> {
                   itemBuilder: (context, i) => Stack(children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(ZT.radius),
-                      child: _imagePreview(images[i]),
+                      child: chatImageThumb(images[i]),
                     ),
                     Positioned(
                       top: 0,
@@ -886,7 +877,10 @@ class _ChatPageState extends State<ChatPage> {
               canStop: chat.running,
               hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
               onSend: _send,
-              onStop: app.abort,
+              onStop: () {
+                HapticFeedback.mediumImpact();
+                app.abort();
+              },
             ),
           ),
         ]),
@@ -1176,11 +1170,13 @@ class _OptionRow extends StatelessWidget {
   }
 }
 
-/// 权限请求卡:显示工具与输入,允许/拒绝(可附留言)。
+/// 权限请求卡:显示工具与输入,允许/拒绝(可附留言);非交互工具另给「本会话总是允许」。
 // AskUserQuestion 走结构化渲染:问题 + 选项 chips,选中后整包回传 updatedInput。
 class _PermissionCard extends StatefulWidget {
   final PermissionReq req;
-  final void Function(bool allow, String message, Map<String, dynamic>? updatedInput) onAnswer;
+
+  /// rememberTool = 用户勾了「本会话总是允许」:server 端记名,同工具后续免弹。
+  final void Function(bool allow, String message, Map<String, dynamic>? updatedInput, [bool rememberTool]) onAnswer;
 
   const _PermissionCard({required this.req, required this.onAnswer});
 
@@ -1348,8 +1344,64 @@ class _PermissionCardState extends State<_PermissionCard> {
             ),
           ]),
         ),
+        // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
+        if (!_isAsk)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: ZT.lemon,
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                ),
+                onPressed: () => widget.onAnswer(true, _message.text.trim(), null, true),
+                child: Text('本会话总是允许 ${widget.req.toolName}',
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ),
       ]),
     );
+  }
+}
+
+/// 静默期骨架行:已送达、模型还没开口。秒数在跳就不像死机;超 5s 顺带给句解释。
+class _SilenceHint extends StatefulWidget {
+  const _SilenceHint();
+
+  @override
+  State<_SilenceHint> createState() => _SilenceHintState();
+}
+
+class _SilenceHintState extends State<_SilenceHint> {
+  late final _start = DateTime.now();
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sec = DateTime.now().difference(_start).inSeconds;
+    final hint = sec >= 5 ? '(冷启动或慢路由会慢一些)' : '';
+    return Row(children: [
+      const PulseDot(color: ZT.primary, animate: true, size: 6),
+      const SizedBox(width: 6),
+      Text('已送达 · 正在思考 ${sec}s $hint',
+          style: const TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
+    ]);
   }
 }
 

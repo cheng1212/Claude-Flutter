@@ -68,20 +68,48 @@ describe('REST', () => {
     await app.close();
   });
 
-  it('sessions 列表带 isRunning:注入的 registry 查询决定"运行中"徽章', async () => {
+  it('sessions 列表带 isRunning/awaitingApproval:注入的 registry/runtime 查询决定徽章', async () => {
     const db = openDb(':memory:');
     const live = new Set<string>();
-    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json', isRunning: (id) => live.has(id) });
+    const awaiting = new Set<string>();
+    const app = await buildApp({
+      token: 't', db, routesPath: 'Z:/none.json',
+      isRunning: (id) => live.has(id),
+      isAwaiting: (id) => awaiting.has(id),
+    });
     const s = createSession(db, { title: 'live' });
 
     const list1 = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
-    let rows = list1.json() as Array<{ id: string; isRunning: boolean }>;
+    let rows = list1.json() as Array<{ id: string; isRunning: boolean; awaitingApproval: boolean }>;
     expect(rows.find((r) => r.id === s.id)?.isRunning).toBe(false);
+    expect(rows.find((r) => r.id === s.id)?.awaitingApproval).toBe(false);
 
     live.add(s.id); // 等价 registry.begin
+    awaiting.add(s.id); // 等价 runtime 在等审批
     const list2 = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
-    rows = list2.json() as Array<{ id: string; isRunning: boolean }>;
+    rows = list2.json() as Array<{ id: string; isRunning: boolean; awaitingApproval: boolean }>;
     expect(rows.find((r) => r.id === s.id)?.isRunning).toBe(true);
+    expect(rows.find((r) => r.id === s.id)?.awaitingApproval).toBe(true);
+    await app.close();
+  });
+
+  it('sessions 列表带 last_message:最后一条文本消息截断做副标题', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const s = createSession(db, { title: 'sub' });
+    appendMessage(db, s.id, { kind: 'text', role: 'user', content: '旧消息' });
+    appendMessage(db, s.id, { kind: 'tool_use', content: '{}', meta: { kind: 'tool_use', toolName: 'Bash', toolId: 't' } });
+    appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '最新回复'.padEnd(200, '字') });
+
+    const list = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
+    const row = (list.json() as Array<{ id: string; last_message?: string }>).find((r) => r.id === s.id);
+    expect(row?.last_message?.startsWith('最新回复')).toBe(true);
+    expect(row?.last_message?.length).toBeLessThanOrEqual(120);
+    // 没有消息的会话:last_message 为 null,不炸
+    createSession(db, { title: 'empty' });
+    const list2 = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
+    const empty = (list2.json() as Array<{ title: string; last_message?: string | null }>).find((r) => r.title === 'empty');
+    expect(empty?.last_message ?? null).toBeNull();
     await app.close();
   });
 

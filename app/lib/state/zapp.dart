@@ -304,28 +304,31 @@ class ZApp extends ChangeNotifier {
   // ---------------------------------------------------------------- 对话动作
 
   /// 发消息:本地乐观行(pending),WS 发出;发不出去就回滚。images = data URI 列表。
-  void sendChat(String content, {String? model, String? permissionMode, List<String> images = const []}) {
+  /// 返回 false = 没发出去(连接断开),调用方可把原文回填输入框。
+  bool sendChat(String content, {String? model, String? permissionMode, List<String> images = const []}) {
     final sid = currentSessionId;
     final text = content.trim();
-    if (sid == null || (text.isEmpty && images.isEmpty)) return;
-    chat = applyLocalUser(chat, text.isEmpty ? '[图片] ×${images.length}' : text);
+    if (sid == null || (text.isEmpty && images.isEmpty)) return false;
+    chat = applyLocalUser(chat, text.isEmpty ? '[图片] ×${images.length}' : text, images: images);
     notifyListeners();
     try {
       _socket.sendChat(sid, text, model: model, permissionMode: permissionMode, images: images);
+      return true;
     } on Object {
       chat = rollbackLocalUser(chat);
       error = '发送失败: 连接断开,等重连后再试';
       notifyListeners();
+      return false;
     }
   }
 
-  void answerPermission(String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput}) {
+  void answerPermission(String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput, bool rememberTool = false}) {
     final sid = currentSessionId;
     if (sid == null) return;
     chat = applyPermissionAnswer(chat);
     notifyListeners();
     try {
-      _socket.answerPermission(sid, requestId, allow: allow, message: message, updatedInput: updatedInput);
+      _socket.answerPermission(sid, requestId, allow: allow, message: message, updatedInput: updatedInput, rememberTool: rememberTool);
     } on Object {
       // 断线发不出去:面板已收起;服务器侧 10 分钟超时自动 deny,
       // 或重连后 subscribed.pending 把审批卡带回来重批。

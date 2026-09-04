@@ -31,7 +31,7 @@
 | GET | `/api/health` | 健康检查 | **免鉴权** |
 | GET | `/api/models` | 模型列表(routes.json) | |
 | GET | `/api/models/grouped` | 分组模型 `[{id,label,models:[{id,label}]}]` | app 模型选择器数据源 |
-| GET | `/api/sessions` | 会话列表 | 附 `isRunning`;排序 `is_pinned DESC, updated_at DESC` |
+| GET | `/api/sessions` | 会话列表 | 附 `isRunning`/`awaitingApproval`(等审批)/`last_message`(最后一条文本截 120 字,副标题);排序 `is_pinned DESC, updated_at DESC` |
 | POST | `/api/sessions` | 建会话 `{title?,cwd?,model?}` | |
 | GET | `/api/sessions/:id` | 会话详情 | 404 = 不存在 |
 | PATCH | `/api/sessions/:id` | 改 `{title?,isPinned?,providerSessionId?,model?,permissionMode?,cwd?}` | **热切换数据源**:改后下一条 send 生效 |
@@ -54,7 +54,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `ping` | — | →`pong` 心跳 |
 | `chat.subscribe` | `{sessions:[{sessionId,lastSeq?}]}` | 订阅+补发;返回 `subscribed` +(有差时)`replay`;`lastSeq` 只进不退(seekSeq 抬指针) |
 | `chat.send` | `{sessionId,content,images?[≤4 dataURI],options?{model?,permissionMode?}}` | 开跑;已在跑→`error/RUN_IN_PROGRESS` |
-| `chat.permission-response` | `{sessionId,requestId,allow,updatedInput?,message?}` | 审批应答 |
+| `chat.permission-response` | `{sessionId,requestId,allow,updatedInput?,message?,rememberTool?}` | 审批应答;`rememberTool:true` = 本会话记住该工具,同工具后续 canUseTool 直接放行(内存态,重启/删会话清) |
 | `chat.abort` | `{sessionId}` | 中止当前回合 |
 
 ### 3.2 服务端 → 客户端
@@ -64,7 +64,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `authenticated` / `pong` | 无 | 否 | 控制帧 |
 | `subscribed` | 无 | 否 | `{sessionId,isProcessing,lastSeq}`;**客户端不得拿 lastSeq 抬去重门槛**(replay 在后) |
 | `replay` | 无(内含) | 否 | `{sessionId,events[]}` 断线补发(环形缓冲 cap 1000) |
-| `sessions_dirty` | 无 | 否 | 控制帧:任一会话开跑/跑完广播,app 防抖 250ms 静默刷列表 |
+| `sessions_dirty` | 无 | 否 | 控制帧:任一会话开跑/跑完/弹审批广播,app 防抖 250ms 静默刷列表(徽章数据源) |
 | `session_created` | 有 | 是 | `{providerSessionId}`,回填 sessions 表 |
 | `text` | 有 | 是 | `role:'assistant'|'user'`;用户消息由服务端回显(乐观行转正) |
 | `stream_delta` / `thinking_delta` | **无** | 否 | 瞬态实时流,前端不去重 |

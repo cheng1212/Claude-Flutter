@@ -4,14 +4,18 @@ import { createSession, listSessions, getSession, updateSession, deleteSession, 
 import { importLocalSessions } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean }): void {
   app.get('/api/models', async () => listModels(loadRoutes(deps.routesPath)));
 
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));
 
-  // 附带 isRunning:手机列表标"运行中"徽章;排序本就是 置顶 → 最近更新
+  // 附带 isRunning/awaitingApproval:手机列表标"运行中"/"待确认"徽章;排序本就是 置顶 → 最近更新
   app.get('/api/sessions', async () =>
-    listSessions(deps.db).map((row) => ({ ...row, isRunning: deps.isRunning?.(row.id) ?? false })));
+    listSessions(deps.db).map((row) => ({
+      ...row,
+      isRunning: deps.isRunning?.(row.id) ?? false,
+      awaitingApproval: deps.isAwaiting?.(row.id) ?? false,
+    })));
 
   app.post('/api/sessions/import-local', async (req) => {
     const body = (req.body ?? {}) as { projectsDir?: string };
