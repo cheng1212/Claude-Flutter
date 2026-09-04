@@ -39,7 +39,8 @@ class ZSocket {
   final Duration backoffBase;
   final Duration maxBackoff;
   final Duration pingEvery;
-  final void Function()? onChanged;
+  /// 连接状态变化回调(ZApp 挂 notifyListeners;可换绑)。
+  void Function()? onChanged;
 
   ZSocketState state = ZSocketState.idle;
   String? failure;
@@ -176,6 +177,11 @@ class ZSocket {
   }
 
   int lastSeq(String sessionId) => _lastSeq[sessionId] ?? 0;
+
+  /// 用 REST 历史推到的 seq 播种(只前进);重连补订从这儿续。
+  void seedLastSeq(String sessionId, int seq) {
+    if (seq > (_lastSeq[sessionId] ?? 0)) _lastSeq[sessionId] = seq;
+  }
 
   /// 订阅会话;已连接时立即发送,否则等重连后统一补订。
   void subscribeSession(String sessionId) {

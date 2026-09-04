@@ -93,4 +93,22 @@ void main() {
     expect(s.rows.last, isA<UserRow>());
     expect(s.lastSeq, 9); // 本地行不动 seq
   });
+
+  test('乐观用户行:pending 标记,服务器回显就地确认不重复', () {
+    var s = applyLocalUser(const ChatState(), '你好');
+    expect((s.rows.single as UserRow).pending, isTrue);
+    // 服务器回显同内容 → 就地转正,不追加新行
+    s = applyEvent(s, ev('text', seq: 1, extra: {'role': 'user', 'content': '你好'}));
+    final confirmed = s.rows.single as UserRow;
+    expect(confirmed.content, '你好');
+    expect(confirmed.pending, isFalse);
+    // 回显没有对应 pending 行 → 正常追加
+    s = applyEvent(s, ev('text', seq: 2, extra: {'role': 'user', 'content': '再问'}));
+    expect(s.rows.whereType<UserRow>().length, 2);
+    // 应答权限后清 pendingPermission
+    s = applyEvent(s, ev('permission_request', extra: {'requestId': 'r1', 'toolName': 'Bash', 'input': {}}));
+    expect(s.pendingPermission, isNotNull);
+    s = applyPermissionAnswer(s);
+    expect(s.pendingPermission, isNull);
+  });
 }

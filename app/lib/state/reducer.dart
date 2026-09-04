@@ -9,7 +9,10 @@ sealed class ChatRow {
 @immutable
 class UserRow extends ChatRow {
   final String content;
-  const UserRow(this.content);
+
+  /// true = 本地乐观插入还没收到服务器回显;发送失败会被回滚。
+  final bool pending;
+  const UserRow(this.content, {this.pending = false});
 }
 
 @immutable
@@ -110,7 +113,19 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       return _with(s, lastSeq: nextSeq, running: true, streamingThinking: (s.streamingThinking ?? '') + (ev['content'] as String? ?? ''));
     case 'text':
       final isUser = (ev['role'] as String? ?? 'assistant') == 'user';
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, isUser ? UserRow(ev['content'] as String? ?? '') : TextRow(ev['content'] as String? ?? '')], clearStreamText: !isUser);
+      if (isUser) {
+        // 服务器回显用户消息:就地转正第一条同内容的 pending 行,不追加(防双气泡)。
+        final content = ev['content'] as String? ?? '';
+        final rows = [...s.rows];
+        final idx = rows.indexWhere((r) => r is UserRow && r.pending && r.content == content);
+        if (idx >= 0) {
+          rows[idx] = UserRow(content);
+        } else {
+          rows.add(UserRow(content));
+        }
+        return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+      }
+      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, TextRow(ev['content'] as String? ?? '')], clearStreamText: true);
     case 'thinking':
       return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ThinkingRow(ev['content'] as String? ?? '')], clearStreamThinking: true);
     case 'tool_use':
@@ -167,5 +182,18 @@ ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
 
 /// 本地乐观插入用户消息(不占 seq)。
 ChatState applyLocalUser(ChatState s, String content) {
-  return _with(s, running: true, rows: [...s.rows, UserRow(content)]);
+  return _with(s, running: true, rows: [...s.rows, UserRow(content, pending: true)]);
+}
+
+/// 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。
+ChatState applyPermissionAnswer(ChatState s) {
+  return _with(s, clearPermission: true);
+}
+
+/// 回滚末尾的乐观用户行(WS 未连上、发送失败时)。
+ChatState rollbackLocalUser(ChatState s) {
+  final idx = s.rows.lastIndexWhere((r) => r is UserRow && r.pending);
+  if (idx < 0) return s;
+  final rows = [...s.rows]..removeAt(idx);
+  return _with(s, rows: rows);
 }
