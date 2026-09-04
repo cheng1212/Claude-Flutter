@@ -428,6 +428,10 @@ class _ToolCallCardState extends State<ToolCallCard> {
                       ),
                     ),
                   ),
+                  if (streaming) ...[
+                    _ElapsedTicker(row.startedAt),
+                    const SizedBox(width: 6),
+                  ],
                   Icon(_open ? Icons.expand_less : Icons.expand_more,
                       size: 15, color: ZT.inkFaint),
                 ]),
@@ -466,6 +470,48 @@ class _ToolCallCardState extends State<ToolCallCard> {
     } on Object {
       return '$input';
     }
+  }
+}
+
+/// 运行中工具卡的走秒:数字在跳 = 命令还活着。长命令(如 flutter build)静默几分钟,
+/// 没有它看起来就像卡死了。每秒 setState 一次,仅 streaming 期间挂载。
+class _ElapsedTicker extends StatefulWidget {
+  final DateTime? startedAt;
+  const _ElapsedTicker(this.startedAt);
+
+  @override
+  State<_ElapsedTicker> createState() => _ElapsedTickerState();
+}
+
+class _ElapsedTickerState extends State<_ElapsedTicker> {
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final start = widget.startedAt;
+    if (start == null) return const SizedBox.shrink();
+    final d = DateTime.now().difference(start);
+    String two(int n) => n.toString().padLeft(2, '0');
+    final text = d.inHours > 0
+        ? '${d.inHours}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}'
+        : '${two(d.inMinutes)}:${two(d.inSeconds.remainder(60))}';
+    return Text('已运行 $text',
+        style: const TextStyle(
+            fontSize: 10.5, fontFamily: ZT.mono, color: ZT.primary));
   }
 }
 
