@@ -188,7 +188,18 @@ export function finishRun(db: Db, runId: string, out: { status: string; totalCos
 
 /** 启动清扫:上个进程没关掉的 run 标为 interrupted,别永远停在 'running' 污染用量统计。 */
 export function failStaleRuns(db: Db): number {
-  return db.prepare("UPDATE runs SET status='interrupted', ended_at=? WHERE status='running'").run(now()).changes;
+  const stale = db.prepare("SELECT DISTINCT session_id FROM runs WHERE status='running'").all() as { session_id: string }[];
+  const changes = db.prepare("UPDATE runs SET status='interrupted', ended_at=? WHERE status='running'").run(now()).changes;
+  // 显式补一条错误行:被重启打断的 run,之后的输出永久没落库(工具卡没有 tool_result、
+  // 没有 complete)。不补的话刷新后看到的就是"卡住的卡 + 一片空白",像显示 bug;
+  // 补了,客户端有明确的"上次运行被打断"说明。appendMessage 自动 MAX(seq)+1,与锁步无冲突。
+  for (const { session_id } of stale) {
+    appendMessage(db, session_id, {
+      kind: 'error',
+      content: '服务重启打断了上一轮运行,之后的输出没有记录;请重发或继续',
+    });
+  }
+  return changes;
 }
 
 export type UsageSummary = {

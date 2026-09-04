@@ -127,6 +127,28 @@ ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, 
   );
 }
 
+/// 被打断工具卡的占位结果:可辨识,迟到的真 tool_result 会覆盖它(见 tool_result 匹配)。
+const kInterruptedToolMark = '[中断] 命令被打断或服务重启,没有回传输出';
+
+/// 还没拿到结果的工具卡就地落定:中断的输出回不来了,别让卡片永远转圈。
+List<ChatRow> _closeDanglingTools(List<ChatRow> rows) {
+  var changed = false;
+  final next = rows.map<ChatRow>((r) {
+    if (r is ToolRow && r.result == null) {
+      changed = true;
+      return ToolRow(
+        toolId: r.toolId,
+        toolName: r.toolName,
+        toolInput: r.toolInput,
+        startedAt: r.startedAt,
+        result: const ToolResult(content: kInterruptedToolMark, isError: true),
+      );
+    }
+    return r;
+  }).toList();
+  return changed ? next : rows;
+}
+
 /// 单事件归约;seq <= lastSeq 的事件丢弃(重连去重)。
 ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
   final kind = ev['kind'] as String? ?? '';
@@ -167,7 +189,10 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       final toolId = ev['toolId'] as String? ?? '';
       final result = ToolResult(content: ev['content'] as String? ?? '', isError: ev['isError'] as bool? ?? false);
       final rows = [...s.rows];
-      final idx = rows.lastIndexWhere((r) => r is ToolRow && r.toolId == toolId && r.result == null);
+      // 也匹配被中断标记收尾的卡:重连时 subscribed(false) 先到、replay 后到,
+      // 卡已被收尾;放宽匹配,迟到的真结果才能覆盖占位标记。
+      final idx = rows.lastIndexWhere((r) =>
+          r is ToolRow && r.toolId == toolId && (r.result == null || r.result?.content == kInterruptedToolMark));
       if (idx >= 0) {
         final tool = rows[idx] as ToolRow;
         rows[idx] = ToolRow(toolId: tool.toolId, toolName: tool.toolName, toolInput: tool.toolInput, result: result, startedAt: tool.startedAt);
@@ -193,7 +218,9 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         maxOutputTokens: (ev['maxOutputTokens'] as num?)?.toInt() ?? 0,
       ));
     case 'complete':
-      return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true);
+      // 收尾:还没拿到 tool_result 的工具卡就地落定(命令被打断,结果永远不会来)。
+      // 不收尾的话卡片永久转圈、走秒不停,看起来就是"卡住了"。
+      return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true, rows: _closeDanglingTools(s.rows));
     case 'error':
       final content = ev['content'] as String? ?? '';
       if (content == 'RUN_IN_PROGRESS') {
@@ -209,8 +236,10 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
     case 'subscribed':
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
       // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
+      // isProcessing=false(如服务重启后重连):上一世的悬空工具卡已成孤儿,一并收尾;
+      // 迟到的真结果靠 tool_result 的放宽匹配覆盖回来。
       final isProcessing = ev['isProcessing'] as bool? ?? false;
-      return _with(s, running: isProcessing);
+      return _with(s, running: isProcessing, rows: isProcessing ? s.rows : _closeDanglingTools(s.rows));
     default:
       return seq != null ? _with(s, lastSeq: nextSeq) : s;
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   openDb, createSession, getSession, listSessions, updateSession,
-  deleteSession, appendMessage, listMessages, createRun, finishRun,
+  deleteSession, appendMessage, listMessages, createRun, finishRun, failStaleRuns,
 } from '../src/db.js';
 
 describe('db', () => {
@@ -38,5 +38,25 @@ describe('db', () => {
     const row = db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as { status: string; total_cost_usd: number };
     expect(row.status).toBe('complete');
     expect(row.total_cost_usd).toBeCloseTo(0.12);
+  });
+  it('failStaleRuns:僵尸 run 标 interrupted,并给每个受影响会话补"重启打断"错误行', () => {
+    const db = openDb(':memory:');
+    const a = createSession(db, { title: 'a' });
+    const b = createSession(db, { title: 'b' });
+    createRun(db, a.id, 'glm-5.3-flash');
+    createRun(db, b.id, 'glm-5.3-flash');
+    createRun(db, a.id, 'glm-5.3-flash'); // 同会话两个僵尸也只补一条错误行
+    appendMessage(db, a.id, { kind: 'text', role: 'assistant', content: '已有内容' });
+    const changed = failStaleRuns(db);
+    expect(changed).toBe(3);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM runs WHERE status='running'").get() ).toEqual({ c: 0 });
+    // 每个受影响会话补一条 kind=error 的说明行,seq 落在 MAX+1(与锁步一致)
+    for (const s of [a, b]) {
+      const tail = db.prepare('SELECT seq, kind, content FROM messages WHERE session_id=? ORDER BY seq DESC LIMIT 1').get(s.id) as { seq: number; kind: string; content: string };
+      expect(tail.kind).toBe('error');
+      expect(tail.content).toContain('服务重启打断');
+    }
+    const aMax = (db.prepare('SELECT COALESCE(MAX(seq),0) AS m FROM messages WHERE session_id=?').get(a.id) as { m: number }).m;
+    expect(aMax).toBe(2); // text#1 → error#2,自动续号
   });
 });

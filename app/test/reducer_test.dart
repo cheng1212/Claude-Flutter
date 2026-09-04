@@ -36,6 +36,35 @@ void main() {
     expect(tool.result!.isError, isFalse);
   });
 
+  test('孤儿工具卡收尾:complete / subscribed(false) 落定为中断标记,运行中不动,迟到真结果可覆盖', () {
+    // 构建被打断:complete 到了,tool_result 永远不会来 → 卡片必须落定,别永久转圈
+    var s = const ChatState();
+    s = applyEvent(s, ev('tool_use', seq: 1, extra: {'toolId': 't1', 'toolName': 'PowerShell', 'toolInput': {'command': 'flutter build apk'}}));
+    expect((s.rows.single as ToolRow).result, isNull);
+    s = applyEvent(s, ev('complete', seq: 2, extra: {'exitCode': 1, 'aborted': true}));
+    final closed = s.rows.single as ToolRow;
+    expect(closed.result?.content, kInterruptedToolMark);
+    expect(closed.result?.isError, isTrue);
+    expect(s.running, isFalse);
+
+    // 服务重启后重连:subscribed(false) 也收尾悬空卡(上一世的孤儿)
+    var r = const ChatState();
+    r = applyEvent(r, ev('tool_use', seq: 1, extra: {'toolId': 't2', 'toolName': 'PowerShell', 'toolInput': const {}}));
+    r = applyEvent(r, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': false, 'lastSeq': 5}));
+    expect((r.rows.single as ToolRow).result?.content, kInterruptedToolMark);
+    // 重放补发的迟到真结果覆盖中断标记(replay 在 subscribed 之后到)
+    r = applyEvent(r, ev('tool_result', seq: 2, extra: {'toolId': 't2', 'content': 'Built apk (50.7MB)', 'isError': false}));
+    final revived = r.rows.single as ToolRow;
+    expect(revived.result?.content, 'Built apk (50.7MB)');
+    expect(revived.result?.isError, isFalse);
+
+    // 正在跑(重连到活跃 run):卡片不许动
+    var a = const ChatState();
+    a = applyEvent(a, ev('tool_use', seq: 1, extra: {'toolId': 't3', 'toolName': 'PowerShell', 'toolInput': const {}}));
+    a = applyEvent(a, ev('subscribed', extra: {'sessionId': 'x', 'isProcessing': true, 'lastSeq': 1}));
+    expect((a.rows.single as ToolRow).result, isNull);
+  });
+
   test('RUN_IN_PROGRESS:撤回乐观行、恢复 running、给停止提示;普通错误照旧落定', () {
     var s = const ChatState();
     s = applyLocalUser(s, '帮我查');
