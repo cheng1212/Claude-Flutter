@@ -166,6 +166,36 @@ void main() {
     expect(s.pendingPermission?.requestId, 'r1');
   });
 
+  test('task_started/task_complete:后台任务复用工具卡,迟到真结果盖掉中断占位', () {
+    var s = const ChatState();
+    s = applyEvent(s, ev('task_started', seq: 1, extra: {'taskId': 'k1', 'description': '跑全量测试', 'taskType': 'local_agent'}));
+    final card = s.rows.single as ToolRow;
+    expect(card.toolId, 'k1');
+    expect(card.toolName, '子任务'); // local_agent → 子任务,其余叫后台任务
+    expect(card.result, isNull);
+
+    // 回合先结束(complete 把没结果的卡收尾成中断占位)…
+    s = applyEvent(s, ev('complete', seq: 2, extra: {'exitCode': 0, 'aborted': false}));
+    expect((s.rows.single as ToolRow).result?.content, kInterruptedToolMark);
+
+    // …后台任务迟到的完成通知盖回真结果
+    s = applyEvent(s, ev('task_complete', seq: 3, extra: {'taskId': 'k1', 'status': 'completed', 'summary': '30 个测试全绿'}));
+    final done = s.rows.single as ToolRow;
+    expect(done.result?.content, '30 个测试全绿');
+    expect(done.result?.isError, isFalse);
+    expect(s.running, isTrue); // 不改运行态:后台任务收尾 ≠ 回合收尾
+  });
+
+  test('task_complete 失败状态 isError;无匹配卡只推 seq 不建行', () {
+    var s = applyEvent(const ChatState(), ev('task_complete', seq: 5, extra: {'taskId': 'ghost', 'status': 'failed', 'summary': '炸了'}));
+    expect(s.rows, isEmpty);
+    expect(s.lastSeq, 5);
+    // task_progress 等未消费事件:走 default 只推 seq,不产生行
+    s = applyEvent(s, ev('task_progress', seq: 6, extra: {'taskId': 'ghost', 'description': 'x'}));
+    expect(s.rows, isEmpty);
+    expect(s.lastSeq, 6);
+  });
+
   test('乐观用户行:pending 标记,服务器回显就地确认不重复', () {
     var s = applyLocalUser(const ChatState(), '你好');
     expect((s.rows.single as UserRow).pending, isTrue);

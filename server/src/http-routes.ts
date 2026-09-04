@@ -4,7 +4,7 @@ import { createSession, listSessions, getSession, updateSession, deleteSession, 
 import { importLocalSessions } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; isRunning?: (sessionId: string) => boolean }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean }): void {
   app.get('/api/models', async () => listModels(loadRoutes(deps.routesPath)));
 
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));
@@ -43,6 +43,11 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     if (typeof body.cwd === 'string') patch.cwd = body.cwd;
     const row = updateSession(deps.db, (req.params as { id: string }).id, patch);
     if (!row) return reply.code(404).send({ error: 'not found' });
+    // 真热切换:有活着的 CLI 实例就现场设(模式立即对本回合生效);
+    // 没有也不亏,下一条 send 的 runtimeFor 自会读 DB 新值。
+    if (patch.model !== undefined || patch.permissionMode !== undefined) {
+      deps.onSessionPatched?.((req.params as { id: string }).id, { model: patch.model, permissionMode: patch.permissionMode });
+    }
     return row;
   });
 

@@ -26,7 +26,11 @@ function buildUserContent(text: string, images?: string[]): string | AnyRecord[]
   return blocks.length > 0 ? blocks : text;
 }
 
-export type QueryInstance = AsyncIterable<AnyRecord> & { interrupt?: () => Promise<void> };
+export type QueryInstance = AsyncIterable<AnyRecord> & {
+  interrupt?: () => Promise<void>;
+  setPermissionMode?: (mode: string) => Promise<void>;
+  setModel?: (model?: string) => Promise<void>;
+};
 export type QueryFn = (args: { prompt: AsyncIterable<unknown>; options: AnyRecord }) => QueryInstance;
 
 export type PermissionDecision = { allow: boolean; message?: string; updatedInput?: unknown };
@@ -134,6 +138,24 @@ export class SessionRuntime {
    */
   update(cfg: { model?: string | null; permissionMode?: string; routeSettings?: AnyRecord | null }): void {
     this.opts = { ...this.opts, ...cfg };
+  }
+
+  /** 对在跑的 CLI 实例热设权限模式:本回合内后续工具调用立即生效(下一轮 buildOptions 也带,双保险)。 */
+  async setPermissionModeLive(mode: string): Promise<void> {
+    try {
+      await this.currentInstance?.setPermissionMode?.(mode);
+    } catch {
+      // 实例已退出/不支持:opts 已随 update() 改,下一轮照新值走
+    }
+  }
+
+  /** 对在跑的 CLI 实例热切模型(裸模型名才值得现场切;路由别名/ default 由下一轮生效)。 */
+  async setModelLive(model: string): Promise<void> {
+    try {
+      await this.currentInstance?.setModel?.(model);
+    } catch {
+      // 同上
+    }
   }
 
   private async runTurnExclusive(text: string, images?: string[]): Promise<void> {

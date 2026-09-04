@@ -87,6 +87,8 @@ class _ChatPageState extends State<ChatPage> {
         'acceptEdits' => '自动接受编辑',
         'bypassPermissions' => '跳过确认',
         'plan' => '计划模式',
+        'dontAsk' => '不问即拒',
+        'auto' => '智能判断',
         _ => '每次确认',
       };
 
@@ -179,8 +181,10 @@ class _ChatPageState extends State<ChatPage> {
     const modes = [
       ('default', '每次确认', '敏感操作都先问你'),
       ('acceptEdits', '自动接受编辑', '改文件不问,命令仍要确认'),
-      ('bypassPermissions', '跳过确认', '全部自动放行,慎用'),
       ('plan', '计划模式', '先出计划,批准后再动手'),
+      ('dontAsk', '不问即拒', '不再弹审批,没预授权的操作直接拒绝'),
+      ('auto', '智能判断', '用模型分类器自动批/拒权限'),
+      ('bypassPermissions', '跳过确认', '全部自动放行,慎用'),
     ];
     final current = _mode;
     final picked = await showModalBottomSheet<String>(
@@ -546,10 +550,11 @@ class _ChatPageState extends State<ChatPage> {
           if (chat.pendingPermission != null)
             _PermissionCard(
               req: chat.pendingPermission!,
-              onAnswer: (allow, message) => app.answerPermission(
+              onAnswer: (allow, message, updatedInput) => app.answerPermission(
                 chat.pendingPermission!.requestId,
                 allow: allow,
                 message: message,
+                updatedInput: updatedInput,
               ),
             ),
           _composer(),
@@ -1172,9 +1177,10 @@ class _OptionRow extends StatelessWidget {
 }
 
 /// 权限请求卡:显示工具与输入,允许/拒绝(可附留言)。
+// AskUserQuestion 走结构化渲染:问题 + 选项 chips,选中后整包回传 updatedInput。
 class _PermissionCard extends StatefulWidget {
   final PermissionReq req;
-  final void Function(bool allow, String message) onAnswer;
+  final void Function(bool allow, String message, Map<String, dynamic>? updatedInput) onAnswer;
 
   const _PermissionCard({required this.req, required this.onAnswer});
 
@@ -1185,6 +1191,8 @@ class _PermissionCard extends StatefulWidget {
 class _PermissionCardState extends State<_PermissionCard> {
   final _message = TextEditingController();
   String? _pretty;
+  // AskUserQuestion 的选择:问题文本 → 已选 option label 集合
+  final _picked = <String, Set<String>>{};
 
   @override
   void dispose() {
@@ -1204,8 +1212,77 @@ class _PermissionCardState extends State<_PermissionCard> {
     return _pretty!;
   }
 
+  // ------------------------------------------------------ AskUserQuestion
+
+  bool get _isAsk => widget.req.toolName == 'AskUserQuestion';
+
+  List<Map<String, dynamic>> get _questions {
+    if (!_isAsk) return const [];
+    final qs = widget.req.input['questions'];
+    if (qs is! List) return const [];
+    return [for (final q in qs) if (q is Map) q.cast<String, dynamic>()];
+  }
+
+  bool get _askReady {
+    if (_questions.isEmpty) return false;
+    for (final q in _questions) {
+      final picked = _picked['${q['question'] ?? ''}'];
+      if (picked == null || picked.isEmpty) return false;
+    }
+    return true;
+  }
+
+  /// 应答载荷:原 input + answers(问题 → 逗号连接的选项;多选也这么回)。
+  Map<String, dynamic> get _askAnswers {
+    final answers = <String, dynamic>{};
+    for (final q in _questions) {
+      final question = '${q['question'] ?? ''}';
+      answers[question] = (_picked[question] ?? const <String>{}).join(', ');
+    }
+    return {...widget.req.input, 'answers': answers};
+  }
+
+  List<Widget> _questionWidgets(Map<String, dynamic> q) {
+    final question = '${q['question'] ?? ''}';
+    final options = (q['options'] as List?) ?? const [];
+    final multi = q['multiSelect'] == true;
+    final picked = _picked.putIfAbsent(question, () => <String>{});
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 7),
+        child: Text(question, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final o in options)
+              if (o is Map)
+                FilterChip(
+                  label: Text('${o['label'] ?? ''}', style: const TextStyle(fontSize: 12)),
+                  tooltip: '${o['description'] ?? ''}',
+                  selected: picked.contains('${o['label'] ?? ''}'),
+                  onSelected: (sel) => setState(() {
+                    if (multi) {
+                      sel ? picked.add('${o['label'] ?? ''}') : picked.remove('${o['label'] ?? ''}');
+                    } else {
+                      picked
+                        ..clear()
+                        ..add('${o['label'] ?? ''}');
+                    }
+                  }),
+                ),
+          ],
+        ),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final questions = _questions;
     return Container(
       decoration: const BoxDecoration(
         color: ZT.surface,
@@ -1221,27 +1298,31 @@ class _PermissionCardState extends State<_PermissionCard> {
                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
           ),
         ]),
-        if (_prettyInput.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 130),
-              child: SingleChildScrollView(
-                child: SelectableText(_prettyInput,
-                    style: const TextStyle(
-                        fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+        if (_isAsk && questions.isNotEmpty)
+          for (final q in questions) ..._questionWidgets(q)
+        else ...[
+          if (_prettyInput.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 130),
+                child: SingleChildScrollView(
+                  child: SelectableText(_prettyInput,
+                      style: const TextStyle(
+                          fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+                ),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: TextField(
+              controller: _message,
+              style: const TextStyle(fontSize: 12.5),
+              decoration: const InputDecoration(
+                  isDense: true, hintText: '给它的留言(可空)'),
+            ),
           ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: TextField(
-            controller: _message,
-            style: const TextStyle(fontSize: 12.5),
-            decoration: const InputDecoration(
-                isDense: true, hintText: '给它的留言(可空)'),
-          ),
-        ),
+        ],
         Padding(
           padding: const EdgeInsets.only(top: 9),
           child: Row(children: [
@@ -1250,15 +1331,20 @@ class _PermissionCardState extends State<_PermissionCard> {
                 label: '拒绝',
                 color: ZT.rose,
                 textColor: Colors.white,
-                onPressed: () => widget.onAnswer(false, _message.text.trim()),
+                onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: BigButton(
-                label: '允许',
-                onPressed: () => widget.onAnswer(true, _message.text.trim()),
-              ),
+              child: _isAsk && questions.isNotEmpty
+                  ? BigButton(
+                      label: _askReady ? '提交回答' : '请先选择',
+                      onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
+                    )
+                  : BigButton(
+                      label: '允许',
+                      onPressed: () => widget.onAnswer(true, _message.text.trim(), null),
+                    ),
             ),
           ]),
         ),

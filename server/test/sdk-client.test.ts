@@ -221,6 +221,37 @@ describe('SessionRuntime', () => {
     expect(events.some((e) => e.kind === 'error')).toBe(false);
   });
 
+  it('setPermissionModeLive/setModelLive 转发到活实例;无实例时不炸', async () => {
+    const { events, emit } = collector();
+    const seen: { mode?: string; model?: string } = {};
+    let promptEnded = false;
+    const queryFn: QueryFn = ({ prompt }) => {
+      const gen = (async function* () {
+        yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+        for await (const _ of prompt) void _;
+        promptEnded = true;
+      })();
+      (gen as unknown as { setPermissionMode: (m: string) => Promise<void> }).setPermissionMode = async (m) => { seen.mode = m; };
+      (gen as unknown as { setModel: (m?: string) => Promise<void> }).setModel = async (m) => { seen.model = m; };
+      return gen as unknown as QueryInstance;
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'lv', emit, queryFn });
+    await runtime.setPermissionModeLive('acceptEdits'); // 无实例:静默不炸
+    await runtime.setModelLive('glm-x');
+    expect(seen.mode).toBeUndefined();
+    expect(seen.model).toBeUndefined();
+
+    await runtime.send('起一轮,result 后挂住');
+    await runtime.setPermissionModeLive('plan');
+    await runtime.setModelLive('glm-x');
+    expect(seen).toEqual({ mode: 'plan', model: 'glm-x' });
+
+    await runtime.send('下一轮取代旧流'); // 收尾释放
+    await settle();
+    expect(promptEnded).toBe(true);
+    expect(events.filter((e) => e.kind === 'complete')).toHaveLength(2);
+  });
+
   it('CLI 僵死(interrupt 无效):abort 强裁兜底让回合落定,下一轮可继续', async () => {
     const { events, emit } = collector();
     let turn = 0;

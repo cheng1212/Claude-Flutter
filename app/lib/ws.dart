@@ -220,13 +220,15 @@ class ZSocket {
     });
   }
 
-  void answerPermission(String sessionId, String requestId, {required bool allow, String message = ''}) {
+  void answerPermission(String sessionId, String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput}) {
     _send({
       'type': 'chat.permission-response',
       'sessionId': sessionId,
       'requestId': requestId,
       'allow': allow,
       'message': message,
+      // AskUserQuestion 等交互工具靠它回填选择结果(空值不带键)
+      'updatedInput': ?updatedInput,
     });
   }
 

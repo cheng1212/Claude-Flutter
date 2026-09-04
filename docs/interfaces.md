@@ -72,6 +72,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `tool_use` | 有 | 是 | `{toolId,toolName,toolInput}` |
 | `tool_result` | 有 | 是 | `{toolId,content,isError}`;数组 content 逐块取文本,image 块只留 `[image]` 占位 |
 | `permission_request` | **有但不落库** | 否 | `{requestId,toolName,input}`;占号 → DB seq 有洞(锁步不受影响);app 端不做 seq 去重 |
+| `task_started` / `task_complete` | **有但不落库** | 否 | `{taskId,description,taskType?}` / `{taskId,status,summary}`;同 permission_request 先例:占号进环形缓冲、不落库;app 端复用工具卡展示后台任务/子任务 |
 | `usage` | 有 | 是 | token/费用/时长/上下文窗口 |
 | `complete` | 有 | 是 | `{exitCode,aborted}`;终态,app 端顺手收尾无结果工具卡 |
 | `error` | 有 | 是 | 含特判值 `RUN_IN_PROGRESS`(app 撤回乐观行+恢复停止按钮) |
@@ -112,7 +113,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `user`(tool_result 块) | 映射 tool_result |
 | `stream_event`(text/thinking delta) | 映射流式;**其余 delta 类型忽略** |
 | `result` | success→usage+complete;error→error+complete;**modelUsage 只取最贵条目做 contextWindow** |
-| 其余 `system/*` 全部 | **忽略**:`task_notification/task_started/task_progress/task_updated`、`compact_boundary`、`status`、`commands_changed`、`background_tasks_changed`、`api_retry`、`session_state_changed`、`thinking_tokens`、`prompt_suggestion` 等 |
+| 其余 `system/*` 全部 | 忽略;例外:`task_started`/`task_notification` 已映射(§3.2 增量);`task_progress/task_updated`、`compact_boundary`、`status`、`commands_changed`、`background_tasks_changed`、`api_retry`、`session_state_changed`、`thinking_tokens`、`prompt_suggestion` 等仍忽略 |
 | `parent_tool_use_id` | **未区分** → 子代理的 tool_use/tool_result 与主对话混排 |
 
 ### 4.3 Query 实例方法使用情况
@@ -121,7 +122,8 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 |---|---|
 | `interrupt()` | ✅ abort 用 |
 | 迭代消息流 | ✅ |
-| `setModel` / `setPermissionMode` / `applyFlagSettings` / `setMaxThinkingTokens` | ❌ 未用(热切换靠“下一轮新进程带新 options”,多花一轮重启) |
+| `setModel` / `setPermissionMode` | ✅ 2026-09-05 起:PATCH 回调 `onSessionPatched` → `setPermissionModeLive`/`setModelLive`(裸模型名才现场切;路由别名/default 由下一轮 buildOptions 生效) |
+| `applyFlagSettings` / `setMaxThinkingTokens` | ❌ 未用 |
 | `initializationResult` / `supportedCommands` / `supportedModels` / `supportedAgents` | ❌ 未用 |
 | `mcpServerStatus` / `setMcpServers` / `reconnectMcpServer` / `toggleMcpServer` | ❌ 未用 |
 | `rewindFiles`(文件检查点回滚) | ❌ 未用(`enableFileCheckpointing` 也未开) |
@@ -141,11 +143,11 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | 能力 | SDK 面 | 现状 | 建议做法 |
 |---|---|---|---|
 | **斜杠命令/Skills** | `supportedCommands()` 返回可用 /命令;Options.`skills:'all'` | 无。app 无法用 /compact、/review 等 | chat.send 支持 `content` 以 `/` 开头时原样透传(CLI 本就识别)+ 启动时拉 supportedCommands 做补全面板 |
-| **Plan 模式** | `permissionMode:'plan'` + `planModeInstructions`;`ExitPlanMode` 审批已在 INTERACTIVE_TOOLS 白名单 | 权限模式选择器有 default/acceptEdits/bypass,**缺 plan/dontAsk/auto** | 补三个选项;ExitPlanMode 审批卡渲染 plan 内容(现在是 JSON dump) |
-| **AskUserQuestion 结构化渲染** | canUseTool 已桥;input 里有 options/多问题结构 | 能收到但 app 端按原始 JSON 展示 | 识别 toolName==AskUserQuestion 渲染选项按钮,answer 走 `updatedInput` |
-| **任务/待办系统** | 工具 TaskCreate/TaskList/TaskUpdate…;系统消息 `task_notification/task_started/task_progress` | 事件被丢弃,任务卡看不到状态 | 透传 4 种 task 系统消息 → app 待办面板/工具卡状态徽章 |
+| **Plan 模式** | `permissionMode:'plan'` + `planModeInstructions`;`ExitPlanMode` 审批已在 INTERACTIVE_TOOLS 白名单 | ✅ 已补:dontAsk/auto/plan 全进选择器(chat_page `_pickMode`);ExitPlanMode 卡仍是 JSON dump(后补) | ~~补三个选项~~ 完成;剩余:plan 卡渲染 plan 内容 |
+| **AskUserQuestion 结构化渲染** | canUseTool 已桥;input 里有 options/多问题结构 | ✅ 已落地:chat_page 识别 toolName==AskUserQuestion,FilterChip 多/单选,`updatedInput.answers` 回传(ws.answerPermission 全链路) | 完成 |
+| **任务/待办系统** | 工具 TaskCreate/TaskList/TaskUpdate…;系统消息 `task_notification/task_started/task_progress` | ✅ 部分落地:transform 透传 task_started/task_notification(→app task_complete),ambient/skip_transcript 过滤,task_progress 故意不透传(走秒卡已示活);事件不落库(同 permission_request 先例,占号进环形缓冲) | 完成(工具卡状态徽章暂不做) |
 | **子代理透视** | `parent_tool_use_id` 区分嵌套;Options.`forwardSubagentText`、`agentProgressSummaries` | 子代理事件与主对话混排,看不出“正在跑子任务” | transform 带 parentToolUseId → app 嵌套工具卡 + 进度摘要 |
-| **真·热切换(setModel/setPermissionMode)** | Query 实例方法,进程内即时生效 | 靠“下一轮重建 options”(换模型=换进程,provider session 重 resume,丢本轮思考缓存) | runtimeFor 拿到 existing 时若 CLI 进程活着,优先调 `instance.setModel(...)` |
+| **真·热切换(setModel/setPermissionMode)** | Query 实例方法,进程内即时生效 | ✅ 已落地:PATCH → `onSessionPatched` → `runtime.setPermissionModeLive()`/`setModelLive()`(转发 currentInstance,异常吞掉只留 opts 已改的兜底);裸模型名才现场切,路由别名/default 靠下一轮 buildOptions | 完成 |
 | **上下文占用真值** | `getContextUsage({detail:'summary'})` 按类别(系统提示/工具/消息/MCP/记忆) | usage 面板用 `LENGTH(content)` 估算构成 | 每轮 complete 后调一次,usage 事件加分类明细 |
 | **后台任务通知** | `background_tasks_changed`、`task_notification`、Options.`perTaskStopAffordance`+`stop_task` | 忽略;后台任务结束 app 无感知 | 事件透传 + app 系统通知(PushNotification 思路);停止按钮逐任务化 |
 
@@ -191,8 +193,8 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 1. **用户图片 base64 全量广播**:gateway 注释说“meta 只存引用、不发大 base64 给其他端”,实际 `{...event}` 原样带 `images[]`(完整 data URI)落库+广播。→ 广播前剥成 `[image×n]` 占位,meta 里留完整版(或落对象存储)。
 2. **`ProtocolEvent` 的 `model` kind 是死类型**:types.ts 定义了、transform 从不发、app 不消费 → 删或实现(轮次开头报当前模型,切换可见)。
 3. **tool_result 无长度上限**:超大 stdout 整段落库(只有 image 有占位保护)。→ 超阈值截断 + `[...截断 N 字节]` 尾注。
-4. **热切换靠重建进程**:见 §5 P1“真·热切换”;换模型会丢 CLI 侧 prompt 缓存。
-5. **`runtimeFor` 只在 chat.send 时调**:PATCH 后若无 send,runtime 里还是旧值——现状正确但不直观,文档化即可。
+4. ~~**热切换靠重建进程**~~ → 2026-09-05 已缓解:`onSessionPatched` 现场调 `setModel/setPermissionMode`(§5 P1);仍有残余:路由别名/default 模型、已退出实例仍走下一轮重建。
+5. **`runtimeFor` 只在 chat.send 时调**:PATCH 后若无 send,runtime 里还是旧值——已被 `onSessionPatched` 兜住(runtime.update 即时生效),仅剩实例不在时的空窗(可接受)。
 
 ## 7. 维护约定
 

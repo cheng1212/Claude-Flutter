@@ -45,6 +45,29 @@ describe('REST', () => {
     await app.close();
   });
 
+  it('PATCH model/permissionMode 触发 onSessionPatched(真热切换回调),其他字段不触发', async () => {
+    const db = openDb(':memory:');
+    const calls: Array<{ id: string; patch: { model?: string; permissionMode?: string } }> = [];
+    const app = await buildApp({
+      token: 't', db, routesPath: 'Z:/none.json',
+      onSessionPatched: (id, patch) => calls.push({ id, patch }),
+    });
+    const s = createSession(db, { title: 'hot' });
+
+    // model + permissionMode:两个字段都透传给回调
+    await app.inject({ method: 'PATCH', url: `/api/sessions/${s.id}`, headers: H, payload: { model: 'glm-x', permissionMode: 'plan' } });
+    expect(calls).toEqual([{ id: s.id, patch: { model: 'glm-x', permissionMode: 'plan' } }]);
+
+    // title-only PATCH:不触发(没有要热设的东西)
+    await app.inject({ method: 'PATCH', url: `/api/sessions/${s.id}`, headers: H, payload: { title: '改名' } });
+    expect(calls).toHaveLength(1);
+
+    // 越界 permissionMode 被白名单拒了:不进 patch,也不触发回调
+    await app.inject({ method: 'PATCH', url: `/api/sessions/${s.id}`, headers: H, payload: { permissionMode: 'bogus' } });
+    expect(calls).toHaveLength(1);
+    await app.close();
+  });
+
   it('sessions 列表带 isRunning:注入的 registry 查询决定"运行中"徽章', async () => {
     const db = openDb(':memory:');
     const live = new Set<string>();

@@ -7,6 +7,8 @@ export type ProtocolEvent =
   | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown }
   | { kind: 'tool_result'; toolId: string; content: string; isError: boolean }
   | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown }
+  | { kind: 'task_started'; taskId: string; description: string; taskType?: string }
+  | { kind: 'task_complete'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
   | {
     kind: 'usage';
     inputTokens: number;

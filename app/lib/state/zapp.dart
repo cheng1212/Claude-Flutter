@@ -319,13 +319,13 @@ class ZApp extends ChangeNotifier {
     }
   }
 
-  void answerPermission(String requestId, {required bool allow, String message = ''}) {
+  void answerPermission(String requestId, {required bool allow, String message = '', Map<String, dynamic>? updatedInput}) {
     final sid = currentSessionId;
     if (sid == null) return;
     chat = applyPermissionAnswer(chat);
     notifyListeners();
     try {
-      _socket.answerPermission(sid, requestId, allow: allow, message: message);
+      _socket.answerPermission(sid, requestId, allow: allow, message: message, updatedInput: updatedInput);
     } on Object {
       // 断线发不出去:面板已收起;服务器侧 10 分钟超时自动 deny,
       // 或重连后 subscribed.pending 把审批卡带回来重批。

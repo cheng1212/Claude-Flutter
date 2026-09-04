@@ -86,6 +86,34 @@ describe('transformMessage', () => {
     expect(transformMessage({ type: 'system', subtype: 'init', session_id: 's' })).toEqual([]);
     expect(transformMessage({ type: 'keep_alive' })).toEqual([]);
   });
+  it('system task_started/task_notification → task 事件;ambient 内部任务与 task_progress 不透传', () => {
+    expect(transformMessage({
+      type: 'system', subtype: 'task_started', session_id: 's',
+      task_id: 'k1', description: '跑测试', task_type: 'local_agent', is_backgrounded: true,
+    })).toEqual([{ kind: 'task_started', taskId: 'k1', description: '跑测试', taskType: 'local_agent' }]);
+
+    expect(transformMessage({
+      type: 'system', subtype: 'task_notification', session_id: 's',
+      task_id: 'k1', status: 'completed', summary: '30 个测试全绿',
+    })).toEqual([{ kind: 'task_complete', taskId: 'k1', status: 'completed', summary: '30 个测试全绿' }]);
+
+    // 失败/停止也带出;summary 缺省为空串
+    expect(transformMessage({
+      type: 'system', subtype: 'task_notification', session_id: 's',
+      task_id: 'k2', status: 'stopped',
+    })).toEqual([{ kind: 'task_complete', taskId: 'k2', status: 'stopped', summary: '' }]);
+
+    // CLI 内部清理任务不上屏
+    expect(transformMessage({
+      type: 'system', subtype: 'task_started', session_id: 's',
+      task_id: 'ambient-1', description: 'watcher', ambient: true,
+    })).toEqual([]);
+    // 进度帧频率高,不透传(卡片走秒已表达活性)
+    expect(transformMessage({
+      type: 'system', subtype: 'task_progress', session_id: 's',
+      task_id: 'k1', description: 'x', usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+    })).toEqual([]);
+  });
 });
 
 describe('startsBackgroundWork', () => {

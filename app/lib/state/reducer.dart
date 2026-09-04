@@ -205,6 +205,36 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         toolName: ev['toolName'] as String? ?? '',
         input: (ev['input'] as Map?)?.cast<String, dynamic>() ?? const {},
       ));
+    case 'task_started':
+      // 后台任务/子代理:复用工具卡渲染(走秒计时直接继承),complete 后收尾
+      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ToolRow(
+        toolId: ev['taskId'] as String? ?? '',
+        toolName: ev['taskType'] == 'local_agent' ? '子任务' : '后台任务',
+        toolInput: {'description': ev['description'] as String? ?? ''},
+        startedAt: DateTime.now(),
+      )]);
+    case 'task_complete':
+      final taskId = ev['taskId'] as String? ?? '';
+      final status = ev['status'] as String? ?? 'completed';
+      final summary = ev['summary'] as String? ?? '';
+      final result = ToolResult(
+        content: summary.isEmpty ? '[后台任务 $status]' : summary,
+        isError: status != 'completed',
+      );
+      final rows = [...s.rows];
+      // 放宽匹配:后台任务跑得比回合久时,complete 已把卡片收尾成中断占位,迟到的真结果要盖回来
+      final idx = rows.lastIndexWhere((r) =>
+          r is ToolRow && r.toolId == taskId && (r.result == null || r.result?.content == kInterruptedToolMark));
+      if (idx < 0) return _with(s, lastSeq: nextSeq);
+      final tool = rows[idx] as ToolRow;
+      rows[idx] = ToolRow(
+        toolId: tool.toolId,
+        toolName: tool.toolName,
+        toolInput: tool.toolInput,
+        startedAt: tool.startedAt,
+        result: result,
+      );
+      return _with(s, lastSeq: nextSeq, running: true, rows: rows);
     case 'usage':
       return _with(s, lastSeq: nextSeq, usage: UsageInfo(
         inputTokens: (ev['inputTokens'] as num?)?.toInt() ?? 0,

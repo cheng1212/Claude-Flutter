@@ -59,6 +59,31 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
     return out;
   }
 
+  if (type === 'system') {
+    const subtype = msg.subtype as string;
+    // 房间清理/自动监视等 CLI 内部任务不当成用户工作上报
+    const ambient = msg.ambient === true || msg.skip_transcript === true;
+    if (subtype === 'task_started' && !ambient && typeof msg.task_id === 'string') {
+      return [{
+        kind: 'task_started',
+        taskId: msg.task_id,
+        description: String(msg.description ?? ''),
+        taskType: typeof msg.task_type === 'string' ? msg.task_type : undefined,
+      }];
+    }
+    if (subtype === 'task_notification' && !ambient && typeof msg.task_id === 'string') {
+      const status = msg.status;
+      return [{
+        kind: 'task_complete',
+        taskId: msg.task_id,
+        status: status === 'completed' || status === 'failed' || status === 'stopped' ? status : 'failed',
+        summary: String(msg.summary ?? ''),
+      }];
+    }
+    // task_progress 频率高且卡片走秒已表达活性,先不透传;init/compact 等其余 subtype 不消费
+    return [];
+  }
+
   if (type === 'stream_event') {
     const event = msg.event as AnyRecord | undefined;
     if ((event?.type as string) !== 'content_block_delta') return [];

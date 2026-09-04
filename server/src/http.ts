@@ -12,6 +12,8 @@ export type AppOptions = {
   /** 静态分发目录:/download/:name 按精确文件名发送,免鉴权(给手机下载 APK 用) */
   publicDir?: string;
   onSessionDeleted?: (sessionId: string) => void;
+  /** PATCH 落库成功后回调(仅带本次 PATCH 的字段):运行中的 runtime 现场热设模式/模型。 */
+  onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void;
   /** 会话是否在跑(注入 registry.isRunning):列表接口据此标"运行中"徽章 */
   isRunning?: (sessionId: string) => boolean;
   /** 在跑会话数(注入):health 暴露,手机端诊断"连的是不是旧进程" */
@@ -72,7 +74,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     });
   }
   if (opts.db && opts.routesPath) {
-    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, isRunning: opts.isRunning });
+    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning });
   }
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/') || req.url.startsWith('/api/health')) return;

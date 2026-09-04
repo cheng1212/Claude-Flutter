@@ -15,6 +15,26 @@ if (staleRuns > 0) console.log(`[zcode-server] marked ${staleRuns} stale run(s) 
 const registry = new RunRegistry();
 const runtimes = new Map<string, SessionRuntime>();
 
+// runtimeFor 与 PATCH 回调共用的"会话配置现算":DB 现值 + routes 热读。
+// 返回 null = 会话不存在;bareModel = 非路由别名的裸模型名(才值得对 CLI 现场设)。
+const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissionMode?: string }) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId) as
+    | { cwd: string | null; provider_session_id: string | null; model: string | null; permission_mode: string }
+    | undefined;
+  if (!session) return null;
+  const modelId = opts?.model ?? session.model ?? 'default';
+  // 路由表现读(不缓存启动快照):运行中改 routes.json,聊天路由与 /api/models 立即一致,
+  // 不会出现"列表有新模型、聊天却按旧表裸名透传报错"的行为分裂。
+  const resolved = resolveModel(loadRoutes(config.routesPath), modelId);
+  const cfg = {
+    // 显式路由走 routeSettings;default/未知模型交给 CLI 自己的端点
+    model: resolved ? undefined : (modelId === 'default' ? undefined : modelId),
+    permissionMode: opts?.permissionMode ?? session.permission_mode,
+    routeSettings: resolved?.settings ?? null,
+  };
+  return { session, cfg, bareModel: resolved ? null : (modelId === 'default' ? null : modelId) };
+};
+
 const app = await buildApp({
   token: config.token,
   db,
@@ -31,6 +51,15 @@ const app = await buildApp({
     }
     registry.forget(sessionId);
   },
+  // 真热切换:PATCH 落库后,有活着的 CLI 实例就现场设;没有则等下一条 send。
+  onSessionPatched(sessionId, patch) {
+    const runtime = runtimes.get(sessionId);
+    if (!runtime) return;
+    const ctx = refreshCfg(sessionId);
+    if (ctx) runtime.update(ctx.cfg);
+    if (patch.permissionMode) void runtime.setPermissionModeLive(patch.permissionMode);
+    if (ctx?.bareModel && patch.model) void runtime.setModelLive(patch.model);
+  },
 }); // buildApp 内部已挂 REST
 
 attachWsGateway(app.server, {
@@ -38,32 +67,18 @@ attachWsGateway(app.server, {
   token: config.token,
   registry,
   runtimeFor(sessionId, opts) {
-    const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId) as
-      | { cwd: string | null; provider_session_id: string | null; model: string | null; permission_mode: string }
-      | undefined;
-    if (!session) throw new Error(`session not found: ${sessionId}`);
-    const modelId = opts.model ?? session.model ?? 'default';
-    // 路由表现读(不缓存启动快照):运行中改 routes.json,聊天路由与 /api/models 立即一致,
-    // 不会出现"列表有新模型、聊天却按旧表裸名透传报错"的行为分裂。
-    const resolved = resolveModel(loadRoutes(config.routesPath), modelId);
-    // 会话配置每次现算:用户 PATCH 过 model/permission_mode 后,下一条 send 自动带上新值,
-    // 不用重启 server / 不用重建运行时。
-    const cfg = {
-      // 显式路由走 routeSettings;default/未知模型交给 CLI 自己的端点
-      model: resolved ? undefined : (modelId === 'default' ? undefined : modelId),
-      permissionMode: opts.permissionMode ?? session.permission_mode,
-      routeSettings: resolved?.settings ?? null,
-    };
+    const ctx = refreshCfg(sessionId, opts);
+    if (!ctx) throw new Error(`session not found: ${sessionId}`);
     const existing = runtimes.get(sessionId);
     if (existing) {
-      existing.update(cfg);
+      existing.update(ctx.cfg);
       return existing;
     }
     const runtime = new SessionRuntime({
       appSessionId: sessionId,
-      providerSessionId: session.provider_session_id,
-      cwd: session.cwd ?? process.cwd(),
-      ...cfg,
+      providerSessionId: ctx.session.provider_session_id,
+      cwd: ctx.session.cwd ?? process.cwd(),
+      ...ctx.cfg,
       bgCeilingMs: config.bgCeilingMs,
       approvalTimeoutMs: config.approvalTimeoutMs,
       emit: (event) => registry.push(sessionId, event),
