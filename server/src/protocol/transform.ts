@@ -36,7 +36,18 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
       const b = block as AnyRecord;
       if (b.type === 'tool_result') {
         const inner = b.content;
-        const text = typeof inner === 'string' ? inner : JSON.stringify(inner ?? '');
+        // 数组内容逐块取文本;image 块的 base64 只换成占位符——整块 stringify 会把
+        // 巨型 base64 灌进 messages 表,一次读图就撑爆几 MB 落库。
+        const text = typeof inner === 'string'
+          ? inner
+          : Array.isArray(inner)
+            ? inner.map((blk) => {
+                const x = blk as AnyRecord;
+                if (x?.type === 'text' && typeof x.text === 'string') return x.text;
+                if (x?.type === 'image') return '[image]';
+                return JSON.stringify(x ?? '');
+              }).join('\n')
+            : JSON.stringify(inner ?? '');
         out.push({
           kind: 'tool_result',
           toolId: String(b.tool_use_id ?? ''),

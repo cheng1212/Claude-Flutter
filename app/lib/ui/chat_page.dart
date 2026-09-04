@@ -97,7 +97,8 @@ class _ChatPageState extends State<ChatPage> {
     if (text.isEmpty && images.isEmpty) return;
     _input.clear();
     _pendingImages.value = const [];
-    app.sendChat(text, images: images);
+    // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
+    app.sendChat(text, model: _model, permissionMode: _mode, images: images);
   }
 
   /// 相册选图 → 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。

@@ -27,6 +27,14 @@ function send(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
+/** 控制事件(无 seq,不落库):任一会话开跑/跑完都喊一嗓子,各端刷新会话列表的"运行中"徽章。 */
+function broadcastDirty(wss: WebSocketServer, sessionId: string): void {
+  for (const client of wss.clients) {
+    const c = client as StateWs;
+    if (c.authed) send(c, { kind: 'sessions_dirty', sessionId });
+  }
+}
+
 export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
   const wss = new WebSocketServer({ server });
   const runtimes = new Map<string, RuntimeLike>();
@@ -53,6 +61,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           usage: row.usage,
         });
       }
+      broadcastDirty(wss, sessionId); // 跑完:各端列表的"运行中"徽章该灭了
     }
     if (PERSIST_KINDS.has(event.kind)) {
       const content = event.kind === 'tool_use'
@@ -170,6 +179,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
         // 本地导入的历史消息占了 1..N,先抬 seq 指针,避免新事件 seq 撞车被前端去重吞掉。
         deps.registry.seedSeq(sessionId, maxSeq(deps.db, sessionId));
         deps.registry.begin(sessionId);
+        broadcastDirty(wss, sessionId); // 开跑:各端列表亮"运行中"
         // begin 之后任何同步异常都必须 finish 释放 running,否则会话永久卡死(所有 send 被 RUN_IN_PROGRESS 拒)。
         try {
           activeRuns.set(sessionId, { runId: createRun(deps.db, sessionId, options.model ?? null).id, usage: null });

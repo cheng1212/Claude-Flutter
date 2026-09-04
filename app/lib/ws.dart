@@ -190,9 +190,12 @@ class ZSocket {
   }
 
   void sendChat(String sessionId, String content, {String? model, String? permissionMode, List<String> images = const []}) {
+    // default 不占 options:显式发 'default' 会在服务端压掉 DB 里 PATCH 过的模式
+    // (UI 列表偶发没拉到时 _mode 兜底 'default',那一轮权限就被悄悄降级),缺省让服务端读 DB。
     final options = <String, dynamic>{
       if (model != null && model.isNotEmpty && model != 'default') 'model': model,
-      if (permissionMode != null && permissionMode.isNotEmpty) 'permissionMode': permissionMode,
+      if (permissionMode != null && permissionMode.isNotEmpty && permissionMode != 'default')
+        'permissionMode': permissionMode,
     };
     _send({
       'type': 'chat.send',

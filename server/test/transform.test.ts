@@ -18,17 +18,21 @@ describe('transformMessage', () => {
       { kind: 'tool_use', toolId: 't1', toolName: 'Read', toolInput: { file_path: 'a.ts' } },
     ]);
   });
-  it('user tool_result → tool_result(is_error 透传,结构化内容序列化)', () => {
+  it('user tool_result → tool_result(is_error 透传,数组逐块取文本,image 换占位符)', () => {
     const out = transformMessage({
       type: 'user', session_id: 's1',
       message: { role: 'user', content: [
         { type: 'tool_result', tool_use_id: 't1', content: 'file body', is_error: true },
-        { type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: 'hi' }] },
+        { type: 'tool_result', tool_use_id: 't2', content: [
+          { type: 'text', text: 'hi' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ] },
       ] },
     });
     expect(out).toEqual([
       { kind: 'tool_result', toolId: 't1', content: 'file body', isError: true },
-      { kind: 'tool_result', toolId: 't2', content: JSON.stringify([{ type: 'text', text: 'hi' }]), isError: false },
+      // base64 不落库:整块 stringify 会把几 MB 图片数据灌进 messages 表
+      { kind: 'tool_result', toolId: 't2', content: 'hi\n[image]', isError: false },
     ]);
   });
   it('user 纯文本回显(非工具行)→ 空,不进聊天流', () => {

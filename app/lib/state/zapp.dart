@@ -17,6 +17,7 @@ class ZApp extends ChangeNotifier {
   ZSocket _socket;
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _retry;
+  Timer? _sessionsDirtyTimer;
   bool _disposed = false;
 
   List<String> models = const [];
@@ -93,6 +94,7 @@ class ZApp extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _retry?.cancel();
+    _sessionsDirtyTimer?.cancel();
     _sub?.cancel();
     _socket.onChanged = null;
     unawaited(_socket.close());
@@ -120,13 +122,24 @@ class ZApp extends ChangeNotifier {
       return;
     }
     if (kind == 'session_created') {
-      unawaited(_loadSessions());
+      unawaited(_loadSessions(silent: true));
+      return;
+    }
+    if (kind == 'sessions_dirty') {
+      // 任一会话开跑/跑完的服务端广播:250ms 防抖合并成一次 REST,列表徽章跟着活。
+      // 控制事件,无 seq,不许进 reducer。
+      _sessionsDirtyTimer?.cancel();
+      _sessionsDirtyTimer = Timer(const Duration(milliseconds: 250), () async {
+        if (_disposed) return;
+        await _loadSessions(silent: true);
+        if (!_disposed) notifyListeners();
+      });
       return;
     }
     final sid = ev['sessionId'] as String?;
     if (sid == null || sid != currentSessionId) return;
     chat = applyEvent(chat, ev);
-    if (kind == 'complete') unawaited(_loadSessions());
+    if (kind == 'complete') unawaited(_loadSessions(silent: true));
     notifyListeners();
   }
 
@@ -148,11 +161,12 @@ class ZApp extends ChangeNotifier {
     return modelGroups;
   }
 
-  Future<void> _loadSessions() async {
+  Future<void> _loadSessions({bool silent = false}) async {
     try {
       sessions = await _api.sessions();
     } on Object catch (e) {
-      error = '$e';
+      // 后台自动刷新(定时/事件驱动)失败保持静默:一次 REST 抖动不该在聊天页顶上弹错误条
+      if (!silent) error = '$e';
     }
   }
 

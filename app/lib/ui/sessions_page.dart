@@ -218,6 +218,11 @@ class _SessionsPageState extends State<SessionsPage> {
             TextButton(
                 onPressed: _toggleManage, child: const Text('完成'))
           else ...[
+            // 手动刷新:除了下拉,给个一眼能看到的按钮;"运行中"徽章数据也靠它和 dirty 广播
+            IconButton(
+                tooltip: '刷新',
+                onPressed: app.refreshSessions,
+                icon: const Icon(Icons.refresh_rounded, size: 20)),
             IconButton(
                 tooltip: '设置',
                 onPressed: _openSettings,
@@ -315,6 +320,7 @@ class _SessionsPageState extends State<SessionsPage> {
     final title = '${s['title'] ?? '未命名会话'}';
     final model = '${s['model'] ?? ''}';
     final pinned = _isPinned(s);
+    final running = s['isRunning'] == true;
     final picked = _picked.contains(id);
 
     return HardCard(
@@ -353,6 +359,28 @@ class _SessionsPageState extends State<SessionsPage> {
                       fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               Row(children: [
+                if (running)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                    decoration: ShapeDecoration(
+                      color: ZT.primary.withValues(alpha: 0.1),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(2),
+                          side: BorderSide(
+                              width: 1, color: ZT.primary.withValues(alpha: 0.5))),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const PulseDot(color: ZT.primary, animate: true, size: 5),
+                      const SizedBox(width: 4),
+                      Text('运行中',
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: ZT.primary,
+                              fontFamily: ZT.sans)),
+                    ]),
+                  ),
                 if (s['source'] == 'local')
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),

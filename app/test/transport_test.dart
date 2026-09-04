@@ -147,6 +147,15 @@ void main() {
       'options': {'permissionMode': 'acceptEdits'}, // default 不占 options.model
     });
 
+    // default 权限模式也不占 options:显式发 'default' 会在服务端压掉 DB 里 PATCH 过的模式
+    s.sendChat('s1', '再问', model: 'glm-x', permissionMode: 'default');
+    expect(channel.sent.last, {
+      'type': 'chat.send',
+      'sessionId': 's1',
+      'content': '再问',
+      'options': {'model': 'glm-x'},
+    });
+
     s.answerPermission('s1', 'r9', allow: true);
     expect(channel.sent.last, {
       'type': 'chat.permission-response',

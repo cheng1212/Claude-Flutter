@@ -86,6 +86,29 @@ void main() {
     expect(app.sessions.single['id'], 's1');
   });
 
+  test('sessions_dirty:250ms 防抖合并成一次列表刷新;控制帧不进 reducer', () async {
+    await openEmpty();
+    var sessionFetches = 0;
+    http.responder = (c) {
+      if (c.path == '/api/sessions') {
+        sessionFetches++;
+        return <Map>[
+          {'id': 's1', 'title': 'x', 'isRunning': true},
+        ];
+      }
+      return {'messages': <Map>[], 'total': 0};
+    };
+    // 开跑/跑完连发三拍(不同会话混着)→ 只该合并成一次 REST
+    channel.serverPush({'kind': 'sessions_dirty', 'sessionId': 's1'});
+    channel.serverPush({'kind': 'sessions_dirty', 'sessionId': 's1'});
+    channel.serverPush({'kind': 'sessions_dirty', 'sessionId': 'other'});
+    await pump(const Duration(milliseconds: 400));
+    expect(sessionFetches, 1);
+    expect(app.sessions.single['isRunning'], isTrue);
+    // 控制帧不进聊天流:当前会话行数不变
+    expect(app.chat.rows, isEmpty);
+  });
+
   test('openSession:REST meta 重建历史,lastSeq 续传订阅', () async {
     await openEmpty();
     final events = [

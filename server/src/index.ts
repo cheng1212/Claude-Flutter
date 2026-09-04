@@ -29,6 +29,8 @@ const app = await buildApp({
   db,
   routesPath: config.routesPath,
   publicDir: config.publicDir,
+  // 会话列表的"运行中"徽章数据源
+  isRunning: (sessionId) => registry.isRunning(sessionId),
   // 会话被删:中止还在跑的 runtime 并清 registry,防幽灵事件继续给已删会话发号落库
   onSessionDeleted(sessionId) {
     const runtime = runtimes.get(sessionId);

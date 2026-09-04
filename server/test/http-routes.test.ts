@@ -38,6 +38,23 @@ describe('REST', () => {
     await app.close();
   });
 
+  it('sessions 列表带 isRunning:注入的 registry 查询决定"运行中"徽章', async () => {
+    const db = openDb(':memory:');
+    const live = new Set<string>();
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json', isRunning: (id) => live.has(id) });
+    const s = createSession(db, { title: 'live' });
+
+    const list1 = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
+    let rows = list1.json() as Array<{ id: string; isRunning: boolean }>;
+    expect(rows.find((r) => r.id === s.id)?.isRunning).toBe(false);
+
+    live.add(s.id); // 等价 registry.begin
+    const list2 = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
+    rows = list2.json() as Array<{ id: string; isRunning: boolean }>;
+    expect(rows.find((r) => r.id === s.id)?.isRunning).toBe(true);
+    await app.close();
+  });
+
   it('删除幂等 + batch-delete 一次删干净 + 回调收到被删 id', async () => {
     const db = openDb(':memory:');
     const deletedIds: string[] = [];

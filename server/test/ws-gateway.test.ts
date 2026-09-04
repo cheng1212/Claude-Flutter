@@ -17,7 +17,7 @@ function listen(app: Awaited<ReturnType<typeof buildApp>>): Promise<number> {
   });
 }
 
-function wsConnect(port: number): Promise<{ ws: WebSocket; next: () => Promise<AnyMessage>; pending: () => AnyMessage[] }> {
+function wsConnect(port: number): Promise<{ ws: WebSocket; next: () => Promise<AnyMessage>; nextAny: () => Promise<AnyMessage>; pending: () => AnyMessage[] }> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const queue: any[] = [];
@@ -29,10 +29,16 @@ function wsConnect(port: number): Promise<{ ws: WebSocket; next: () => Promise<A
     if (waiter) waiter(parsed);
     else queue.push(parsed);
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nextAny = () => queue.length ? Promise.resolve(queue.shift() as AnyMessage) : new Promise((r) => waiters.push(r));
   return new Promise((resolve) => {
     ws.on('open', () => resolve({
       ws,
-      next: () => queue.length ? Promise.resolve(queue.shift() as AnyMessage) : new Promise((r) => waiters.push(r)),
+      // 默认跳过 sessions_dirty 控制帧(列表刷新广播),业务事件断言不用到处防御
+      next: () => nextAny().then(function loop(m: AnyMessage): AnyMessage | Promise<AnyMessage> {
+        return m.kind === 'sessions_dirty' ? nextAny().then(loop) : m;
+      }),
+      nextAny,
       pending: () => queue as AnyMessage[],
     }));
   });
@@ -382,6 +388,49 @@ describe('ws gateway', () => {
     expect(rows.map((r) => [r.seq, r.kind])).toEqual([[1, 'text'], [2, 'text'], [3, 'complete']]);
     const run = db.prepare('SELECT status FROM runs WHERE session_id=?').get(s.id) as { status: string };
     expect(run.status).toBe('success'); // run 收尾没丢
+    await app.close();
+  });
+
+  it('sessions_dirty 广播:未订阅的客户端也收到开跑/跑完通知(会话列表徽章数据源)', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor: (sessionId: string) => ({
+        send: async (text: string) => {
+          registry.push(sessionId, { kind: 'text', role: 'assistant', content: `r:${text}` });
+          registry.finish(sessionId, 0, false);
+        },
+        answerPermission: () => {},
+        abort: async () => {},
+      }) as unknown as SessionRuntime,
+    });
+    const port = await listen(app);
+
+    // 旁听者:只 auth 不订阅——它代表停在会话列表页的手机
+    const listener = await wsConnect(port);
+    listener.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await listener.nextAny();
+
+    const sender = await wsConnect(port);
+    sender.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    await sender.nextAny();
+    const s = createSession(db, { title: 'dirty' });
+    sender.ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'go' }));
+    await sender.next(); // user text
+    await sender.next(); // assistant text
+    await sender.next(); // complete
+
+    // 旁听者收到的两拍都是 sessions_dirty:开跑一拍、跑完一拍,均不占 seq 不落库
+    expect(await listener.nextAny()).toMatchObject({ kind: 'sessions_dirty', sessionId: s.id });
+    expect(await listener.nextAny()).toMatchObject({ kind: 'sessions_dirty', sessionId: s.id });
+    expect(listener.pending().every((m) => m.kind !== 'text')).toBe(true);
+
+    const rows = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(s.id) as { c: number };
+    expect(rows.c).toBe(3); // 控制帧没进消息表
+    listener.ws.close();
+    sender.ws.close();
     await app.close();
   });
 
