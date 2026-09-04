@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SessionRuntime, type QueryFn } from '../src/protocol/sdk-client.js';
+import { SessionRuntime, type QueryFn, type QueryInstance } from '../src/protocol/sdk-client.js';
 import type { ProtocolEvent } from '../src/protocol/types.js';
 
 const base = { cwd: 'C:/tmp' };
@@ -126,6 +126,32 @@ describe('SessionRuntime', () => {
     expect(ended).toContain(2);
   });
 
+  it('update():权限模式热更新到下一轮;bypassPermissions 自动补 allowDangerouslySkipPermissions', async () => {
+    const { events, emit } = collector();
+    const seen: Array<Record<string, unknown>> = [];
+    const queryFn: QueryFn = ({ options }) => {
+      seen.push(options as Record<string, unknown>);
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'u1', permissionMode: 'default', emit, queryFn });
+    await runtime.send('第一轮');
+    expect(seen[0].permissionMode).toBeUndefined(); // default → 不传,CLI 走本机默认
+    expect(seen[0].allowDangerouslySkipPermissions).toBeUndefined();
+
+    runtime.update({ permissionMode: 'acceptEdits' });
+    await runtime.send('第二轮');
+    expect(seen[1].permissionMode).toBe('acceptEdits');
+    expect(seen[1].allowDangerouslySkipPermissions).toBeUndefined();
+
+    runtime.update({ permissionMode: 'bypassPermissions' });
+    await runtime.send('第三轮');
+    expect(seen[2].permissionMode).toBe('bypassPermissions');
+    expect(seen[2].allowDangerouslySkipPermissions).toBe(true);
+    expect(events.filter((e) => e.kind === 'complete')).toHaveLength(3);
+  });
+
   it('abort → complete(aborted:true),不产生 error 事件', async () => {
     const { events, emit } = collector();
     const queryFn: QueryFn = () => {
@@ -147,5 +173,50 @@ describe('SessionRuntime', () => {
     await running;
     expect(events.some((e) => e.kind === 'complete' && (e as { aborted: boolean }).aborted)).toBe(true);
     expect(events.some((e) => e.kind === 'error')).toBe(false);
+  });
+
+  it('CLI 僵死(interrupt 无效):abort 强裁兜底让回合落定,下一轮可继续', async () => {
+    const { events, emit } = collector();
+    let turn = 0;
+    const queryFn: QueryFn = () => {
+      if (++turn === 1) {
+        // 僵死 CLI:永不产出、永不结束、interrupt 也没用
+        const gen = (async function* (): AsyncGenerator<Record<string, unknown>> {
+          await new Promise<void>(() => {});
+        })();
+        (gen as unknown as { interrupt: () => Promise<void> }).interrupt = async () => {};
+        return gen as unknown as QueryInstance;
+      }
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', session_id: 'p', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a5', emit, queryFn, abortForceDelayMs: 30 });
+    const first = runtime.send('卡死');
+    await settle();
+    await runtime.abort(); // interrupt 无效 → 30ms 后强裁
+    await first; // 不挂死:强裁把回合结算了
+    expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: true });
+    await runtime.send('再来'); // turnChain 已推进,新一轮正常跑完
+    expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: false });
+  });
+
+  it('静默看门狗:整轮无输出超时 → error + 自动中断落定', async () => {
+    const { events, emit } = collector();
+    const queryFn: QueryFn = () => {
+      const gen = (async function* (): AsyncGenerator<Record<string, unknown>> {
+        await new Promise<void>(() => {});
+      })();
+      (gen as unknown as { interrupt: () => Promise<void> }).interrupt = async () => {};
+      return gen as unknown as QueryInstance;
+    };
+    const runtime = new SessionRuntime({
+      ...base, appSessionId: 'a6', emit, queryFn,
+      approvalTimeoutMs: 40, // 看门狗阈值(测试用极小值)
+      abortForceDelayMs: 30,
+    });
+    await runtime.send('挂机'); // 40ms 看门狗触发 error+abort → 30ms 强裁 → 落定
+    expect(events.some((e) => e.kind === 'error')).toBe(true);
+    expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: true });
   });
 });

@@ -49,13 +49,29 @@ describe('transformMessage', () => {
   it('result success → usage + complete(0)', () => {
     const out = transformMessage({
       type: 'result', subtype: 'success', session_id: 's', result: 'done',
-      total_cost_usd: 0.05, duration_ms: 1234,
-      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.05, duration_ms: 1234, num_turns: 3,
+      usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 },
+      modelUsage: {
+        'glm-5.3-flash': { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 100, cacheCreationInputTokens: 20, costUSD: 0.03, contextWindow: 200000, maxOutputTokens: 8192, webSearchRequests: 0 },
+        'deepseek-v4': { inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.02, contextWindow: 128000, maxOutputTokens: 4096, webSearchRequests: 0 },
+      },
     });
     expect(out).toEqual([
-      { kind: 'usage', inputTokens: 10, outputTokens: 5, totalCostUsd: 0.05, durationMs: 1234 },
+      {
+        kind: 'usage', inputTokens: 10, outputTokens: 5,
+        cacheReadInputTokens: 100, cacheCreationInputTokens: 20,
+        totalCostUsd: 0.05, durationMs: 1234, numTurns: 3,
+        contextWindow: 200000, maxOutputTokens: 8192, // 主模型 = costUSD 最高那条
+      },
       { kind: 'complete', exitCode: 0, aborted: false },
     ]);
+  });
+  it('result success 缺 modelUsage/缓存字段 → 补 0,不炸', () => {
+    const out = transformMessage({
+      type: 'result', subtype: 'success', session_id: 's',
+      total_cost_usd: 0, duration_ms: 1, usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    expect(out[0]).toMatchObject({ kind: 'usage', cacheReadInputTokens: 0, cacheCreationInputTokens: 0, numTurns: 0, contextWindow: 0, maxOutputTokens: 0 });
   });
   it('result error_max_turns → error + complete(1)', () => {
     const out = transformMessage({ type: 'result', subtype: 'error_max_turns', session_id: 's', errors: ['too many turns'] });

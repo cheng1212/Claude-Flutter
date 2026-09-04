@@ -64,13 +64,26 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
   if (type === 'result') {
     const out: ProtocolEvent[] = [];
     const usage = msg.usage as AnyRecord | undefined;
+    // contextWindow/分模型费用在 modelUsage 里;主模型取花费最高的条目
+    const modelUsage = msg.modelUsage as Record<string, AnyRecord> | undefined;
+    let primary: AnyRecord | null = null;
+    if (modelUsage) {
+      for (const entry of Object.values(modelUsage)) {
+        if (!primary || Number(entry?.costUSD ?? 0) > Number(primary.costUSD ?? 0)) primary = entry;
+      }
+    }
     if (msg.subtype === 'success') {
       out.push({
         kind: 'usage',
         inputTokens: Number(usage?.input_tokens ?? 0),
         outputTokens: Number(usage?.output_tokens ?? 0),
+        cacheReadInputTokens: Number(usage?.cache_read_input_tokens ?? 0),
+        cacheCreationInputTokens: Number(usage?.cache_creation_input_tokens ?? 0),
         totalCostUsd: Number(msg.total_cost_usd ?? 0),
         durationMs: Number(msg.duration_ms ?? 0),
+        numTurns: Number(msg.num_turns ?? 0),
+        contextWindow: Number(primary?.contextWindow ?? 0),
+        maxOutputTokens: Number(primary?.maxOutputTokens ?? 0),
       });
     } else {
       const errors = Array.isArray(msg.errors) ? msg.errors.join('; ') : '';

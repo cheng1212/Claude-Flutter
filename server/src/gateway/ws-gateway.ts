@@ -1,11 +1,11 @@
 import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Db } from '../db.js';
-import { appendMessage, updateSession } from '../db.js';
+import { appendMessage, updateSession, maxSeq, createRun, finishRun } from '../db.js';
 import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
 
 type RuntimeLike = {
-  send(text: string): Promise<void>;
+  send(text: string, images?: string[]): Promise<void>;
   abort(): Promise<void>;
   answerPermission(requestId: string, decision: { allow: boolean; updatedInput?: unknown; message?: string }): void;
 };
@@ -19,8 +19,9 @@ export type WsGatewayDeps = {
 
 type StateWs = WebSocket & { authed?: boolean; subs?: Set<string> };
 
-// complete 由 registry.finish/兜底发,不落 messages;session_created 落 sessions 表
-const PERSIST_KINDS = new Set(['text', 'thinking', 'tool_use', 'tool_result', 'error']);
+// 这些 kind 一律落 messages(带行号 seq),保证 registry seq 与 DB seq 严格 lockstep;
+// session_created 额外回填 sessions 表。落库与 WS 订阅解耦(见 ensureSub 常驻订阅)。
+const PERSIST_KINDS = new Set(['text', 'thinking', 'tool_use', 'tool_result', 'error', 'usage', 'complete', 'session_created']);
 
 function send(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -31,19 +32,41 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
   const runtimes = new Map<string, RuntimeLike>();
   // 每会话一条全局订阅(持久化+广播只做一次);refs = 订阅中的连接数
   const sessionSubs = new Map<string, { off: () => void; refs: number }>();
+  // 开跑过的会话常驻一条订阅:落库/收 run 不能依赖"有没有人正看着",
+  // 否则零客户端期间的事件只进内存环,重启即丢,run 行也永远停在 running。
+  const permanentSubs = new Set<string>();
+  // 进行中的 run:落 usage/complete 进 runs 表(会话用量统计的数据源)
+  const activeRuns = new Map<string, { runId: string; usage: unknown }>();
 
   const fanout = (sessionId: string, event: OutboundEvent): void => {
+    if (event.kind === 'usage') {
+      const row = activeRuns.get(sessionId);
+      if (row) row.usage = event; // 完成时随 run 一起落库
+    } else if (event.kind === 'complete') {
+      const row = activeRuns.get(sessionId);
+      if (row) {
+        activeRuns.delete(sessionId);
+        const u = row.usage as { totalCostUsd?: number } | null;
+        finishRun(deps.db, row.runId, {
+          status: (event as { aborted?: boolean }).aborted ? 'aborted' : (event as { exitCode?: number }).exitCode === 0 ? 'success' : 'error',
+          totalCostUsd: u?.totalCostUsd,
+          usage: row.usage,
+        });
+      }
+    }
     if (PERSIST_KINDS.has(event.kind)) {
       const content = event.kind === 'tool_use'
         ? JSON.stringify((event as unknown as { toolInput: unknown }).toolInput)
         : String((event as { content?: string }).content ?? '');
       appendMessage(deps.db, sessionId, {
+        seq: event.seq, // 用 registry 发的号落库:WS 与 DB 同一 seq 空间
         kind: event.kind,
         role: (event as { role?: string }).role,
         content,
         meta: event,
       });
-    } else if (event.kind === 'session_created') {
+    }
+    if (event.kind === 'session_created') {
       updateSession(deps.db, sessionId, { providerSessionId: (event as { providerSessionId: string }).providerSessionId });
     }
     for (const client of wss.clients) {
@@ -61,8 +84,8 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
   const dropRef = (sessionId: string): void => {
     const entry = sessionSubs.get(sessionId);
     if (!entry) return;
-    entry.refs--;
-    if (entry.refs <= 0) { entry.off(); sessionSubs.delete(sessionId); }
+    entry.refs = Math.max(0, entry.refs - 1);
+    if (entry.refs <= 0 && !permanentSubs.has(sessionId)) { entry.off(); sessionSubs.delete(sessionId); }
   };
 
   wss.on('connection', (raw: WebSocket) => {
@@ -91,6 +114,10 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           const sessionId = String(entry?.sessionId ?? '');
           if (!sessionId) continue;
           if (!subs.has(sessionId)) { subs.add(sessionId); ensureSub(sessionId); }
+          // 吸收客户端水位(只进不退):重启后指针从 DB maxSeq 起步,若某客户端已见过
+          // 更大的 seq(老服务时代发出去的),把指针抬过去,防新事件 seq 撞车被去重吞掉。
+          const clientSeq = Number(entry.lastSeq ?? 0);
+          if (Number.isFinite(clientSeq) && clientSeq > 0) deps.registry.seedSeq(sessionId, clientSeq);
           const live = deps.registry.isRunning(sessionId);
           send(ws, { kind: 'subscribed', sessionId, isProcessing: live, lastSeq: deps.registry.lastSeq(sessionId) });
           const replayed = deps.registry.replay(sessionId, entry.lastSeq ?? 0);
@@ -119,21 +146,43 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
       if (type === 'chat.send') {
         const sessionId = String(data.sessionId ?? '');
         const content = typeof data.content === 'string' ? data.content : '';
+        const images = Array.isArray(data.images)
+          ? data.images.filter((x: unknown): x is string => typeof x === 'string' && /^data:image\//.test(x)).slice(0, 4)
+          : [];
         const options = (data.options ?? {}) as { model?: string; permissionMode?: string };
-        if (!sessionId || !content) { send(ws, { kind: 'error', content: 'sessionId and content required' }); return; }
+        if (!sessionId || (!content && images.length === 0)) { send(ws, { kind: 'error', content: 'sessionId and content required' }); return; }
         if (deps.registry.isRunning(sessionId)) { send(ws, { kind: 'error', content: 'RUN_IN_PROGRESS', sessionId }); return; }
 
-        let runtime = runtimes.get(sessionId);
-        if (!runtime) {
+        // 每次 send 都经 runtimeFor 取/建运行时:命中已建实例时,runtimeFor 会用 DB 最新的
+        // model/permission_mode(PATCH 后)热更新它,权限模式/换模型不重启即生效。
+        // 会话已删/不存在会抛错 → 回 error,不让异常炸掉 ws 事件循环。
+        let runtime: RuntimeLike;
+        try {
           runtime = deps.runtimeFor(sessionId, { model: options.model, permissionMode: options.permissionMode });
-          runtimes.set(sessionId, runtime);
+        } catch (error) {
+          send(ws, { kind: 'error', content: error instanceof Error ? error.message : String(error), sessionId });
+          return;
         }
-        if (!subs.has(sessionId)) { subs.add(sessionId); ensureSub(sessionId); } // 发送方至少自己收到
+        runtimes.set(sessionId, runtime);
+        permanentSubs.add(sessionId); // 从此落库不依赖客户端在场
+        subs.add(sessionId);
+        ensureSub(sessionId); // 发送方收到回显 + 常驻系统引用(refs ≥ 1,客户端全走光也摘不掉)
+        // 本地导入的历史消息占了 1..N,先抬 seq 指针,避免新事件 seq 撞车被前端去重吞掉。
+        deps.registry.seedSeq(sessionId, maxSeq(deps.db, sessionId));
         deps.registry.begin(sessionId);
-        // 用户消息走 registry:拿到 seq、进环形缓冲(重连补发)、经 fanout 持久化。
-        // CLI 只回显 assistant 侧,不会重复。
-        deps.registry.push(sessionId, { kind: 'text', role: 'user', content });
-        runtime.send(content).catch((error: unknown) => {
+        // begin 之后任何同步异常都必须 finish 释放 running,否则会话永久卡死(所有 send 被 RUN_IN_PROGRESS 拒)。
+        try {
+          activeRuns.set(sessionId, { runId: createRun(deps.db, sessionId, options.model ?? null).id, usage: null });
+          // 用户消息走 registry:拿到 seq、进环形缓冲(重连补发)、经 fanout 持久化。
+          // meta 里只存图片 data URI 引用(前端气泡可回显),不发巨大的 base64 给其他端。
+          // CLI 只回显 assistant 侧,不会重复。
+          deps.registry.push(sessionId, { kind: 'text', role: 'user', content, ...(images.length ? { images } : {}) });
+        } catch (error) {
+          deps.registry.finish(sessionId, 1, false);
+          send(ws, { kind: 'error', content: error instanceof Error ? error.message : String(error), sessionId });
+          return;
+        }
+        runtime.send(content, images).catch((error: unknown) => {
           deps.registry.push(sessionId, { kind: 'error', content: error instanceof Error ? error.message : String(error) });
         }).finally(() => {
           const last = deps.registry.lastEvent(sessionId);
