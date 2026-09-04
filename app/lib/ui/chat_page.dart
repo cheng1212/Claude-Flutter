@@ -616,34 +616,43 @@ class _ChatPageState extends State<ChatPage> {
     return id;
   }
 
-  /// 底部快捷条:模型用文字芯片直显当前模型名(超宽省略号,参考桌面端底栏),
-  /// 权限/计划/用量/刷新是紧凑图标钮,有状态时点亮。
+  /// 底部快捷条:5 个等宽磁贴,图标在上、短标签在下(按用户排版稿)。
+  /// 模型贴直显当前模型名(超宽省略号,长按 Tooltip 看完整 id);有状态时点亮。
   Widget _quickBar() {
     final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
-    final chips = <(IconData, String, Color?, bool, VoidCallback)>[
-      (Icons.shield_rounded, '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
-      (Icons.account_tree_rounded, '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
-      (Icons.query_stats_rounded, '用量', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
+    final tiles = <(IconData, String, String, Color?, bool, VoidCallback)>[
+      (Icons.shield_rounded, '安全', '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
+      (Icons.account_tree_rounded, '工具', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
+      (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
-      (Icons.refresh_rounded, '刷新历史', null, app.historyLoading, () => app.openSession(widget.sessionId)),
+      (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () => app.openSession(widget.sessionId)),
     ];
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 2),
       child: Row(
         children: [
           Expanded(
-            child: Center(
-              child: _ModelChip(
-                label: _modelLabel(),
-                fullName: _model,
-                accent: _model == 'default' ? null : ZT.aqua,
-                onTap: _pickModel,
-              ),
+            child: _QuickTile(
+              icon: Icons.bolt_rounded,
+              label: _modelLabel(),
+              tooltip: '模型:$_model',
+              accent: _model == 'default' ? null : ZT.aqua,
+              onTap: _pickModel,
             ),
           ),
-          const SizedBox(width: 8),
-          for (final (icon, tooltip, accent, busy, onTap) in chips)
-            _QuickChip(icon: icon, tooltip: tooltip, accent: accent, busy: busy, onTap: onTap),
+          for (final (icon, label, tooltip, accent, busy, onTap) in tiles) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: _QuickTile(
+                icon: icon,
+                label: label,
+                tooltip: tooltip,
+                accent: accent,
+                busy: busy,
+                onTap: onTap,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -759,7 +768,7 @@ class _ChatPageState extends State<ChatPage> {
             shape: StadiumBorder(side: ZT.inkSide(w: 1.1, color: ZT.line)),
           ),
           child: Text(
-            '$_model · ${_modeLabel(_mode)}',
+            '${_modelLabel()} · ${_modeLabel(_mode)}',
             style: const TextStyle(
                 fontSize: 10.5, fontWeight: FontWeight.w700, color: ZT.inkFaint),
           ),
@@ -1004,9 +1013,11 @@ class _GroupRow extends StatelessWidget {
   }
 }
 
-/// 底部快捷按钮:纯图标小方块。
-class _QuickChip extends StatelessWidget {
+/// 底部快捷磁贴:图标在上、短标签在下,外层 Expanded 等宽(按用户排版稿)。
+/// 长标签放进 Tooltip(如「权限模式:每次确认」),贴面上只留两字短词。
+class _QuickTile extends StatelessWidget {
   final IconData icon;
+  final String label;
   final String tooltip;
   final Color? accent;
 
@@ -1014,8 +1025,9 @@ class _QuickChip extends StatelessWidget {
   final bool busy;
   final VoidCallback onTap;
 
-  const _QuickChip({
+  const _QuickTile({
     required this.icon,
+    required this.label,
     required this.tooltip,
     required this.onTap,
     this.accent,
@@ -1024,14 +1036,13 @@ class _QuickChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = this.accent ?? ZT.inkSoft;
+    final c = accent ?? ZT.inkSoft;
     return Tooltip(
       message: tooltip,
       child: Material(
         color: Colors.transparent,
         child: Ink(
-          width: 34,
-          height: 34,
+          height: 54,
           decoration: ShapeDecoration(
             color: ZT.surface,
             shape: RoundedRectangleBorder(
@@ -1042,67 +1053,26 @@ class _QuickChip extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(ZT.radius),
             onTap: onTap,
-            child: busy
-                ? SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: accent),
-                  )
-                : Icon(icon, size: 19, color: accent),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 模型文字芯片:直显当前模型名,空间不足省略号;长按(Tooltip)看完整 id。
-class _ModelChip extends StatelessWidget {
-  final String label;
-  final String fullName;
-  final Color? accent;
-  final VoidCallback onTap;
-
-  const _ModelChip({
-    required this.label,
-    required this.fullName,
-    required this.onTap,
-    this.accent,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = accent ?? ZT.inkSoft;
-    return Tooltip(
-      message: '模型:$fullName',
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: ShapeDecoration(
-            color: ZT.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(ZT.radius),
-              side: ZT.inkSide(w: 1.2),
-            ),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(ZT.radius),
-            onTap: onTap,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.bolt_rounded, size: 15, color: c),
-                const SizedBox(width: 4),
-                Flexible(
+                busy
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: c),
+                      )
+                    : Icon(icon, size: 20, color: c),
+                const SizedBox(height: 3),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
                   child: Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: c,
                         fontFamily: ZT.mono),
