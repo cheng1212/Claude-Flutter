@@ -213,7 +213,8 @@ class StatusChip extends StatelessWidget {
   }
 }
 
-/// 脉冲点:CRT 光标呼吸。
+/// 脉冲点:CRT 光标呼吸。控制器必须在 initState 里创建(不要用 late 懒初始化——
+/// unmount 时才首次创建会在 deactivated 树上查 TickerMode,触发断言崩溃)。
 class PulseDot extends StatefulWidget {
   final Color color;
   final bool animate;
@@ -226,48 +227,37 @@ class PulseDot extends StatefulWidget {
 }
 
 class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin {
-  AnimationController? _ctrl;
+  late final AnimationController _c;
 
   @override
   void initState() {
     super.initState();
-    if (widget.animate) _start();
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900), lowerBound: 0.35, upperBound: 1);
+    if (widget.animate) _c.repeat(reverse: true);
   }
 
   @override
   void didUpdateWidget(covariant PulseDot old) {
     super.didUpdateWidget(old);
-    if (widget.animate && _ctrl == null) _start();
-    if (!widget.animate && _ctrl != null) {
-      _ctrl!.dispose();
-      _ctrl = null;
-    }
-  }
-
-  void _start() {
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900), lowerBound: 0.35, upperBound: 1)
-      ..repeat(reverse: true);
+    widget.animate ? _c.repeat(reverse: true) : _c.animateTo(0);
   }
 
   @override
   void dispose() {
-    _ctrl?.dispose();
+    _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final dot = Container(
-      width: widget.size,
-      height: widget.size,
-      decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-    );
-    final ctrl = _ctrl;
-    if (ctrl == null) return dot;
     return FadeTransition(
-      opacity: ctrl,
-      child: dot,
+      opacity: _c,
+      child: Container(
+        width: widget.size,
+        height: widget.size,
+        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+      ),
     );
   }
 }

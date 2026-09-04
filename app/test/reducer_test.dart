@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_app/state/reducer.dart';
 
 Map<String, dynamic> ev(String kind, {int? seq, Map<String, dynamic>? extra}) =>
-    {'kind': kind, if (seq != null) 'seq': seq, ...?extra};
+    {'kind': kind, 'seq': ?seq, ...?extra};
 
 void main() {
   test('stream_delta 累积到流缓冲,text 落定后清空流缓冲并成行', () {
