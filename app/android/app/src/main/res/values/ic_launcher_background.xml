@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 图标底色:深墨蓝(make_icon.py 背景渐变的中间值) -->
+    <color name="ic_launcher_background">#0C1524</color>
+</resources>
