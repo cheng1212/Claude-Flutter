@@ -1,6 +1,7 @@
 // 聊天页:reversed 列表 + 六枚图标快捷条 + 权限面板 + 输入条。
 // 布局参考 zremote chat_page(quick chips/选项弹层/计划弹层/SendOrStop),状态走 ZApp。
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -662,13 +663,10 @@ class _ChatPageState extends State<ChatPage> {
   /// reversed 列表:index 0 = 最新,贴着输入框。
   Widget _list() {
     final rows = chat.rows;
-    final tail = <int>{}; // 尾部附加项的 index 集合
     // itemCount = 1(流式区) + rows + 1(计划面板) + 1(会话头/加载)
     final plan = derivePlanSteps(rows);
     final planIdx = rows.length + 1;
     final headIdx = rows.length + 2;
-    if (plan != null) tail.add(planIdx);
-    tail.add(headIdx);
 
     return ListView.builder(
       reverse: true,
@@ -780,6 +778,31 @@ class _ChatPageState extends State<ChatPage> {
 
   // ---------------------------------------------------------------- composer
 
+  /// data URI 预览:data: scheme 在移动端 Image.network 拉不到,解 base64 走内存。
+  /// 解不开(坏图)给占位图标,不让预览条崩。
+  Widget _imagePreview(String uri) {
+    final match = RegExp(r'^data:image/[^;]+;base64,(.+)$').firstMatch(uri);
+    final Uint8List? bytes = match == null ? null : tryBase64Decode(match.group(1)!);
+    if (bytes == null) {
+      return Container(
+        width: 64,
+        height: 64,
+        color: ZT.line,
+        alignment: Alignment.center,
+        child: const Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
+      );
+    }
+    return Image.memory(bytes, width: 64, height: 64, fit: BoxFit.cover, gaplessPlayback: true);
+  }
+
+  Uint8List? tryBase64Decode(String input) {
+    try {
+      return base64Decode(input);
+    } on FormatException {
+      return null;
+    }
+  }
+
   Widget _composer() {
     return Container(
       decoration: const BoxDecoration(
@@ -804,7 +827,7 @@ class _ChatPageState extends State<ChatPage> {
                   itemBuilder: (context, i) => Stack(children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(ZT.radius),
-                      child: Image.network(images[i], width: 64, height: 64, fit: BoxFit.cover),
+                      child: _imagePreview(images[i]),
                     ),
                     Positioned(
                       top: 0,

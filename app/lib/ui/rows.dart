@@ -599,12 +599,13 @@ class PlanStep {
 
 /// 从工具行推导计划步骤(TodoWrite / update_plan 等),取最近一次调用。
 List<PlanStep>? derivePlanSteps(List<ChatRow> rows) {
+  // 显式列举计划类工具:contains('plan') 这类模糊匹配会把 ExitPlanMode 等
+  // 名字带 plan 的无关工具误认进来。
+  const planTools = {'todowrite', 'updateplan', 'exitplanmode'};
   for (final row in rows.reversed) {
     if (row is! ToolRow) continue;
     final name = row.toolName.toLowerCase().replaceAll('_', '');
-    final isPlanTool =
-        name.contains('todowrite') || name.contains('updateplan') || name.contains('plan');
-    if (!isPlanTool) continue;
+    if (!planTools.contains(name)) continue;
     final parsed = _parsePlanValue(row.toolInput);
     if (parsed != null && parsed.isNotEmpty) return parsed;
   }
