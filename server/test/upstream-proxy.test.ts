@@ -45,6 +45,13 @@ beforeAll(async () => {
   fs.writeFileSync(routesPath, JSON.stringify({
     routes: {
       'glm-test': { baseUrl: `http://127.0.0.1:${upstreamPort}`, authToken: 'tok-target', model: 'glm-test' },
+      // 目标带路径前缀(智谱真实形态 /api/anthropic):new URL 丢前缀回归
+      'glm-prefixed': {
+        baseUrl: `http://127.0.0.1:${upstreamPort}/anthropic-compat`, authToken: 'tok-target', model: 'glm-test',
+      },
+      'zcode-prefixed': {
+        baseUrl: 'http://127.0.0.1:1', authToken: 'local-only', model: 'prefixed-model', relayTo: 'glm-prefixed',
+      },
       // relay 条目:model 名与目标不同,验证转发时改写
       'zcode-relay-test': {
         baseUrl: 'http://127.0.0.1:1', authToken: 'local-only', model: 'glm-test', relayTo: 'glm-test',
@@ -113,6 +120,13 @@ describe('upstream relay proxy', () => {
     expect(res.status).toBe(200);
     await res.text();
     expect(seen!.model).toBe('glm-test');
+  });
+
+  it('baseUrl 带路径前缀 → 上游收到 前缀+原路径+query(曾整个丢成根路径 405)', async () => {
+    const res = await post({ model: 'prefixed-model', messages: [] }, '/v1/messages?beta=true');
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(seen!.url).toBe('/anthropic-compat/v1/messages?beta=true');
   });
 
   it('无 relay 目标的模型 → 502,不发 request 成功链路事件', async () => {

@@ -63,6 +63,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
   const onStatus = (s: UpstreamStatus) => {
     try { opts.onStatus?.(s); } catch { /* 状态回调不许炸掉代理 */ }
   };
+  const started = Date.now();
+  const log = (msg: string) => console.log(`[relay] ${req.method} ${req.url} ${msg}`);
 
   if (req.method === 'GET' && req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -70,6 +72,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
     return;
   }
   if (req.method !== 'POST') {
+    log('-> 405 只放行 POST(/healthz 除外)');
     res.writeHead(405, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { type: 'proxy_error', message: 'POST only' } }));
     return;
@@ -83,11 +86,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
   try { parsed = JSON.parse(body.toString('utf8')) as { model?: string }; } catch { /* 上游会报它自己的格式错 */ }
   const model = String(parsed.model ?? '');
   const observed = OBSERVED_PATH.test(req.url ?? '');
-  const started = Date.now();
   if (observed) onStatus({ phase: 'request', model });
 
   const found = resolveRelay(loadRoutes(opts.routesPath), model);
   if (!found) {
+    log(`model=${model || '?'} -> 502 无中转目标 (${Date.now() - started}ms)`);
     if (observed) onStatus({ phase: 'error', model, ms: Date.now() - started, error: 'no relay target' });
     res.writeHead(502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { type: 'proxy_error', message: `zcode relay: no upstream route for model '${model}'` } }));
@@ -102,7 +105,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
     body = Buffer.from(JSON.stringify(parsed), 'utf8');
   }
 
-  const upstream = new URL(req.url ?? '/v1/messages', target.baseUrl);
+  // CLI 发的是 origin-form(以 / 开头),new URL 会把它当"从根开始"整个替换掉
+  // baseUrl 的路径前缀(智谱的 /api/anthropic 会丢,变成根路径 405)——去掉前导斜杠再拼。
+  const incoming = req.url ?? '/v1/messages';
+  const base = target.baseUrl.endsWith('/') ? target.baseUrl : `${target.baseUrl}/`;
+  const upstream = new URL(incoming.replace(/^\//, ''), base);
   // 鉴权统一换成目标路由的 token(x-api-key + Bearer 双写,各端点各取所需);
   // accept-encoding 摘掉:压缩流会让"透传"在代理这里变成不可解读的字节,还可能被中间层缓冲。
   const headers: Record<string, string | number | string[]> = {};
@@ -125,7 +132,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
     { method: 'POST', headers },
     (upRes) => {
       if (observed) onStatus({ phase: 'first_byte', model, status: upRes.statusCode, ms: Date.now() - started });
-      res.writeHead(upRes.statusCode ?? 502, upRes.headers);
+      // 保留上游状态短语:nginx 的 "405 Not Allowed" 之类原样带给 CLI,排查看得出是谁拒的
+      res.writeHead(upRes.statusCode ?? 502, upRes.statusMessage || undefined, upRes.headers);
+      if ((upRes.statusCode ?? 0) >= 400) log(`model=${model || '?'} -> 上游 ${upRes.statusCode} ${upstream.pathname}${upstream.search} (${Date.now() - started}ms)`);
       upRes.pipe(res);
       upRes.on('end', () => {
         if (observed) onStatus({ phase: 'done', model, status: upRes.statusCode, ms: Date.now() - started });
@@ -133,6 +142,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
     },
   );
   upReq.on('error', (error) => {
+    log(`model=${model || '?'} -> 上游连不上: ${error.message} (${Date.now() - started}ms)`);
     if (observed) onStatus({ phase: 'error', model, ms: Date.now() - started, error: error.message });
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' });
