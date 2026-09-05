@@ -715,12 +715,14 @@ class _ChatPageState extends State<ChatPage> {
     final thinking = chat.streamingThinking;
     final text = chat.streamingText;
     if ((thinking == null || thinking.isEmpty) && (text == null || text.isEmpty)) {
-      // 静默期骨架行:回显之后、模型开口之前的 2~10s 主视线区零反馈,是"世界消失了"的主诉。
-      // 等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊"正在思考"。
-      final quiet = chat.pendingPermission == null &&
+      // 静默期骨架行:已送达、模型还没开口的那段真空期。只在回合真的在跑时出现——
+      // 空闲会话进窗口、回复已完成(turn_complete 后流式区清空)都不得显示,
+      // 否则就是"一进来就计时/回完话还在计时"。等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊。
+      final quiet = chat.running &&
+          chat.pendingPermission == null &&
           chat.rows.whereType<ToolRow>().every((r) => r.result != null);
       return quiet
-          ? const Padding(padding: EdgeInsets.only(top: 10), child: _SilenceHint())
+          ? Padding(padding: const EdgeInsets.only(top: 10), child: _SilenceHint(model: _modelLabel()))
           : const SizedBox.shrink();
     }
     return Column(
@@ -1366,9 +1368,12 @@ class _PermissionCardState extends State<_PermissionCard> {
   }
 }
 
-/// 静默期骨架行:已送达、模型还没开口。秒数在跳就不像死机;超 5s 顺带给句解释。
+/// 静默期骨架行:已送达、模型还没开口。「某某模型 正在思考 Ns」,秒数在跳就不像死机;
+/// 超 5s/15s 分级解释等的是什么。迟迟无首包不用客户端瞎猜——服务端看门狗会中断回合
+/// 并落一条错误,错误行出现瞬间 running 变 false,本行自然消失。
 class _SilenceHint extends StatefulWidget {
-  const _SilenceHint();
+  final String model;
+  const _SilenceHint({required this.model});
 
   @override
   State<_SilenceHint> createState() => _SilenceHintState();
@@ -1395,12 +1400,19 @@ class _SilenceHintState extends State<_SilenceHint> {
   @override
   Widget build(BuildContext context) {
     final sec = DateTime.now().difference(_start).inSeconds;
-    final hint = sec >= 5 ? '(冷启动或慢路由会慢一些)' : '';
+    // 等得越久,话说得越多:5s 提示可能慢,15s 明说上游没回音、兜底是什么。
+    final hint = sec >= 15
+        ? '· 仍无首包,上游可能拥堵;持续无响应会被自动中断并报错'
+        : sec >= 5
+            ? '· 冷启动或慢路由会慢一些'
+            : '';
     return Row(children: [
       const PulseDot(color: ZT.primary, animate: true, size: 6),
       const SizedBox(width: 6),
-      Text('已送达 · 正在思考 ${sec}s $hint',
-          style: const TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
+      Expanded(
+        child: Text('${widget.model} 正在思考 ${sec}s $hint',
+            style: const TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
+      ),
     ]);
   }
 }
