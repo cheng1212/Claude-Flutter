@@ -242,4 +242,24 @@ void main() {
     s = applyPermissionAnswer(s);
     expect(s.pendingPermission, isNull);
   });
+
+  test('upstream_status:落地真实相位,终态与新回合清空,无效相位忽略', () {
+    var s = applyLocalUser(const ChatState(), '查一下');
+    expect(s.upstreamPhase, isNull); // 新回合开始:上一回合的相位不得残留
+    s = setUpstreamPhase(s, 'request');
+    expect(s.upstreamPhase, 'request');
+    expect(s.upstreamAt, isNotNull);
+    s = setUpstreamPhase(s, 'first_byte');
+    expect(s.upstreamPhase, 'first_byte');
+    // done/error 相位没有展示意义,setUpstreamPhase 忽略,由回合终态统一收
+    s = setUpstreamPhase(s, 'done');
+    expect(s.upstreamPhase, 'first_byte');
+    // 回合结束:相位清空
+    s = applyEvent(s, ev('complete', seq: 1));
+    expect(s.upstreamPhase, isNull);
+    // error 同理
+    s = setUpstreamPhase(s, 'request');
+    s = applyEvent(s, ev('error', seq: 2, extra: {'content': '回合超过 10 分钟没有任何输出,已自动中断;请重发'}));
+    expect(s.upstreamPhase, isNull);
+  });
 }

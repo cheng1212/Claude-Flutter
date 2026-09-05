@@ -5,6 +5,7 @@ import { loadOrCreateConfig } from './config.js';
 import { importLocalSessions } from './local-sessions.js';
 import { buildApp } from './http.js';
 import { loadRoutes, resolveModel } from './routes.js';
+import { startUpstreamProxy } from './proxy/upstream-proxy.js';
 import { RunRegistry } from './runs/run-registry.js';
 import { SessionRuntime } from './protocol/sdk-client.js';
 
@@ -67,7 +68,7 @@ const app = await buildApp({
   },
 }); // buildApp 内部已挂 REST
 
-attachWsGateway(app.server, {
+const gateway = attachWsGateway(app.server, {
   db,
   token: config.token,
   registry,
@@ -92,6 +93,17 @@ attachWsGateway(app.server, {
     return runtime;
   },
 });
+
+// 上游中转代理:routes.json 里 relayTo 条目(zcode 自家模型)的流量必经之路。
+// 计时事件归属最近一次 chat.send 的会话广播出去,手机静默期显示"已转发上游"真状态。
+startUpstreamProxy({
+  port: config.relayPort,
+  routesPath: config.routesPath,
+  onStatus: (status) => {
+    gateway.notify({ kind: 'upstream_status', sessionId: gateway.lastActiveSession(), ...status });
+  },
+});
+console.log(`[zcode-server] upstream relay proxy on http://127.0.0.1:${config.relayPort}`);
 
 console.log(`[zcode-server] listening on http://0.0.0.0:${config.port}`);
 console.log(`[zcode-server] token: ${config.token}`);

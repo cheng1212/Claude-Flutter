@@ -722,7 +722,9 @@ class _ChatPageState extends State<ChatPage> {
           chat.pendingPermission == null &&
           chat.rows.whereType<ToolRow>().every((r) => r.result != null);
       return quiet
-          ? Padding(padding: const EdgeInsets.only(top: 10), child: _SilenceHint(model: _modelLabel()))
+          ? Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: _SilenceHint(model: _modelLabel(), upstreamPhase: chat.upstreamPhase, upstreamAt: chat.upstreamAt))
           : const SizedBox.shrink();
     }
     return Column(
@@ -1368,12 +1370,15 @@ class _PermissionCardState extends State<_PermissionCard> {
   }
 }
 
-/// 静默期骨架行:已送达、模型还没开口。「某某模型 正在思考 Ns」,秒数在跳就不像死机;
-/// 超 5s/15s 分级解释等的是什么。迟迟无首包不用客户端瞎猜——服务端看门狗会中断回合
-/// 并落一条错误,错误行出现瞬间 running 变 false,本行自然消失。
+/// 静默期骨架行:已送达、模型还没开口。优先用上游中转代理的真实相位
+/// ("已转发上游 · 等首包"),没有(非中转模型/旧 server)退回「正在思考」本地猜;
+/// 秒数在跳就不像死机;超 5s/15s 分级解释。迟迟无首包不用客户端瞎猜——服务端
+/// 看门狗会中断回合并落一条错误,错误行出现瞬间 running 变 false,本行自然消失。
 class _SilenceHint extends StatefulWidget {
   final String model;
-  const _SilenceHint({required this.model});
+  final String? upstreamPhase; // 'request'/'first_byte'/null
+  final DateTime? upstreamAt; // 相位事件的本地到达时刻
+  const _SilenceHint({required this.model, this.upstreamPhase, this.upstreamAt});
 
   @override
   State<_SilenceHint> createState() => _SilenceHintState();
@@ -1399,18 +1404,32 @@ class _SilenceHintState extends State<_SilenceHint> {
 
   @override
   Widget build(BuildContext context) {
-    final sec = DateTime.now().difference(_start).inSeconds;
+    final now = DateTime.now();
+    final sec = now.difference(_start).inSeconds;
+    final phase = widget.upstreamPhase;
+    // 有真实相位就从事件到达时刻起秒,没有就从骨架行挂上时刻起秒
+    final anchor = widget.upstreamAt ?? _start;
+    final phaseSec = now.difference(anchor).inSeconds.clamp(0, 999);
+    final String label;
+    if (phase == 'request') {
+      label = '${widget.model} 已转发上游 · 等首包 ${phaseSec}s';
+    } else if (phase == 'first_byte') {
+      label = '${widget.model} 上游已回包 · 等首个字 ${phaseSec}s';
+    } else {
+      label = '${widget.model} 正在思考 ${sec}s';
+    }
     // 等得越久,话说得越多:5s 提示可能慢,15s 明说上游没回音、兜底是什么。
-    final hint = sec >= 15
+    final long = (phase == 'request' ? phaseSec : sec);
+    final hint = long >= 15
         ? '· 仍无首包,上游可能拥堵;持续无响应会被自动中断并报错'
-        : sec >= 5
+        : long >= 5
             ? '· 冷启动或慢路由会慢一些'
             : '';
     return Row(children: [
       const PulseDot(color: ZT.primary, animate: true, size: 6),
       const SizedBox(width: 6),
       Expanded(
-        child: Text('${widget.model} 正在思考 ${sec}s $hint',
+        child: Text('$label $hint',
             style: const TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
       ),
     ]);

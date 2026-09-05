@@ -136,6 +136,16 @@ class ZApp extends ChangeNotifier {
       });
       return;
     }
+    if (kind == 'upstream_status') {
+      // 上游中转代理的计时广播:同样是控制事件,只落到当前会话的瞬态相位上,
+      // 供静默期骨架行显示"已转发上游"真状态;无 seq、不补发,断了就退回本地猜。
+      final sid = ev['sessionId'] as String?;
+      if (sid != null && sid == currentSessionId) {
+        chat = setUpstreamPhase(chat, '${ev['phase'] ?? ''}');
+        notifyListeners();
+      }
+      return;
+    }
     final sid = ev['sessionId'] as String?;
     if (sid == null || sid != currentSessionId) return;
     chat = applyEvent(chat, ev);

@@ -19,6 +19,14 @@ export type WsGatewayDeps = {
   runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
 };
 
+/** attachWsGateway 返回的句柄:供外部(上游代理)往已订阅客户端推瞬态状态。 */
+export type WsGatewayHandle = {
+  /** upstream_status 等"无 seq、不落库、不补发"的瞬态广播;sessionId 为 null 时发给全部已认证连接。 */
+  notify(payload: Record<string, unknown>): void;
+  /** 最近一次 chat.send 的会话:上游代理的计时事件归到这里(个人服务器同时只跑一两个回合,足够准)。 */
+  lastActiveSession(): string | null;
+};
+
 type StateWs = WebSocket & { authed?: boolean; subs?: Set<string>; alive?: boolean };
 
 /** 单帧消息上限(32MB):4 张图(各 ≤5MB data URI)+ JSON 开销也够用,再大直接掐连接。 */
@@ -53,9 +61,10 @@ function broadcastDirty(wss: WebSocketServer, sessionId: string): void {
   }
 }
 
-export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
+export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayHandle {
   const wss = new WebSocketServer({ server, maxPayload: MAX_WS_FRAME });
   const runtimes = new Map<string, RuntimeLike>();
+  let lastSend: string | null = null;
   // 每会话一条全局订阅(持久化+广播只做一次);refs = 订阅中的连接数
   const sessionSubs = new Map<string, { off: () => void; refs: number }>();
   // 开跑过的会话常驻一条订阅:落库/收 run 不能依赖"有没有人正看着",
@@ -217,6 +226,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
           return;
         }
         runtimes.set(sessionId, runtime);
+        lastSend = sessionId; // 上游计时事件的归属(代理看不到会话,只知道流量来了)
         permanentSubs.add(sessionId); // 从此落库不依赖客户端在场
         subs.add(sessionId);
         ensureSub(sessionId); // 发送方收到回显 + 常驻系统引用(refs ≥ 1,客户端全走光也摘不掉)
@@ -252,4 +262,19 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): void {
       subs.clear();
     });
   });
+
+  return {
+    notify(payload) {
+      const sessionId = payload.sessionId as string | null | undefined;
+      const data = JSON.stringify(payload);
+      for (const client of wss.clients) {
+        const c = client as StateWs;
+        if (!c.authed || c.readyState !== c.OPEN) continue;
+        // 有归属就只发给订阅者;没有归属(PC CloudCLI 直用中转模型)广播,各端自行取舍
+        if (sessionId && !c.subs?.has(sessionId)) continue;
+        c.send(data);
+      }
+    },
+    lastActiveSession: () => lastSend,
+  };
 }

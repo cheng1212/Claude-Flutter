@@ -642,8 +642,14 @@ class PlanStep {
   bool get inProgress => status == 'in_progress' || status == 'active';
 }
 
-/// 从工具行推导计划步骤(TodoWrite / update_plan 等),取最近一次调用。
+/// 从工具行推导计划步骤:优先折叠任务工具(TaskCreate/TaskUpdate/TaskList,
+/// 增量状态,面板实时反映 agent 干到哪一步);没有任务工具时退回 TodoWrite 类
+/// 一次性快照(update_plan / TodoWrite / ExitPlanMode),取最近一次调用。
 List<PlanStep>? derivePlanSteps(List<ChatRow> rows) {
+  return deriveTaskSteps(rows) ?? _todoSnapshotSteps(rows);
+}
+
+List<PlanStep>? _todoSnapshotSteps(List<ChatRow> rows) {
   // 显式列举计划类工具:contains('plan') 这类模糊匹配会把 ExitPlanMode 等
   // 名字带 plan 的无关工具误认进来。
   const planTools = {'todowrite', 'updateplan', 'exitplanmode'};
@@ -655,6 +661,95 @@ List<PlanStep>? derivePlanSteps(List<ChatRow> rows) {
     if (parsed != null && parsed.isNotEmpty) return parsed;
   }
   return null;
+}
+
+class _TaskItem {
+  String subject;
+  String status;
+  _TaskItem(this.subject, this.status);
+}
+
+/// 折叠任务工具行 → 实时任务清单。id 只在 tool_result 里(TaskCreate 返回分配的
+/// id),解析不出就按创建序号占位——进度面板不追求台账级精确,够看进度就行。
+List<PlanStep>? deriveTaskSteps(List<ChatRow> rows) {
+  final order = <String>[];
+  final byId = <String, _TaskItem>{};
+  void put(String id, String subject, String status) {
+    final existing = byId[id];
+    if (existing == null) {
+      order.add(id);
+      byId[id] = _TaskItem(subject, status);
+    } else {
+      if (subject.isNotEmpty) existing.subject = subject;
+      if (status.isNotEmpty) existing.status = status;
+    }
+  }
+
+  for (final row in rows) {
+    if (row is! ToolRow) continue;
+    final name = row.toolName.toLowerCase().replaceAll('_', '');
+    if (name == 'taskcreate') {
+      final subject = '${row.toolInput['subject'] ?? ''}'.trim();
+      if (subject.isEmpty) continue;
+      put(_idFromResult(row.result?.content) ?? '${order.length + 1}', subject, 'pending');
+    } else if (name == 'taskupdate') {
+      final id = '${row.toolInput['taskId'] ?? row.toolInput['id'] ?? ''}'.trim();
+      if (id.isEmpty) continue;
+      put(id, '${row.toolInput['subject'] ?? ''}'.trim(), '${row.toolInput['status'] ?? ''}'.trim());
+    } else if (name == 'tasklist') {
+      // TaskList 回全量快照:解析得动就整体校正一遍,解析不动保留已有折叠
+      final items = _tasksFromResult(row.result?.content);
+      if (items == null) continue;
+      order.clear();
+      byId.clear();
+      for (final it in items) {
+        put(it.$1, it.$2, it.$3);
+      }
+    }
+  }
+  if (order.isEmpty) return null;
+  return [for (final id in order) PlanStep(content: byId[id]!.subject, status: byId[id]!.status)];
+}
+
+/// 从 TaskCreate 的 tool_result 里抠分配的 id:先按 JSON(本 harness 返回 {"id":..}),
+/// 退化到第一个数字。解析不出 → null(调用方用序号占位)。
+String? _idFromResult(String? content) {
+  if (content == null || content.isEmpty) return null;
+  Object? decoded;
+  try {
+    decoded = jsonDecode(content);
+  } on FormatException {
+    decoded = null;
+  }
+  if (decoded is Map) {
+    final id = decoded['id'] ?? decoded['taskId'];
+    if (id != null) return '$id';
+    final task = decoded['task'];
+    if (task is Map && task['id'] != null) return '${task['id']}';
+  }
+  return RegExp(r'(\d+)').firstMatch(content)?.group(1);
+}
+
+/// 从 TaskList 的 tool_result 解析全量 (id, subject, status);解析不动返回 null。
+List<(String, String, String)>? _tasksFromResult(String? content) {
+  if (content == null || content.isEmpty) return null;
+  Object? decoded;
+  try {
+    decoded = jsonDecode(content);
+  } on FormatException {
+    return null;
+  }
+  if (decoded is Map && decoded['tasks'] is List) decoded = decoded['tasks'];
+  if (decoded is! List) return null;
+  final out = <(String, String, String)>[];
+  for (final item in decoded) {
+    if (item is! Map) continue;
+    final id = '${item['id'] ?? ''}'.trim();
+    final subject = '${item['subject'] ?? item['content'] ?? item['title'] ?? ''}'.trim();
+    if (id.isEmpty || subject.isEmpty) continue;
+    out.add((id, subject, '${item['status'] ?? 'pending'}'));
+  }
+  return out.isEmpty ? null : out;
 }
 
 List<PlanStep>? _parsePlanValue(Object? value) {

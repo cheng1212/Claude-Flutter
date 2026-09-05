@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-export type RouteEntry = { baseUrl?: string; authToken?: string; model?: string; label?: string };
+export type RouteEntry = { baseUrl?: string; authToken?: string; model?: string; label?: string; relayTo?: string };
 export type RouteConfig = { defaultRoute?: RouteEntry; routes?: Record<string, RouteEntry> };
 export type ResolvedModel = {
   id: string;
@@ -46,6 +46,9 @@ export type ModelGroup = { id: string; label: string; models: ModelEntry[] };
 export function modelGroupOf(modelId: string): { id: string; label: string } {
   const id = modelId.toLowerCase();
   if (id === 'default') return { id: 'default', label: 'Claude 默认' };
+  // zcode- 前缀 = zcode 自家中转模型(请求经本地代理转发,见 proxy/upstream-proxy.ts),
+  // 要在 glm/deepseek 之前判,不然 zcode-glm-* 会被 includes('glm') 抢进智谱组。
+  if (id.startsWith('zcode-')) return { id: 'zcode', label: 'ZCode 中转' };
   if (id.startsWith('go-') || id.startsWith('anthropic/go-')) return { id: 'opencode', label: 'OpenCode' };
   if (id.includes('glm')) return { id: 'zhipu', label: '智谱 GLM' };
   // -nim 结尾是 NVIDIA 托管,要在 deepseek 之前判

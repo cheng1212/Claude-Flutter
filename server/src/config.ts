@@ -6,6 +6,8 @@ import { randomBytes } from 'node:crypto';
 export type ServerConfig = {
   token: string;
   port: number;
+  /** 上游中转代理端口(routes.json 里 relayTo 条目的 baseUrl 指向它) */
+  relayPort: number;
   dataDir: string;
   routesPath: string;
   publicDir: string;
@@ -39,6 +41,7 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   return {
     token,
     port: Number(process.env.ZCODE_PORT) || 5190,
+    relayPort: Number(process.env.ZCODE_RELAY_PORT) || 5191,
     dataDir,
     routesPath: process.env.ZCODE_CLAUDE_ROUTES_PATH
       ?? path.join(os.homedir(), 'litellm', 'claude-routes.json'),

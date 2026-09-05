@@ -15,10 +15,16 @@
 │ api.dart         │─────────▶│ Fastify + Bearer 鉴权   │                      │ claude.exe  │
 │ ws.dart          │   WS     │ ws-gateway → registry   │◀────────────────────▶│ (SDK query) │
 │ reducer.dart     │─────────▶│ → SessionRuntime×会话   │   canUseTool 审批桥  └─────────────┘
-└──────────────────┘          │ better-sqlite3 落库     │
+└──────────────────┘          │ better-sqlite3 落库     │           │
+                              └────────────────────────┘           │ zcode- 前缀中转模型
+                                        ▲ upstream_status 广播      ▼
+                              ┌────────────────────────┐   HTTP(SSE)  智谱/DeepSeek 等
+                              │ upstream-proxy(:5191)  │◀──────────── 真实 Anthropic 兼容端点
                               └────────────────────────┘
 同一对话可被多端订阅:PC 端 CloudCLI(:3005)/ 手机 app 共用 provider session
 ```
+
+**上游中转**(proxy/upstream-proxy.ts):routes.json 里带 `relayTo` 的条目 = zcode 自家中转模型(如 `zcode-glm-5.3`,baseUrl 指向 `127.0.0.1:5191`)。CLI 的 `/v1/messages` 流经代理 → 按 body.model 找 relayTo 目标路由 → 换目标 token(`x-api-key`+`Bearer` 双写)原样转发,SSE 端到端透传不缓冲;内容零加工,会话/工具仍全在 CLI。每次主请求发 `upstream_status` 计时(见 3.2)。count_tokens 等辅助路径盲转发不发事件;代理只绑 127.0.0.1,端口 `ZCODE_RELAY_PORT`(默认 5191)。
 
 服务端核心链路:`ws-gateway`(协议)→ `run-registry`(发号+环形缓冲+运行态)→ `sdk-client.SessionRuntime`(SDK 包装)→ `protocol/transform`(SDK 消息→内部事件,唯一映射点)
 
@@ -65,6 +71,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `subscribed` | 无 | 否 | `{sessionId,isProcessing,lastSeq}`;**客户端不得拿 lastSeq 抬去重门槛**(replay 在后) |
 | `replay` | 无(内含) | 否 | `{sessionId,events[]}` 断线补发(环形缓冲 cap 1000) |
 | `sessions_dirty` | 无 | 否 | 控制帧:任一会话开跑/跑完/弹审批广播,app 防抖 250ms 静默刷列表(徽章数据源) |
+| `upstream_status` | 无 | 否 | 控制帧:`{sessionId,phase,model,status?,ms?,error?}`;上游中转代理计时广播(request/first_byte/done/error),归属最近一次 chat.send 的会话;app 只认 request/first_byte,静默期显示真实"已转发上游";无 seq 不补发,断线退回本地猜 |
 | `session_created` | 有 | 是 | `{providerSessionId}`,回填 sessions 表 |
 | `text` | 有 | 是 | `role:'assistant'|'user'`;用户消息由服务端回显(乐观行转正) |
 | `stream_delta` / `thinking_delta` | **无** | 否 | 瞬态实时流,前端不去重 |

@@ -109,6 +109,10 @@ class ChatState {
   final String? streamingThinking;
   final UsageInfo? usage;
   final PermissionReq? pendingPermission;
+  /// 上游中转代理的瞬态状态('request'/'first_byte'):静默期显示真实"已转发上游",
+  /// 没有(旧 server/非中转模型没等到事件)就退回客户端自己猜。null = 无信息。
+  final String? upstreamPhase;
+  final DateTime? upstreamAt; // 事件到达的本地时刻,骨架行据此走秒
 
   const ChatState({
     this.rows = const [],
@@ -118,10 +122,12 @@ class ChatState {
     this.streamingThinking,
     this.usage,
     this.pendingPermission,
+    this.upstreamPhase,
+    this.upstreamAt,
   });
 }
 
-ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false}) {
+ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false, String? upstreamPhase, bool clearUpstream = false}) {
   return ChatState(
     rows: rows ?? s.rows,
     lastSeq: lastSeq ?? s.lastSeq,
@@ -130,7 +136,16 @@ ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, 
     streamingThinking: clearStreamThinking ? null : (streamingThinking ?? s.streamingThinking),
     usage: usage ?? s.usage,
     pendingPermission: clearPermission ? null : (pendingPermission ?? s.pendingPermission),
+    upstreamPhase: clearUpstream ? null : (upstreamPhase ?? s.upstreamPhase),
+    upstreamAt: clearUpstream || upstreamPhase == null ? (clearUpstream ? null : s.upstreamAt) : DateTime.now(),
   );
+}
+
+/// 上游中转代理的瞬态广播(upstream_status,无 seq 控制事件)落地。
+/// 只认 'request'/'first_byte' 两个有展示意义的相位;done/error 由回合终态统一收。
+ChatState setUpstreamPhase(ChatState s, String phase) {
+  if (phase != 'request' && phase != 'first_byte') return s;
+  return _with(s, upstreamPhase: phase);
 }
 
 /// 被打断工具卡的占位结果:可辨识,迟到的真 tool_result 会覆盖它(见 tool_result 匹配)。
@@ -262,7 +277,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
     case 'complete':
       // 收尾:还没拿到 tool_result 的工具卡就地落定(命令被打断,结果永远不会来)。
       // 不收尾的话卡片永久转圈、走秒不停,看起来就是"卡住了"。
-      return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true, rows: _closeDanglingTools(s.rows));
+      return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true, clearUpstream: true, rows: _closeDanglingTools(s.rows));
     case 'error':
       final content = ev['content'] as String? ?? '';
       if (content == 'RUN_IN_PROGRESS') {
@@ -276,7 +291,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       }
       // 已知可恢复的中断提示(服务重启打断/看门狗自动中断)视觉降噪:中性而非红
       final neutral = content.contains('打断了上一轮') || content.startsWith('回合超过');
-      return _with(s, lastSeq: nextSeq, running: false, rows: [...s.rows, ErrorRow(content, neutral: neutral)]);
+      return _with(s, lastSeq: nextSeq, running: false, clearUpstream: true, rows: [...s.rows, ErrorRow(content, neutral: neutral)]);
     case 'subscribed':
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
       // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
@@ -318,7 +333,8 @@ ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
 
 /// 本地乐观插入用户消息(不占 seq)。images 随行带:气泡里直接回显缩略图(本地就有 base64)。
 ChatState applyLocalUser(ChatState s, String content, {List<String> images = const []}) {
-  return _with(s, running: true, rows: [...s.rows, UserRow(content, pending: true, images: images)]);
+  // 新回合从零开始等:上一回合的上游相位不能再带到这一回合的静默期里
+  return _with(s, running: true, clearUpstream: true, rows: [...s.rows, UserRow(content, pending: true, images: images)]);
 }
 
 /// 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。
