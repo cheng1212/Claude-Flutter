@@ -754,11 +754,14 @@ class _ChatPageState extends State<ChatPage> {
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
       (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
-      (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
+      (Icons.refresh_rounded, '刷新', '全量重载:从 CLI 转录补回丢失消息', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
-        if (merged > 0 && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('完整重载:补回 $merged 条丢失消息')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(switch (merged) {
+            > 0 => '完整重载:补回 $merged 条丢失消息',
+            == 0 => '已对齐 CLI 转录,没有缺失消息',
+            _ => '转录重载失败,已按本地历史重建',
+          })));
         }
       }),
     ];

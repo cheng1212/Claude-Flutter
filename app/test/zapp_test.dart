@@ -86,6 +86,67 @@ void main() {
     expect(app.sessions.single['id'], 's1');
   });
 
+  test('openSession 首屏:最新一页到齐即上屏,不等全量分页', () async {
+    await openEmpty();
+    final gate = Completer<void>();
+    Object? pageFor(int offset) => {
+          'messages': [
+            for (var i = 0; i < 500 && offset + i < 1200; i++)
+              {
+                'seq': offset + i + 1,
+                'role': 'user',
+                'meta': {'kind': 'text', 'role': 'assistant', 'seq': offset + i + 1, 'content': 'm${offset + i + 1}'},
+              }
+          ],
+          'total': 1200,
+        };
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        final offset = int.parse(Uri.parse(c.path).queryParameters['offset'] ?? '0');
+        return offset == 0 ? pageFor(0) : gate.future.then((_) => pageFor(offset));
+      }
+      return null;
+    };
+    final opening = app.openSession('s1');
+    await pump(const Duration(milliseconds: 20));
+    expect(app.historyLoading, isFalse, reason: '首屏只等最新一页,老消息后台补');
+    expect(app.chat.rows.length, 500);
+    expect((app.chat.rows.first as TextRow).content, 'm1');
+    gate.complete();
+    await opening;
+    expect(app.chat.rows.length, 1200, reason: '补齐换底后全量在列');
+  });
+
+  test('openSession 补齐窗口内到达的 WS 事件,换底不吞', () async {
+    await openEmpty();
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        final offset = int.parse(Uri.parse(c.path).queryParameters['offset'] ?? '0');
+        if (offset == 500) {
+          channel.serverPush({'kind': 'text', 'role': 'assistant', 'seq': 1201, 'sessionId': 's1', 'content': 'live'});
+        }
+        return {
+          'messages': [
+            for (var i = 0; i < 500 && offset + i < 1200; i++)
+              {
+                'seq': offset + i + 1,
+                'role': 'user',
+                'meta': {'kind': 'text', 'role': 'assistant', 'seq': offset + i + 1, 'content': 'm${offset + i + 1}'},
+              }
+          ],
+          'total': 1200,
+        };
+      }
+      return null;
+    };
+    await app.openSession('s1');
+    await pump();
+    expect(app.historyLoading, isFalse);
+    final texts = [for (final r in app.chat.rows) if (r is TextRow) r.content];
+    expect(texts.length, 1201, reason: '1200 条 REST + 1 条补齐窗口内 WS 到达的 live 消息,换底不能丢');
+    expect(texts.last, 'live');
+  });
+
   test('sessions_dirty:250ms 防抖合并成一次列表刷新;控制帧不进 reducer', () async {
     await openEmpty();
     var sessionFetches = 0;
