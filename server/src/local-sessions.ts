@@ -9,7 +9,6 @@ import path from 'node:path';
 
 import { appendOutbound, createSession, getSession, getSessionByProviderSessionId, listTombstonedProviderSessionIds, maxSeq, type Db } from './db.js';
 import type { ProtocolEvent } from './protocol/types.js';
-
 type AnyRecord = Record<string, unknown>;
 
 const INTERNAL_CONTENT_PREFIXES = [
@@ -125,6 +124,101 @@ export function reloadSessionTranscript(
     }
   }
   return { merged };
+}
+
+/** 按 provider_session_id 找磁盘转录(父会话文件;跳过 subagents 内部转写)。 */
+function findTranscriptPath(providerId: string, projectsDir: string): string | null {
+  const target = providerId + '.jsonl';
+  for (const f of findProjectFiles(projectsDir)) {
+    if (path.basename(f) === target && !isSubagentTranscript(f)) return f;
+  }
+  return null;
+}
+
+export type SubagentSummary = {
+  agentId: string;
+  agentType: string;
+  description: string;
+  toolUseId: string;
+  spawnDepth: number;
+  bytes: number;
+  updatedAt: string;
+};
+
+/**
+ * 子代理虚拟会话列表:父转录同目录 subagents/ 下的 agent-*.jsonl + .meta.json。
+ * 只读姿态:不入 sessions 表,面板/列表按此渲染,点开走 readSubagentTranscript。
+ */
+export function listSubagents(db: Db, sessionId: string, opts: { projectsDir?: string } = {}): SubagentSummary[] {
+  const session = getSession(db, sessionId);
+  if (!session?.provider_session_id) return [];
+  const providerId = session.provider_session_id;
+  const parent = findTranscriptPath(providerId, opts.projectsDir ?? path.join(claudeHome(), 'projects'));
+  if (!parent) return [];
+  // CLI 布局:<encoded-cwd>/<sessionId>/subagents/agent-*.jsonl(与父转录文件同级目录)
+  const dir = path.join(path.dirname(parent), providerId, 'subagents');
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const rows: SubagentSummary[] = [];
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
+    const stem = e.name.slice(0, -'.jsonl'.length);
+    const full = path.join(dir, e.name);
+    let bytes = 0;
+    let updatedAt = '';
+    try {
+      const st = fs.statSync(full);
+      bytes = st.size;
+      updatedAt = st.mtime.toISOString();
+    } catch {
+      // 文件刚被轮转等场景:照常列出,元数据留空
+    }
+    let meta: AnyRecord = {};
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(dir, stem + '.meta.json'), 'utf8')) as AnyRecord;
+    } catch {
+      // meta 缺失/损坏:列表仍可见,只是没有类型描述
+    }
+    rows.push({
+      agentId: stem,
+      agentType: String(meta.agentType ?? ''),
+      description: String(meta.description ?? ''),
+      toolUseId: String(meta.toolUseId ?? ''),
+      spawnDepth: typeof meta.spawnDepth === 'number' ? meta.spawnDepth : 0,
+      bytes,
+      updatedAt,
+    });
+  }
+  rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.agentId.localeCompare(b.agentId));
+  return rows;
+}
+
+/** 子代理转录消息(只读):行序即 seq;agentId 白名单字符防路径穿越。 */
+export function readSubagentTranscript(
+  db: Db, sessionId: string, agentId: string,
+  opts: { projectsDir?: string } = {},
+): Array<{ seq: number } & ProtocolEvent> {
+  if (!/^[A-Za-z0-9_-]+$/.test(agentId)) return [];
+  const session = getSession(db, sessionId);
+  if (!session?.provider_session_id) return [];
+  const parent = findTranscriptPath(session.provider_session_id, opts.projectsDir ?? path.join(claudeHome(), 'projects'));
+  if (!parent) return [];
+  const file = path.join(path.dirname(parent), session.provider_session_id, 'subagents', agentId + '.jsonl');
+  const out: Array<{ seq: number } & ProtocolEvent> = [];
+  let seq = 0;
+  for (const line of readAllLines(file)) {
+    const raw = parseObj(line);
+    if (!raw) continue;
+    for (const ev of normalizeTranscriptLine(raw)) {
+      seq += 1;
+      out.push({ seq, ...ev } as { seq: number } & ProtocolEvent);
+    }
+  }
+  return out;
 }
 
 /** ~/.claude/history.jsonl → sessionId→display 映射(nameMap)。 */

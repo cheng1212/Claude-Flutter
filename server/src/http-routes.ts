@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
-import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
+import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
@@ -129,6 +129,19 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     }
     return { backgrounds: rows };
   });
+
+  // 子代理虚拟会话:列表(meta 元数据)+ 只读转录。不入 sessions 表,面板按此渲染。
+  app.get('/api/sessions/:id/subagents', async (req) => ({
+    subagents: listSubagents(deps.db, (req.params as { id: string }).id),
+  }));
+
+  app.get('/api/sessions/:id/subagents/:agentId/messages', async (req) => ({
+    messages: readSubagentTranscript(
+      deps.db,
+      (req.params as { id: string }).id,
+      (req.params as { agentId: string }).agentId,
+    ),
+  }));
 
   // 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成(按字符量估算)
   app.get('/api/sessions/:id/usage', async (req) => {
