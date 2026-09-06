@@ -38,13 +38,18 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   const PERMISSION_MODES = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto']);
   app.patch('/api/sessions/:id', async (req, reply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const patch: { title?: string; isPinned?: boolean; providerSessionId?: string; model?: string; permissionMode?: string; cwd?: string } = {};
+    const patch: { title?: string; isPinned?: boolean; providerSessionId?: string; model?: string; permissionMode?: string; cwd?: string; archived?: boolean; tags?: string[] } = {};
     if (typeof body.title === 'string') patch.title = body.title;
     if (body.isPinned !== undefined) patch.isPinned = body.isPinned === true || body.isPinned === 'true';
     if (typeof body.providerSessionId === 'string') patch.providerSessionId = body.providerSessionId;
     if (typeof body.model === 'string') patch.model = body.model;
     if (typeof body.permissionMode === 'string' && PERMISSION_MODES.has(body.permissionMode)) patch.permissionMode = body.permissionMode;
     if (typeof body.cwd === 'string') patch.cwd = body.cwd;
+    if (body.archived !== undefined) patch.archived = body.archived === true || body.archived === 'true';
+    if (Array.isArray(body.tags)) {
+      const tags = body.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim());
+      if (tags.length <= 10) patch.tags = tags;
+    }
     const row = updateSession(deps.db, (req.params as { id: string }).id, patch);
     if (!row) return reply.code(404).send({ error: 'not found' });
     // 真热切换:有活着的 CLI 实例就现场设(模式立即对本回合生效);

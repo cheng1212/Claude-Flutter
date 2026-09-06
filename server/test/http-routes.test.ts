@@ -203,3 +203,26 @@ describe('GET /download/:name', () => {
     }
   });
 });
+
+describe('REST · 会话管理增强', () => {
+  it('PATCH 支持 archived 与 tags,列表回带增强字段', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const created = await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: '增强' } });
+    const id = (created.json() as { id: string }).id;
+
+    const patched = await app.inject({ method: 'PATCH', url: `/api/sessions/${id}`, headers: H, payload: { archived: true, tags: ['Flutter', '重要'] } });
+    expect(patched.statusCode).toBe(200);
+    const row = patched.json() as { archived: number; tags: string };
+    expect(row.archived).toBe(1);
+    expect(JSON.parse(row.tags)).toEqual(['Flutter', '重要']);
+
+    const list = await app.inject({ method: 'GET', url: '/api/sessions', headers: H });
+    const first = (list.json() as { archived: number; tags: string; last_preview: string; last_status: string | null; project: string | null }[])[0];
+    expect(first.archived).toBe(1);
+    expect(first.tags).toEqual(['Flutter', '重要']);
+    expect(first.last_preview).toBe('');
+    expect(first.last_status).toBeNull();
+    expect(first.project).toBeNull();
+  });
+});
