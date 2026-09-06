@@ -54,13 +54,28 @@ class ZApi {
     return (res as Map).cast<String, dynamic>();
   }
 
-  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode}) async {
+  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags}) async {
     await _call('PATCH', '/api/sessions/$id', {
       'title': ?title,
       'isPinned': ?isPinned,
       'model': ?model,
       'permissionMode': ?permissionMode,
+      'archived': ?archived,
+      'tags': ?tags,
     });
+  }
+
+  /// 复制会话:服务端拷贝消息与配置,fork_from 记源 CLI 会话(下一轮 send 时分叉)。
+  Future<Map<String, dynamic>> forkSession(String id) async {
+    final res = await _call('POST', '/api/sessions/$id/fork', null);
+    return (res as Map).cast<String, dynamic>();
+  }
+
+  /// 导出会话为 markdown:服务端拼好,返回 {filename, markdown}。
+  Future<({String filename, String markdown})> exportSession(String id) async {
+    final res = await _call('GET', '/api/sessions/$id/export', null);
+    final map = res is Map ? res.cast<String, dynamic>() : const <String, dynamic>{};
+    return (filename: '${map['filename'] ?? '会话.md'}', markdown: '${map['markdown'] ?? ''}');
   }
 
   Future<void> deleteSession(String id) async {
