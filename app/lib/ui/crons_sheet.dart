@@ -90,8 +90,9 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, i) {
                     final c = list[i];
-                    final nf = DateTime.tryParse('${c['next_fire'] ?? ''}');
-                    final left = nf == null ? '' : formatCountdown(nf.difference(DateTime.now()));
+                    final recurring = (c['recurring'] ?? 1) == 1;
+                    final next = cronNextLabel(c['next_fire'] == null ? null : '${c['next_fire']}', DateTime.now());
+                    final expiry = cronExpiryLabel(c['created_at'] == null ? null : '${c['created_at']}', recurring: recurring);
                     return Container(
                       padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
                       decoration: ShapeDecoration(
@@ -122,14 +123,20 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                         const SizedBox(height: 5),
                         Row(children: [
                           _pill('${c['cron'] ?? ''}'),
+                          const SizedBox(width: 6),
+                          _pill(recurring ? '循环' : '一次性'),
                           if ((c['durable'] ?? 0) == 1) ...[
                             const SizedBox(width: 6),
                             _pill('跨重启'),
                           ],
-                          const Spacer(),
-                          Text('⏰ 下次 $left',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
                         ]),
+                        const SizedBox(height: 5),
+                        Text('⏰ 下次 $next',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                        if (expiry != null) ...[
+                          const SizedBox(height: 2),
+                          Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                        ],
                       ]),
                     );
                   },

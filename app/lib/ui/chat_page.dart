@@ -1787,8 +1787,9 @@ class _CronsSheetState extends State<_CronsSheet> {
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, i) {
                     final c = list[i];
-                    final nf = DateTime.tryParse('${c['next_fire'] ?? ''}');
-                    final left = nf == null ? '' : formatCountdown(nf.difference(DateTime.now()));
+                    final recurring = (c['recurring'] ?? 1) == 1;
+                    final next = cronNextLabel(c['next_fire'] == null ? null : '${c['next_fire']}', DateTime.now());
+                    final expiry = cronExpiryLabel(c['created_at'] == null ? null : '${c['created_at']}', recurring: recurring);
                     return Container(
                       padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
                       decoration: ShapeDecoration(
@@ -1816,13 +1817,17 @@ class _CronsSheetState extends State<_CronsSheet> {
                         Row(children: [
                           _pillMono('${c['cron'] ?? ''}'),
                           const SizedBox(width: 8),
-                          if ((c['recurring'] ?? 1) == 0) _pillMono('单次'),
+                          _pillMono(recurring ? '循环' : '单次'),
                           if ((c['durable'] ?? 0) == 1) const SizedBox(width: 8),
                           if ((c['durable'] ?? 0) == 1) _pillMono('跨重启'),
-                          const Spacer(),
-                          Text('⏰ 下次 $left',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
                         ]),
+                        const SizedBox(height: 5),
+                        Text('⏰ 下次 $next',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                        if (expiry != null) ...[
+                          const SizedBox(height: 2),
+                          Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                        ],
                       ]),
                     );
                   },
