@@ -7,6 +7,7 @@ import '../session_utils.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'chat_page.dart';
+import 'crons_sheet.dart';
 
 class SessionsPage extends StatefulWidget {
   final ZApp app;
@@ -299,10 +300,17 @@ class _SessionsPageState extends State<SessionsPage> {
     return Scaffold(
       backgroundColor: ZT.bg,
       appBar: AppBar(
-        title: Row(children: [
-          const Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
-          const SizedBox(width: 8),
-          const Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            tooltip: '菜单',
+            icon: const Icon(Icons.menu_rounded, size: 22),
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+        title: const Row(children: [
+          Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
+          SizedBox(width: 8),
+          Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
         ]),
         actions: [
           IconButton(
@@ -323,6 +331,49 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
           const SizedBox(width: 4),
         ],
+      ),
+      drawer: Drawer(
+        backgroundColor: ZT.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.horizontal(right: Radius.circular(ZT.radius)),
+        ),
+        child: SafeArea(
+          child: ListView(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+              child: Row(children: [
+                const Icon(Icons.menu_rounded, size: 18, color: ZT.primary),
+                const SizedBox(width: 8),
+                const Text('菜单', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: ZT.primary)),
+              ]),
+            ),
+            ListTile(
+              leading: const Icon(Icons.alarm_rounded, size: 20, color: ZT.lemon),
+              title: const Text('定时任务(全部会话)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                showModalBottomSheet(
+                  context: context,
+                  backgroundColor: ZT.surface,
+                  isScrollControlled: true,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+                    side: BorderSide(color: ZT.edge),
+                  ),
+                  builder: (_) => AllCronsSheet(app: app),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_outlined, size: 20, color: ZT.inkSoft),
+              title: const Text('设置', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                _openSettings();
+              },
+            ),
+          ]),
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: ZT.primary,
