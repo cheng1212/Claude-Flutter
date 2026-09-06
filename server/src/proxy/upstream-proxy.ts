@@ -108,7 +108,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
   // CLI 发的是 origin-form(以 / 开头),new URL 会把它当"从根开始"整个替换掉
   // baseUrl 的路径前缀(智谱的 /api/anthropic 会丢,变成根路径 405)——去掉前导斜杠再拼。
   const incoming = req.url ?? '/v1/messages';
-  const base = target.baseUrl.endsWith('/') ? target.baseUrl : `${target.baseUrl}/`;
+  const baseUrl = target.baseUrl ?? ''; // resolveRelay 已保证非空,此处仅满足类型
+  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
   const upstream = new URL(incoming.replace(/^\//, ''), base);
   // 鉴权统一换成目标路由的 token(x-api-key + Bearer 双写,各端点各取所需);
   // accept-encoding 摘掉:压缩流会让"透传"在代理这里变成不可解读的字节,还可能被中间层缓冲。

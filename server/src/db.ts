@@ -94,7 +94,15 @@ export function maxSeq(db: Db, sessionId: string): number {
   return row.m;
 }
 
-export function listSessions(db: Db): SessionRow[] {
+/** 列表行:tags 解析成数组(表里存 JSON 字符串),预览/状态/项目为列表专属增强字段。 */
+export type SessionListRow = Omit<SessionRow, 'tags'> & {
+  tags: string[];
+  last_preview: string;
+  last_status: string | null;
+  project: string | null;
+};
+
+export function listSessions(db: Db): SessionListRow[] {
   // last_message:最后一条文本消息截 120 字做列表副标题(认会话全靠它,不全靠标题)
   // __tail:最后一条消息的 kind|content|meta,JS 侧拼友好预览 last_preview
   const rows = db.prepare(`
@@ -132,7 +140,7 @@ export function listSessions(db: Db): SessionRow[] {
     let tags: unknown = [];
     try { tags = JSON.parse(r.tags ?? '[]'); } catch { tags = []; }
     const { __kind: _k, __content: _c, __meta: _m, ...rest } = r;
-    return { ...rest, last_preview: preview, project, tags: tags as string[] };
+    return { ...rest, last_preview: preview, project, last_status: r.last_status ?? null, tags: tags as string[] };
   });
 }
 
@@ -237,7 +245,7 @@ export function forkSession(db: Db, sourceId: string): SessionRow | null {
   db.transaction(() => {
     for (const m of rows) ins.run(randomUUID(), copy.id, m.seq, m.kind, m.role, m.content, m.meta, m.created_at);
   })();
-  return getSession(db, copy.id);
+  return getSession(db, copy.id) ?? null; // createSession 刚插完必在;?? null 仅收敛类型
 }
 
 /** 墓碑集合(导入器拉黑名单)。 */

@@ -84,6 +84,7 @@ export class SessionRuntime {
   /** 已发 tool_use 还没等到 tool_result 的工具:看门狗判"忙碌"的依据(静默 ≠ 卡死)。 */
   private openTools = new Set<string>();
   private providerSessionId: string | null;
+  private forkPending: boolean; // fork 只发生在首轮(init 采纳新 id 后清零),否则缓存 runtime 每轮 resume 都会再分叉
   private aborted = false;
   private turnGen = 0; // 回合代数:强裁定时器不误伤下一轮
   private forceTurnFinish: (() => void) | null = null;
@@ -91,6 +92,7 @@ export class SessionRuntime {
   constructor(private opts: RuntimeOptions) {
     this.queryFn = opts.queryFn ?? (defaultQuery as unknown as QueryFn);
     this.providerSessionId = opts.providerSessionId ?? null;
+    this.forkPending = opts.forkSession === true;
   }
 
   currentProviderSessionId(): string | null {
@@ -203,7 +205,7 @@ export class SessionRuntime {
       options.settings = route.settings; // 路由 settings 显式给出时整体覆盖
     }
     if (this.providerSessionId) options.resume = this.providerSessionId;
-    if (this.opts.forkSession && this.providerSessionId) options.forkSession = true;
+    if (this.forkPending && this.providerSessionId) options.forkSession = true;
     return options;
   }
 
@@ -318,9 +320,10 @@ export class SessionRuntime {
               if (typeof sessionId === 'string' && sessionId) {
                 // 新会话首捕;或 fork 分叉(init 回传 id ≠ resume 起点)→ 回填并发 session_created
                 if (!this.providerSessionId
-                  || (this.opts.forkSession === true && sessionId !== this.providerSessionId)) {
+                  || (this.forkPending && sessionId !== this.providerSessionId)) {
                   this.providerSessionId = sessionId;
                   this.opts.emit({ kind: 'session_created', providerSessionId: sessionId });
+                  this.forkPending = false; // 分叉已落地:后续轮恢复普通 resume,不再重复分叉
                 }
               }
               continue;

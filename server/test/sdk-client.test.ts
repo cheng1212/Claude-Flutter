@@ -350,6 +350,25 @@ describe('SessionRuntime · fork', () => {
     expect(events.at(-1)).toMatchObject({ kind: 'complete', exitCode: 0 });
   });
 
+  it('fork 只分叉一次:首轮采纳新 id 后,后续轮恢复普通 resume(不再 fork、不再发 session_created)', async () => {
+    const { events, emit } = collector();
+    const optionss: Record<string, unknown>[] = [];
+    const queryFn: QueryFn = ({ options }) => {
+      optionss.push(options as Record<string, unknown>);
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'fork-new' };
+        yield { type: 'result', subtype: 'success', session_id: 'fork-new', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a1', providerSessionId: 'prov-old', forkSession: true, emit, queryFn });
+    await runtime.send('第一轮');
+    await runtime.send('第二轮');
+    expect(optionss[0].forkSession).toBe(true);
+    expect(optionss[1].forkSession).toBeUndefined(); // 分叉已落地,不再重复分叉
+    expect(optionss[1].resume).toBe('fork-new');
+    expect(events.filter((e) => e.kind === 'session_created')).toHaveLength(1);
+  });
+
   it('非 fork 的 resume:init 回同一 id,不发 session_created(原语义不变)', async () => {
     const { events, emit } = collector();
     const queryFn: QueryFn = () => (async function* () {
