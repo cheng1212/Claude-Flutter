@@ -3,20 +3,53 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../panel_utils.dart';
+import 'subagent_page.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 // ---------------------------------------------------------------- 面板弹层
 
-/// 子代理面板:Task/Agent 发起的子代理 + 各自活动数。
-class SubagentsSheet extends StatelessWidget {
+/// 子代理面板:本轮活动(聊天行实时派生)+ 磁盘转录历史(server,可点开只读视图)。
+class SubagentsSheet extends StatefulWidget {
+  final ZApp app;
+  final String sessionId;
   final List<ToolRow> rows;
 
-  const SubagentsSheet({super.key, required this.rows});
+  const SubagentsSheet({
+    super.key,
+    required this.app,
+    required this.sessionId,
+    required this.rows,
+  });
+
+  @override
+  State<SubagentsSheet> createState() => _SubagentsSheetState();
+}
+
+class _SubagentsSheetState extends State<SubagentsSheet> {
+  List<Map<String, dynamic>>? _disk;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.app.subagents(widget.sessionId).then((rows) {
+      if (mounted) setState(() => _disk = rows);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final subs = deriveSubagents(rows);
+    final live = deriveSubagents(widget.rows);
+    final disk = _disk;
+    // 按 description 把"本轮活动"和"磁盘转录"归并为同一行:命中的磁盘行可点开
+    final diskRows = (disk ?? const <Map<String, dynamic>>[]).toList();
+    for (final sub in live) {
+      final hit = diskRows.indexWhere((d) => '${d['description'] ?? ''}' == sub.description);
+      if (hit >= 0) {
+        diskRows.removeAt(hit);
+      }
+    }
+    final hasAny = live.isNotEmpty || diskRows.isNotEmpty;
     return SafeArea(
       child: Container(
         constraints: BoxConstraints(
@@ -41,7 +74,7 @@ class SubagentsSheet extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Flexible(
-              child: subs.isEmpty
+              child: !hasAny
                   ? const Padding(
                       padding: EdgeInsets.symmetric(vertical: 18),
                       child: Text(
@@ -55,66 +88,104 @@ class SubagentsSheet extends StatelessWidget {
                     )
                   : ListView.separated(
                       shrinkWrap: true,
-                      itemCount: subs.length,
+                      itemCount: live.length + diskRows.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final sub = subs[i];
-                        final leading = sub.done
-                            ? const Icon(
-                                Icons.check_circle_rounded,
-                                size: 16,
-                                color: ZT.aqua,
-                              )
-                            : const SizedBox(
-                                width: 13,
-                                height: 13,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: ZT.grape,
-                                ),
-                              );
-                        final card = Container(
-                          padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-                          decoration: ShapeDecoration(
-                            color: ZT.bg,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(ZT.radius),
-                              side: ZT.inkSide(
-                                w: 1.2,
-                                color: ZT.grape.withValues(alpha: 0.5),
-                              ),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              leading,
-                              const SizedBox(width: 9),
-                              Expanded(
-                                child: Text(
-                                  sub.description,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '${sub.activityCount} 次活动',
-                                style: const TextStyle(
-                                  fontSize: 11.5,
-                                  color: ZT.inkFaint,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                        return card;
+                        if (i < live.length) return _liveCard(live[i]);
+                        return _diskCard(diskRows[i - live.length]);
                       },
                     ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _liveCard(SubagentInfo sub) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      decoration: ShapeDecoration(
+        color: ZT.bg,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: ZT.inkSide(w: 1.2, color: ZT.grape.withValues(alpha: 0.5)),
+        ),
+      ),
+      child: Row(
+        children: [
+          sub.done
+              ? const Icon(Icons.check_circle_rounded, size: 16, color: ZT.aqua)
+              : const SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: ZT.grape),
+                ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              sub.description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${sub.activityCount} 次活动',
+            style: const TextStyle(fontSize: 11.5, color: ZT.inkFaint),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _diskCard(Map<String, dynamic> d) {
+    final type = '${d['agentType'] ?? ''}';
+    final depth = (d['spawnDepth'] as num?)?.toInt() ?? 0;
+    final bits = <String>[
+      if (type.isNotEmpty) type,
+      if (depth > 1) '嵌套 $depth 层',
+    ];
+    final title = ('${d['description'] ?? ''}'.trim().isNotEmpty)
+        ? '${d['description']}'
+        : '${d['agentId']}';
+    return InkWell(
+      borderRadius: BorderRadius.circular(ZT.radius),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => SubagentTranscriptPage(
+          app: widget.app,
+          sessionId: widget.sessionId,
+          agentId: '${d['agentId']}',
+          title: title,
+        ),
+      )),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+        decoration: ShapeDecoration(
+          color: ZT.bg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(ZT.radius),
+            side: ZT.inkSide(w: 1.2, color: ZT.edge),
+          ),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.visibility_outlined, size: 15, color: ZT.grape),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (bits.isNotEmpty)
+              Text(bits.join(' · '),
+                  style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+            const Icon(Icons.chevron_right_rounded, size: 16, color: ZT.inkSoft),
           ],
         ),
       ),

@@ -83,7 +83,11 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
-      builder: (ctx) => SubagentsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+      builder: (ctx) => SubagentsSheet(
+        app: app,
+        sessionId: widget.sessionId,
+        rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>()),
+      ),
     );
     if (mounted) setState(() {});
   }
