@@ -616,6 +616,10 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 面板活跃态一次算好:右上角下拉与快捷条共用。
+    final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
+    final subsOn = deriveSubagents(chat.rows).isNotEmpty;
+    final bgOn = deriveBackgrounds(chat.rows).isNotEmpty;
     return Scaffold(
       backgroundColor: ZT.bg,
       appBar: AppBar(
@@ -629,7 +633,14 @@ class _ChatPageState extends State<ChatPage> {
           const SizedBox(width: 8),
           StatusChip(phase: _phase(), compact: true),
         ]),
-        actions: const [],
+        actions: [
+          _PanelsMenu(
+            planOn: planOn,
+            subsOn: subsOn,
+            bgOn: bgOn,
+            onOpen: _openPanel,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(children: [
@@ -652,7 +663,7 @@ class _ChatPageState extends State<ChatPage> {
               },
             ),
           _composer(),
-          _quickBar(),
+          _quickBar(planOn),
         ]),
       ),
     );
@@ -717,22 +728,32 @@ class _ChatPageState extends State<ChatPage> {
     return id;
   }
 
-  /// 底部快捷条:5 个等宽磁贴,图标在上、短标签在下(按用户排版稿)。
+  /// 「更多」下拉的四个面板入口共用一条分发通道。
+  void _openPanel(String which) {
+    switch (which) {
+      case 'plan':
+        _openPlanSheet();
+      case 'subs':
+        _openSubagents();
+      case 'bg':
+        _openBackgrounds();
+      case 'ref':
+        _pickReference();
+    }
+  }
+
+  /// 底部快捷条:模型 + 安全/思考/定时/刷新 共 5 个等宽磁贴。
+  /// 工具计划/子代理/后台/引用收进右上角「更多」下拉(_PanelsMenu),给磁贴留位。
   /// 模型贴直显当前模型名(超宽省略号,长按 Tooltip 看完整 id);有状态时点亮。
-  Widget _quickBar() {
-    final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
+  Widget _quickBar(bool planOn) {
     app.crons(sessionId: widget.sessionId).then((list) {
       if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
     });
     final tiles = <(IconData, String, String, Color?, bool, VoidCallback)>[
       (Icons.shield_rounded, '安全', '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
-      (Icons.account_tree_rounded, '工具', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
       (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
-      (Icons.hub_rounded, '子代理', '会话里的子代理与活动', deriveSubagents(chat.rows).isNotEmpty ? ZT.grape : null, false, () { _openSubagents(); }),
-      (Icons.memory_rounded, '后台', '后台任务与输出', deriveBackgrounds(chat.rows).isNotEmpty ? ZT.aqua : null, false, () { _openBackgrounds(); }),
-      (Icons.link_rounded, '引用', '把另一个会话的上下文带进来', null, false, () { _pickReference(); }),
       (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (merged > 0 && mounted) {
@@ -1141,6 +1162,86 @@ class _GroupRow extends StatelessWidget {
 
 /// 底部快捷磁贴:图标在上、短标签在下,外层 Expanded 等宽(按用户排版稿)。
 /// 长标签放进 Tooltip(如「权限模式:每次确认」),贴面上只留两字短词。
+/// 右上角「更多」下拉:工具计划/子代理/后台/引用 四个面板入口。
+/// 快捷条只留高频磁贴,低频面板收进来;有活动的面板在菜单里点亮主题色,
+/// 触发按钮上随之亮一颗小圆点,状态不因收纳而消失。
+class _PanelsMenu extends StatelessWidget {
+  final bool planOn;
+  final bool subsOn;
+  final bool bgOn;
+  final void Function(String which) onOpen;
+
+  const _PanelsMenu({
+    required this.planOn,
+    required this.subsOn,
+    required this.bgOn,
+    required this.onOpen,
+  });
+
+  PopupMenuItem<String> _item(String value, IconData icon, String label, Color? accent) {
+    final c = accent ?? ZT.inkSoft;
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(children: [
+        Icon(icon, size: 18, color: c),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: accent ?? ZT.ink)),
+        ),
+        if (accent != null) PulseDot(color: accent, animate: true, size: 6),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final anyOn = planOn || subsOn || bgOn;
+    return PopupMenuButton<String>(
+      tooltip: '工具 / 子代理 / 后台 / 引用',
+      color: ZT.surface,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius), side: ZT.inkSide()),
+      onSelected: onOpen,
+      itemBuilder: (ctx) => [
+        _item('plan', Icons.account_tree_rounded, '工具 · 执行计划', planOn ? ZT.primary : null),
+        _item('subs', Icons.hub_rounded, '子代理', subsOn ? ZT.grape : null),
+        _item('bg', Icons.memory_rounded, '后台任务', bgOn ? ZT.aqua : null),
+        _item('ref', Icons.link_rounded, '引用会话', null),
+      ],
+      child: Container(
+        margin: const EdgeInsets.only(right: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: ShapeDecoration(
+          color: ZT.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+            side: ZT.inkSide(w: 1.2),
+          ),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (anyOn) ...[
+            Container(
+                width: 6,
+                height: 6,
+                decoration:
+                    BoxDecoration(color: ZT.primary, shape: BoxShape.circle)),
+            const SizedBox(width: 5),
+          ],
+          const Text('更多',
+              style: TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+          const SizedBox(width: 4),
+          const Icon(Icons.expand_more_rounded, size: 15, color: ZT.inkSoft),
+        ]),
+      ),
+    );
+  }
+}
+
 class _QuickTile extends StatelessWidget {
   final IconData icon;
   final String label;
