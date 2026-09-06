@@ -60,3 +60,45 @@ describe('db', () => {
     expect(aMax).toBe(2); // text#1 → error#2,自动续号
   });
 });
+
+describe('会话管理增强', () => {
+  it('新会话默认未归档、空标签;updateSession 可改 archived/tags', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: 't', cwd: 'D:\proj\myapp' });
+    const row = getSession(db, s.id)!;
+    expect((row as { archived: number }).archived).toBe(0);
+    expect((row as { tags: string }).tags).toBe('[]');
+    updateSession(db, s.id, { archived: true, tags: ['Flutter', '重要'] });
+    const after = getSession(db, s.id)! as unknown as { archived: number; tags: string };
+    expect(after.archived).toBe(1);
+    expect(JSON.parse(after.tags)).toEqual(['Flutter', '重要']);
+  });
+
+  it('listSessions 附带 lastPreview/lastStatus/project/tags', () => {
+    const db = openDb(':memory:');
+    const BS = String.fromCharCode(92);
+    const s = createSession(db, { title: 'x', cwd: 'D:' + BS + 'work' + BS + 'flutter_app', tags: ['标签A'] });
+    appendMessage(db, s.id, { kind: 'text', role: 'user', content: '第一条' });
+    appendMessage(db, s.id, { kind: 'tool_use', meta: { toolName: 'Bash' }, content: '{}' });
+    appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '最新回复' });
+    const run = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, run.id, { status: 'success' });
+    const row = listSessions(db).find(r => r.id === s.id) as unknown as {
+      last_preview: string; last_status: string; project: string; tags: string[];
+    };
+    expect(row.last_preview).toContain('最新回复');
+    expect(row.last_status).toBe('success');
+    expect(row.project).toBe('flutter_app');
+    expect(row.tags).toEqual(['标签A']);
+  });
+
+  it('lastPreview 对工具行给出友好摘要,空会话为空', () => {
+    const db = openDb(':memory:');
+    const empty = createSession(db, { title: 'e' });
+    expect((listSessions(db).find(r => r.id === empty.id) as unknown as { last_preview: string }).last_preview).toBe('');
+    const s = createSession(db, { title: 'w' });
+    appendMessage(db, s.id, { kind: 'thinking', content: '想一想' });
+    const row = listSessions(db).find(r => r.id === s.id) as unknown as { last_preview: string };
+    expect(row.last_preview).toContain('想一想');
+  });
+});

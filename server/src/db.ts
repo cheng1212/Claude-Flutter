@@ -8,6 +8,16 @@ export type SessionRow = {
   created_at: string; updated_at: string;
   /** 列表副标题:最后一条文本消息截 120 字(listSessions 附带,非表列) */
   last_message?: string | null;
+  /** 会话管理增强(listSessions 附带) */
+  archived?: number;
+  tags?: string;
+  fork_from?: string | null;
+  /** 友好预览:文本→内容;思考→💭;工具→🔧+工具名(空会话为空串) */
+  last_preview?: string;
+  /** 最近一次 run 的状态(success/error/aborted/interrupted;无 run 为 null) */
+  last_status?: string | null;
+  /** cwd 末段,如 D:\work\app → app */
+  project?: string | null;
 };
 export type MessageRow = {
   id: string; session_id: string; seq: number; kind: string; role: string | null;
@@ -40,6 +50,16 @@ export function openDb(file: string): Db {
   if (!sessionCols.some((c) => c.name === 'source')) {
     db.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'app'");
   }
+  // 会话管理增强:归档、标签(JSON 数组字符串)、fork 来源(CLI provider 会话 id)
+  if (!sessionCols.some((c) => c.name === 'archived')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!sessionCols.some((c) => c.name === 'tags')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!sessionCols.some((c) => c.name === 'fork_from')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN fork_from TEXT');
+  }
   return db;
 }
 
@@ -47,15 +67,16 @@ const now = () => new Date().toISOString();
 
 export function createSession(
   db: Db,
-  input: { title?: string; cwd?: string; model?: string; source?: 'app' | 'local'; providerSessionId?: string; createdAt?: string; updatedAt?: string } = {},
+  input: { title?: string; cwd?: string; model?: string; source?: 'app' | 'local'; providerSessionId?: string; createdAt?: string; updatedAt?: string; tags?: string[]; forkFrom?: string } = {},
 ): SessionRow {
   const id = randomUUID();
   const ts = now();
-  db.prepare('INSERT INTO sessions(id,title,cwd,model,source,provider_session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO sessions(id,title,cwd,model,source,provider_session_id,created_at,updated_at,tags,fork_from) VALUES(?,?,?,?,?,?,?,?,?,?)')
     .run(
       id, input.title?.trim() || '新会话', input.cwd ?? null, input.model ?? null,
       input.source ?? 'app', input.providerSessionId ?? null,
       input.createdAt ?? ts, input.updatedAt ?? ts,
+      JSON.stringify(input.tags ?? []), input.forkFrom ?? null,
     );
   return getSession(db, id)!;
 }
@@ -75,23 +96,47 @@ export function maxSeq(db: Db, sessionId: string): number {
 
 export function listSessions(db: Db): SessionRow[] {
   // last_message:最后一条文本消息截 120 字做列表副标题(认会话全靠它,不全靠标题)
-  return db.prepare(`
+  // __tail:最后一条消息的 kind|content|meta,JS 侧拼友好预览 last_preview
+  const rows = db.prepare(`
     SELECT s.*,
       (SELECT substr(m.content, 1, 120) FROM messages m
         WHERE m.session_id = s.id AND m.kind = 'text'
-        ORDER BY m.seq DESC LIMIT 1) AS last_message
+        ORDER BY m.seq DESC LIMIT 1) AS last_message,
+      (SELECT m.kind || '|' || substr(m.content, 1, 160) || '|' || COALESCE(m.meta, '')
+        FROM messages m WHERE m.session_id = s.id
+        ORDER BY m.seq DESC LIMIT 1) AS __tail,
+      (SELECT r.status FROM runs r WHERE r.session_id = s.id
+        ORDER BY r.started_at DESC LIMIT 1) AS last_status
     FROM sessions s
     ORDER BY s.is_pinned DESC, s.updated_at DESC
-  `).all() as SessionRow[];
+  `).all() as (SessionRow & { __tail?: string | null })[];
+  return rows.map((r) => {
+    const [kind = '', content = '', meta = ''] = (r.__tail ?? '').split('|');
+    let preview = '';
+    if (kind === 'text') preview = content;
+    else if (kind === 'thinking') preview = '💭 ' + content;
+    else if (kind === 'error') preview = '⚠️ ' + content;
+    else if (kind === 'tool_use') {
+      let toolName = '工具调用';
+      try { toolName = (JSON.parse(meta) as { toolName?: string }).toolName ?? toolName; } catch { /* meta 缺失用默认 */ }
+      preview = '🔧 ' + toolName;
+    } else if (kind === 'tool_result') preview = '⚙️ 工具结果';
+    const BS = String.fromCharCode(92); // 反斜杠(避免字面量被多层转义坑)
+    const project = r.cwd ? r.cwd.split(new RegExp('[' + BS + BS + '/]')).filter(Boolean).at(-1) ?? null : null;
+    let tags: unknown = [];
+    try { tags = JSON.parse(r.tags ?? '[]'); } catch { tags = []; }
+    const { __tail: _drop, ...rest } = r;
+    return { ...rest, last_preview: preview, project, tags: tags as string[] };
+  });
 }
 
 export function updateSession(
   db: Db, id: string,
-  patch: Partial<{ title: string; isPinned: boolean; providerSessionId: string; model: string; permissionMode: string; cwd: string }>,
+  patch: Partial<{ title: string; isPinned: boolean; providerSessionId: string; model: string; permissionMode: string; cwd: string; archived: boolean; tags: string[] }>,
 ): SessionRow | undefined {
   const cur = getSession(db, id);
   if (!cur) return undefined;
-  db.prepare('UPDATE sessions SET title=?, is_pinned=?, provider_session_id=?, model=?, permission_mode=?, cwd=?, updated_at=? WHERE id=?')
+  db.prepare('UPDATE sessions SET title=?, is_pinned=?, provider_session_id=?, model=?, permission_mode=?, cwd=?, archived=?, tags=?, updated_at=? WHERE id=?')
     .run(
       patch.title?.trim() || cur.title,
       patch.isPinned === undefined ? cur.is_pinned : (patch.isPinned ? 1 : 0),
@@ -99,6 +144,8 @@ export function updateSession(
       patch.model ?? cur.model,
       patch.permissionMode ?? cur.permission_mode,
       patch.cwd ?? cur.cwd,
+      patch.archived === undefined ? cur.archived : (patch.archived ? 1 : 0),
+      patch.tags === undefined ? cur.tags : JSON.stringify(patch.tags),
       now(), id,
     );
   return getSession(db, id);
