@@ -96,11 +96,14 @@ export function reloadSessionTranscript(
   }
   if (!filePath) return { merged: 0 };
 
-  // 指纹集合:库内已有的事件不再补
-  const seen = new Set<string>(
-    (db.prepare('SELECT kind, substr(content,1,120) c FROM messages WHERE session_id=?').all(sessionId) as { kind: string; c: string }[])
-      .map((r) => r.kind + '|' + r.c),
-  );
+  // 指纹按条数对齐:库内已有 N 条的指纹,转录里前 N 条视为已入库,余量照补。
+  // "存在即跳过"会把同文重复消息(反复"继续"、同样的工具调用)永远吞掉。
+  const quota = new Map<string, number>();
+  for (const r of db.prepare(
+    'SELECT kind, substr(content,1,120) c, COUNT(*) n FROM messages WHERE session_id=? GROUP BY kind, c',
+  ).all(sessionId) as { kind: string; c: string; n: number }[]) {
+    quota.set(r.kind + '|' + r.c, r.n);
+  }
   let seq = maxSeq(db, sessionId);
   let merged = 0;
   for (const line of readAllLines(filePath)) {
@@ -111,8 +114,11 @@ export function reloadSessionTranscript(
         ? JSON.stringify((ev as { toolInput?: unknown }).toolInput ?? {})
         : String((ev as { content?: string }).content ?? '');
       const fp = ev.kind + '|' + content.slice(0, 120);
-      if (seen.has(fp)) continue;
-      seen.add(fp);
+      const left = quota.get(fp) ?? 0;
+      if (left > 0) {
+        quota.set(fp, left - 1); // 这条对应库内已有的一份
+        continue;
+      }
       seq += 1;
       appendOutbound(db, sessionId, { seq, ...ev });
       merged += 1;
