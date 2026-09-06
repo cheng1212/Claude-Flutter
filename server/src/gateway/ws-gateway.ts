@@ -16,6 +16,10 @@ export type WsGatewayDeps = {
   db: Db;
   token: string;
   registry: RunRegistry;
+  backgrounds?: {
+    onToolUse(sessionId: string, toolName: string, toolId: string, input: unknown): void;
+    onToolResult(sessionId: string, toolId: string, content: string, isError: boolean): void;
+  };
   runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
 };
 
@@ -72,9 +76,27 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
   const permanentSubs = new Set<string>();
   // 进行中的 run:落 usage/complete 进 runs 表(会话用量统计的数据源)
   const activeRuns = new Map<string, { runId: string; usage: unknown }>();
+  // 后台任务登记(Bash run_in_background / BashOutput / KillShell)
+  const backgrounds = deps.backgrounds;
 
   const fanout = (sessionId: string, event: OutboundEvent): void => {
-    if (event.kind === 'tool_use') recordCronToolUse(deps.db, sessionId, event as unknown as { toolName?: unknown; toolInput?: unknown });
+    if (event.kind === 'tool_use') {
+      recordCronToolUse(deps.db, sessionId, event as unknown as { toolName?: unknown; toolInput?: unknown });
+      backgrounds?.onToolUse(
+        sessionId,
+        String((event as { toolName?: unknown }).toolName ?? ''),
+        String((event as { toolId?: unknown }).toolId ?? ''),
+        (event as { toolInput?: unknown }).toolInput,
+      );
+    }
+    if (event.kind === 'tool_result') {
+      backgrounds?.onToolResult(
+        sessionId,
+        String((event as { toolId?: unknown }).toolId ?? ''),
+        String((event as { content?: unknown }).content ?? ''),
+        (event as { isError?: unknown }).isError === true,
+      );
+    }
     if (event.kind === 'usage') {
       const row = activeRuns.get(sessionId);
       if (row) row.usage = event; // 完成时随 run 一起落库

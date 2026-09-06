@@ -4,7 +4,7 @@ import { createSession, listSessions, getSession, updateSession, deleteSession, 
 import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[] }): void {
   app.get('/api/models', async () => listModels(loadRoutes(deps.routesPath)));
 
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));
@@ -116,6 +116,11 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
       offset: q.offset ? Number(q.offset) : undefined,
     });
   });
+
+  // 后台任务列表(Bash run_in_background 登记的 shell)
+  app.get('/api/sessions/:id/backgrounds', async (req) => ({
+    backgrounds: deps.backgrounds?.((req.params as { id: string }).id) ?? [],
+  }));
 
   // 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成(按字符量估算)
   app.get('/api/sessions/:id/usage', async (req) => {
