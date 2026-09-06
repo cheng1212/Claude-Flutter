@@ -403,6 +403,33 @@ class ZApp extends ChangeNotifier {
     }
   }
 
+  /// 后台任务(server 统一登记视图);失败返回空。
+  Future<List<Map<String, dynamic>>> backgrounds(String sessionId) async {
+    try {
+      return await _api.backgrounds(sessionId);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// 子代理列表(磁盘转录元数据);失败返回空。
+  Future<List<Map<String, dynamic>>> subagents(String sessionId) async {
+    try {
+      return await _api.subagents(sessionId);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// 子代理转录消息(只读);失败返回空。
+  Future<List<Map<String, dynamic>>> subagentMessages(String sessionId, String agentId) async {
+    try {
+      return await _api.subagentMessages(sessionId, agentId);
+    } on Object {
+      return const [];
+    }
+  }
+
   Future<void> deleteCron(String id) async {
     try {
       await _api.deleteCron(id);

@@ -99,6 +99,30 @@ class ZApi {
     return (filename: '${map['filename'] ?? '会话.md'}', markdown: '${map['markdown'] ?? ''}');
   }
 
+  /// 后台任务(server 统一登记:Bash 旧行为 + SDK task_*;行含状态/时长/summary/输出尾)。
+  Future<List<Map<String, dynamic>>> backgrounds(String id) async {
+    final res = await _call('GET', '/api/sessions/$id/backgrounds', null);
+    if (res is! Map) return const <Map<String, dynamic>>[];
+    final list = res['backgrounds'] as List? ?? const [];
+    return [for (final b in list) if (b is Map) b.cast<String, dynamic>()];
+  }
+
+  /// 子代理列表(磁盘转录 + meta 元数据):agentId/类型/描述/深度等。
+  Future<List<Map<String, dynamic>>> subagents(String id) async {
+    final res = await _call('GET', '/api/sessions/$id/subagents', null);
+    if (res is! Map) return const <Map<String, dynamic>>[];
+    final list = res['subagents'] as List? ?? const [];
+    return [for (final b in list) if (b is Map) b.cast<String, dynamic>()];
+  }
+
+  /// 子代理转录(只读):按转录行序还原的消息事件。
+  Future<List<Map<String, dynamic>>> subagentMessages(String id, String agentId) async {
+    final res = await _call('GET', '/api/sessions/$id/subagents/$agentId/messages', null);
+    if (res is! Map) return const <Map<String, dynamic>>[];
+    final list = res['messages'] as List? ?? const [];
+    return [for (final b in list) if (b is Map) b.cast<String, dynamic>()];
+  }
+
   Future<void> deleteSession(String id) async {
     await _call('DELETE', '/api/sessions/$id', null);
   }

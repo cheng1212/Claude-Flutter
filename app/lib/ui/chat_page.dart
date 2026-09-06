@@ -97,7 +97,7 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
-      builder: (ctx) => BackgroundsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+      builder: (ctx) => BackgroundsSheet(app: app, sessionId: widget.sessionId),
     );
     if (mounted) setState(() {});
   }
