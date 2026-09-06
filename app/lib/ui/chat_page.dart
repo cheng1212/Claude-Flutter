@@ -34,6 +34,46 @@ class _ChatPageState extends State<ChatPage> {
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
 
+  Future<void> _pickReference() async {
+    final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
+    if (others.isEmpty) {
+      _toastRef('没有其他会话可引用');
+      return;
+    }
+    final picked = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: ZT.surface,
+        title: const Text('引用哪个会话?'),
+        children: [
+          for (final s in others)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, s),
+              child: Text('${s['title'] ?? '未命名'}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13.5)),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final fromTitle = '${picked['title'] ?? '会话'}';
+    final out = await app.exportSession('${picked['id']}');
+    if (!mounted) return;
+    if (out == null || out.markdown.trim().isEmpty) {
+      _toastRef('「$fromTitle」没有可引用的内容');
+      return;
+    }
+    final msg = buildReferenceMessage(fromTitle: fromTitle, markdown: out.markdown);
+    app.sendChat(msg);
+    _toastRef('已把「$fromTitle」的上下文发给当前会话');
+  }
+
+  void _toastRef(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   Future<void> _openSubagents() async {
     await showModalBottomSheet(
       context: context,
@@ -692,6 +732,7 @@ class _ChatPageState extends State<ChatPage> {
       (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
       (Icons.hub_rounded, '子代理', '会话里的子代理与活动', deriveSubagents(chat.rows).isNotEmpty ? ZT.grape : null, false, () { _openSubagents(); }),
       (Icons.memory_rounded, '后台', '后台任务与输出', deriveBackgrounds(chat.rows).isNotEmpty ? ZT.aqua : null, false, () { _openBackgrounds(); }),
+      (Icons.link_rounded, '引用', '把另一个会话的上下文带进来', null, false, () { _pickReference(); }),
       (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (merged > 0 && mounted) {
