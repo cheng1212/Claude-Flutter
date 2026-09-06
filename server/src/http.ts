@@ -16,6 +16,8 @@ export type AppOptions = {
   onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void;
   /** 会话是否在跑(注入 registry.isRunning):列表接口据此标"运行中"徽章 */
   isRunning?: (sessionId: string) => boolean;
+  /** 后台任务列表(注入 BackgroundRegistry.list):/api/sessions/:id/backgrounds */
+  backgrounds?: (sessionId: string) => unknown[];
   /** 会话是否在等审批(注入 runtime.pendingPermissions):列表接口据此标"待确认"徽章 */
   isAwaiting?: (sessionId: string) => boolean;
   /** 在跑会话数(注入):health 暴露,手机端诊断"连的是不是旧进程" */

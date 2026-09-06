@@ -47,7 +47,10 @@ class ToolRow extends ChatRow {
   /// 工具开跑时刻(本机时钟):运行中卡片靠它走秒,证明命令活着而非卡死。
   /// 重放重建时取重建时刻,走秒会重计——纯显示用途,可接受。
   final DateTime? startedAt;
-  const ToolRow({required this.toolId, required this.toolName, required this.toolInput, this.result, this.startedAt});
+
+  /// 非空 = 该工具由子代理(Task/Agent)发起,值为发起者的 toolId(子代理面板分组用)。
+  final String? parentToolUseId;
+  const ToolRow({required this.toolId, required this.toolName, required this.toolInput, this.result, this.startedAt, this.parentToolUseId});
 }
 
 @immutable
@@ -211,6 +214,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         toolName: ev['toolName'] as String? ?? '',
         toolInput: (ev['toolInput'] as Map?)?.cast<String, dynamic>() ?? const {},
         startedAt: DateTime.now(),
+        parentToolUseId: ev['parentToolUseId'] as String?,
       )]);
     case 'tool_result':
       final toolId = ev['toolId'] as String? ?? '';

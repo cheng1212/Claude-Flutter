@@ -5,6 +5,7 @@ import { loadOrCreateConfig } from './config.js';
 import { importLocalSessions } from './local-sessions.js';
 import { buildApp } from './http.js';
 import { loadRoutes, resolveModel } from './routes.js';
+import { BackgroundRegistry } from './backgrounds.js';
 import { startUpstreamProxy } from './proxy/upstream-proxy.js';
 import { RunRegistry } from './runs/run-registry.js';
 import { SessionRuntime } from './protocol/sdk-client.js';
@@ -14,6 +15,7 @@ const db = openDb(path.join(config.dataDir, 'zcode.db'));
 const staleRuns = failStaleRuns(db);
 if (staleRuns > 0) console.log(`[zcode-server] marked ${staleRuns} stale run(s) as interrupted`);
 const registry = new RunRegistry();
+const backgrounds = new BackgroundRegistry();
 const runtimes = new Map<string, SessionRuntime>();
 
 // runtimeFor 与 PATCH 回调共用的"会话配置现算":DB 现值 + routes 热读。
@@ -49,6 +51,7 @@ const app = await buildApp({
   publicDir: config.publicDir,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),
+  backgrounds: (sessionId) => backgrounds.list(sessionId),
   // "待确认"徽章数据源:在跑且 runtime 手里有等审批的请求
   isAwaiting: (sessionId) => {
     const runtime = runtimes.get(sessionId);
@@ -78,6 +81,7 @@ const gateway = attachWsGateway(app.server, {
   db,
   token: config.token,
   registry,
+  backgrounds,
   runtimeFor(sessionId, opts) {
     const ctx = refreshCfg(sessionId, opts);
     if (!ctx) throw new Error(`session not found: ${sessionId}`);

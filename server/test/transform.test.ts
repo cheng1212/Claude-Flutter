@@ -127,3 +127,22 @@ describe('startsBackgroundWork', () => {
     expect(startsBackgroundWork([monitor])).toBe(true);
   });
 });
+
+describe('subagent 帧透传', () => {
+  it('assistant 子代理帧带 parent_tool_use_id → 事件带 parentToolUseId', () => {
+    const ev = transformMessage({
+      type: 'assistant', parent_tool_use_id: 'task-1',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'ls' } }] },
+    });
+    expect(ev[0]).toMatchObject({ kind: 'tool_use', toolName: 'Bash', parentToolUseId: 'task-1' });
+  });
+
+  it('主线程帧不带 parentToolUseId', () => {
+    const ev = transformMessage({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: '主线程' }] },
+    });
+    expect(ev[0]).toMatchObject({ kind: 'text' });
+    expect(ev[0].parentToolUseId).toBeUndefined();
+  });
+});
