@@ -37,14 +37,16 @@
 | GET | `/api/health` | 健康检查 | **免鉴权** |
 | GET | `/api/models` | 模型列表(routes.json) | |
 | GET | `/api/models/grouped` | 分组模型 `[{id,label,models:[{id,label}]}]` | app 模型选择器数据源 |
-| GET | `/api/sessions` | 会话列表 | 附 `isRunning`/`awaitingApproval`(等审批)/`last_message`(最后一条文本截 120 字,副标题);排序 `is_pinned DESC, updated_at DESC` |
-| POST | `/api/sessions` | 建会话 `{title?,cwd?,model?}` | |
+| GET | `/api/sessions` | 会话列表 | 附 `isRunning`/`awaitingApproval`(等审批)/`last_message`(最后一条文本截 120 字,副标题)/`last_preview`(友好预览:文本/💭/🔧工具名)/`last_status`(最近 run 状态)/`project`(cwd 末段)/`archived`/`tags`(数组);排序 `is_pinned DESC, updated_at DESC` |
+| POST | `/api/sessions` | 建会话 `{title?,cwd?,model?,tags?,forkFrom?}` | |
 | GET | `/api/sessions/:id` | 会话详情 | 404 = 不存在 |
-| PATCH | `/api/sessions/:id` | 改 `{title?,isPinned?,providerSessionId?,model?,permissionMode?,cwd?}` | **热切换数据源**:改后下一条 send 生效 |
+| PATCH | `/api/sessions/:id` | 改 `{title?,isPinned?,providerSessionId?,model?,permissionMode?,cwd?,archived?,tags?(≤10,超出静默忽略)}` | **热切换数据源**:改后下一条 send 生效 |
 | DELETE | `/api/sessions/:id` | 删会话(幂等,不存在也 `{ok:true}`) | 顺带 abort runtime + registry.forget |
 | POST | `/api/sessions/batch-delete` | `{ids:[...]}` 批量删,cap 500 | 返回 `{ok,deleted,missing}` |
 | GET | `/api/sessions/:id/messages?limit=&offset=` | 历史消息 | 最新在前;limit≤500 |
 | GET | `/api/sessions/:id/usage` | 用量聚合 | 累计 token/费用 + 最近一轮上下文 + 消息构成 + 工具排行 |
+| POST | `/api/sessions/:id/fork` | 复制会话:标题加"副本",消息全拷,`fork_from` 记源 provider id | SDK 侧用 `resume`/`forkSession` 分叉,init 回填新 provider id;返回新会话行 |
+| GET | `/api/sessions/:id/export` | 导出会话为 markdown(不落盘) | 返回 `{filename, markdown}`;文件名已消毒 `\/:*?"<>|` |
 | POST | `/api/sessions/import-local` | `{projectsDir?}` 导入本机 Claude Code 真会话 | 启动时也会自动跑(幂等) |
 | GET | `/download/:name` | 静态分发(APK 等) | **免鉴权**;文件名白名单正则防穿越 |
 
@@ -136,7 +138,7 @@ CORS:全放开(`*`),OPTIONS 204 短路(Flutter Web 调试用)。
 | `rewindFiles`(文件检查点回滚) | ❌ 未用(`enableFileCheckpointing` 也未开) |
 | `getContextUsage` / `usage_EXPERIMENTAL...` / `accountInfo` | ❌ 未用 |
 | `readFile`(远程文件查看)/ `reloadPlugins` / `reloadSkills` / `renameSession` | ❌ 未用 |
-| `forkSession`+`resumeSessionAt`(从中间分叉/截断重放) | ❌ 未用 |
+| `forkSession` | ✅ 2026-09-06 起:复制会话(POST /api/sessions/:id/fork)SDK 分叉用;`resumeSessionAt`(截断重放)仍 ❌ 未用 |
 | `stop_task`(逐后台任务停止) | ❌ 未用 |
 
 ---

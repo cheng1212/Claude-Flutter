@@ -101,6 +101,19 @@ describe('会话管理增强', () => {
     const row = listSessions(db).find(r => r.id === s.id) as unknown as { last_preview: string };
     expect(row.last_preview).toContain('想一想');
   });
+
+  it('content 含管道符不破坏预览(曾用 | 拼接再 split 导致错位)', () => {
+    const db = openDb(':memory:');
+    const s1 = createSession(db, { title: 'p1' });
+    appendMessage(db, s1.id, { kind: 'text', role: 'assistant', content: '命令 A | B 的输出' });
+    const t1 = listSessions(db).find(r => r.id === s1.id) as unknown as { last_preview: string };
+    expect(t1.last_preview).toBe('命令 A | B 的输出');
+
+    const s2 = createSession(db, { title: 'p2' });
+    appendMessage(db, s2.id, { kind: 'tool_use', meta: { toolName: 'Bash' }, content: '{"command":"ls | wc -l"}' });
+    const t2 = listSessions(db).find(r => r.id === s2.id) as unknown as { last_preview: string };
+    expect(t2.last_preview).toBe('🔧 Bash');
+  });
 });
 
 describe('会话导出', () => {

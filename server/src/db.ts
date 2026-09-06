@@ -102,16 +102,22 @@ export function listSessions(db: Db): SessionRow[] {
       (SELECT substr(m.content, 1, 120) FROM messages m
         WHERE m.session_id = s.id AND m.kind = 'text'
         ORDER BY m.seq DESC LIMIT 1) AS last_message,
-      (SELECT m.kind || '|' || substr(m.content, 1, 160) || '|' || COALESCE(m.meta, '')
-        FROM messages m WHERE m.session_id = s.id
-        ORDER BY m.seq DESC LIMIT 1) AS __tail,
+      -- 最后一条消息的 kind/content/meta 分三列取(曾用 '|' 拼,content 含管道符即错位)
+      (SELECT m.kind FROM messages m WHERE m.session_id = s.id
+        ORDER BY m.seq DESC LIMIT 1) AS __kind,
+      (SELECT substr(m.content, 1, 160) FROM messages m WHERE m.session_id = s.id
+        ORDER BY m.seq DESC LIMIT 1) AS __content,
+      (SELECT COALESCE(m.meta, '') FROM messages m WHERE m.session_id = s.id
+        ORDER BY m.seq DESC LIMIT 1) AS __meta,
       (SELECT r.status FROM runs r WHERE r.session_id = s.id
         ORDER BY r.started_at DESC LIMIT 1) AS last_status
     FROM sessions s
     ORDER BY s.is_pinned DESC, s.updated_at DESC
-  `).all() as (SessionRow & { __tail?: string | null })[];
+  `).all() as (SessionRow & { __kind?: string | null; __content?: string | null; __meta?: string | null })[];
   return rows.map((r) => {
-    const [kind = '', content = '', meta = ''] = (r.__tail ?? '').split('|');
+    const kind = r.__kind ?? '';
+    const content = r.__content ?? '';
+    const meta = r.__meta ?? '';
     let preview = '';
     if (kind === 'text') preview = content;
     else if (kind === 'thinking') preview = '💭 ' + content;
@@ -125,7 +131,7 @@ export function listSessions(db: Db): SessionRow[] {
     const project = r.cwd ? r.cwd.split(new RegExp('[' + BS + BS + '/]')).filter(Boolean).at(-1) ?? null : null;
     let tags: unknown = [];
     try { tags = JSON.parse(r.tags ?? '[]'); } catch { tags = []; }
-    const { __tail: _drop, ...rest } = r;
+    const { __kind: _k, __content: _c, __meta: _m, ...rest } = r;
     return { ...rest, last_preview: preview, project, tags: tags as string[] };
   });
 }
