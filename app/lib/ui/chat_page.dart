@@ -8,10 +8,12 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
+import '../panel_utils.dart';
 import '../session_utils.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
+import 'chat_panels.dart';
 import '../ws.dart';
 import 'rows.dart';
 
@@ -31,6 +33,34 @@ class _ChatPageState extends State<ChatPage> {
   final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
+
+  Future<void> _openSubagents() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SubagentsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openBackgrounds() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => BackgroundsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+    );
+    if (mounted) setState(() {});
+  }
 
   Future<void> _openCrons() async {
     await showModalBottomSheet(
@@ -660,6 +690,8 @@ class _ChatPageState extends State<ChatPage> {
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
       (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
+      (Icons.hub_rounded, '子代理', '会话里的子代理与活动', deriveSubagents(chat.rows).isNotEmpty ? ZT.grape : null, false, () { _openSubagents(); }),
+      (Icons.memory_rounded, '后台', '后台任务与输出', deriveBackgrounds(chat.rows).isNotEmpty ? ZT.aqua : null, false, () { _openBackgrounds(); }),
       (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (merged > 0 && mounted) {
