@@ -147,3 +147,46 @@ describe('local-sessions', () => {
     expect(getSessionByProviderSessionId(db, 'sess-e')).toBeUndefined();
   });
 });
+
+describe('reloadSessionTranscript · 完整重载', () => {
+  it('从磁盘转录补回缺失消息,幂等,无转录返回 merged:0', async () => {
+    const { openDb, createSession, updateSession, listMessages } = await import('../src/db.js');
+    const { reloadSessionTranscript } = await import('../src/local-sessions.js');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-reload-'));
+    const projDir = path.join(home, 'projects', 'D--work-app');
+    fs.mkdirSync(projDir, { recursive: true });
+    const provId = 'prov-reload-1';
+    fs.writeFileSync(path.join(projDir, provId + '.jsonl'), [
+      JSON.stringify({ type: 'user', sessionId: provId, cwd: 'D:\work\app', message: { role: 'user', content: '丢失的提问' } }),
+      JSON.stringify({ type: 'assistant', sessionId: provId, message: { role: 'assistant', content: [{ type: 'text', text: '丢失的回答' }] } }),
+      '',
+    ].join('\n'));
+
+    process.env.ZCODE_CLAUDE_HOME = home;
+    try {
+      const db = openDb(':memory:');
+      const s = createSession(db, { title: '断了' });
+      updateSession(db, s.id, { providerSessionId: provId });
+
+      const r1 = reloadSessionTranscript(db, s.id);
+      expect(r1.merged).toBe(2);
+      const page = listMessages(db, s.id, { limit: 10 });
+      expect(page.total).toBe(2);
+      expect(page.messages.map((m) => JSON.parse(m.meta).content ?? m.content)).toContain('丢失的提问');
+
+      const r2 = reloadSessionTranscript(db, s.id);
+      expect(r2.merged).toBe(0); // 幂等
+      expect(listMessages(db, s.id, { limit: 10 }).total).toBe(2);
+
+      const none = reloadSessionTranscript(db, 'no-provider');
+      expect(none.merged).toBe(0);
+    } finally {
+      delete process.env.ZCODE_CLAUDE_HOME;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

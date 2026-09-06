@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appendOutbound, createSession, getSessionByProviderSessionId, listTombstonedProviderSessionIds, type Db } from './db.js';
+import { appendOutbound, createSession, getSession, getSessionByProviderSessionId, listTombstonedProviderSessionIds, maxSeq, type Db } from './db.js';
 import type { ProtocolEvent } from './protocol/types.js';
 
 type AnyRecord = Record<string, unknown>;
@@ -75,6 +75,50 @@ function findProjectFiles(rootDir: string): string[] {
     }
   }
   return out;
+}
+
+/**
+ * 完整重载:按 provider_session_id 找磁盘转录,把库里缺的事件补回来。
+ * 合并按内容指纹(kind+content前120)去重,追加在现有消息尾部(seq 续号)。
+ * 用于:回合中断/服务重启导致事件未落库、刷新不出后续内容的自救。
+ */
+export function reloadSessionTranscript(
+  db: import('./db.js').Db, sessionId: string,
+  opts: { projectsDir?: string } = {},
+): { merged: number } {
+  const session = getSession(db, sessionId);
+  if (!session?.provider_session_id) return { merged: 0 };
+  const target = session.provider_session_id + '.jsonl';
+  const projectsDir = opts.projectsDir ?? path.join(claudeHome(), 'projects');
+  let filePath: string | null = null;
+  for (const f of findProjectFiles(projectsDir)) {
+    if (path.basename(f) === target) { filePath = f; break; }
+  }
+  if (!filePath) return { merged: 0 };
+
+  // 指纹集合:库内已有的事件不再补
+  const seen = new Set<string>(
+    (db.prepare('SELECT kind, substr(content,1,120) c FROM messages WHERE session_id=?').all(sessionId) as { kind: string; c: string }[])
+      .map((r) => r.kind + '|' + r.c),
+  );
+  let seq = maxSeq(db, sessionId);
+  let merged = 0;
+  for (const line of readAllLines(filePath)) {
+    const raw = parseObj(line);
+    if (!raw) continue;
+    for (const ev of normalizeTranscriptLine(raw)) {
+      const content = ev.kind === 'tool_use'
+        ? JSON.stringify((ev as { toolInput?: unknown }).toolInput ?? {})
+        : String((ev as { content?: string }).content ?? '');
+      const fp = ev.kind + '|' + content.slice(0, 120);
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      seq += 1;
+      appendOutbound(db, sessionId, { seq, ...ev });
+      merged += 1;
+    }
+  }
+  return { merged };
 }
 
 /** ~/.claude/history.jsonl → sessionId→display 映射(nameMap)。 */

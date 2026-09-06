@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport } from './db.js';
-import { importLocalSessions } from './local-sessions.js';
+import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
 export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean }): void {
@@ -58,6 +58,12 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
       deps.onSessionPatched?.((req.params as { id: string }).id, { model: patch.model, permissionMode: patch.permissionMode });
     }
     return row;
+  });
+
+  // 完整重载:从磁盘 CLI 转录补回中断/重启丢失的事件(幂等)
+  app.post('/api/sessions/:id/reload', async (req) => {
+    const r = reloadSessionTranscript(deps.db, (req.params as { id: string }).id);
+    return { ok: true, ...r };
   });
 
   // 导出会话为 markdown(JSON 包裹,客户端拿 markdown 落盘/分享)
