@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
-import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript } from './local-sessions.js';
+import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
@@ -11,12 +11,15 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));
 
   // 附带 isRunning/awaitingApproval:手机列表标"运行中"/"待确认"徽章;排序本就是 置顶 → 最近更新
-  app.get('/api/sessions', async () =>
-    listSessions(deps.db).map((row) => ({
+  app.get('/api/sessions', async () => {
+    const counts = subagentCounts();
+    return listSessions(deps.db).map((row) => ({
       ...row,
+      subagentCount: counts.get(String(row.provider_session_id ?? '')) ?? 0,
       isRunning: deps.isRunning?.(row.id) ?? false,
       awaitingApproval: deps.isAwaiting?.(row.id) ?? false,
-    })));
+    }));
+  });
 
   app.post('/api/sessions/import-local', async (req) => {
     const body = (req.body ?? {}) as { projectsDir?: string };

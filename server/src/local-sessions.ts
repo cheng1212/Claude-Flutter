@@ -221,6 +221,27 @@ export function readSubagentTranscript(
   return out;
 }
 
+/** 全盘子代理数量索引(30s 缓存):会话列表的「子代理 N」信号,按 provider_session_id 键。 */
+let subagentCountCache: { at: number; counts: Map<string, number> } | null = null;
+const SUBAGENT_SCAN_TTL = 30_000;
+
+export function subagentCounts(opts: { projectsDir?: string } = {}): Map<string, number> {
+  if (subagentCountCache && Date.now() - subagentCountCache.at < SUBAGENT_SCAN_TTL) {
+    return subagentCountCache.counts;
+  }
+  const counts = new Map<string, number>();
+  for (const f of findProjectFiles(opts.projectsDir ?? path.join(claudeHome(), 'projects'))) {
+    if (!isSubagentTranscript(f)) continue;
+    // 布局:.../<encoded-cwd>/<sessionId>/subagents/<name>.jsonl
+    const parts = path.normalize(f).split(path.sep);
+    const i = parts.lastIndexOf('subagents');
+    const sid = i > 0 ? parts[i - 1] : '';
+    if (sid) counts.set(sid, (counts.get(sid) ?? 0) + 1);
+  }
+  subagentCountCache = { at: Date.now(), counts };
+  return counts;
+}
+
 /** ~/.claude/history.jsonl → sessionId→display 映射(nameMap)。 */
 function readHistoryNameMap(historyPath: string): Map<string, string> {
   const map = new Map<string, string>();

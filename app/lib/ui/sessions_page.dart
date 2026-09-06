@@ -594,6 +594,7 @@ class _SessionsPageState extends State<SessionsPage> {
     final project = '${s['project'] ?? ''}';
     final tags = tagsOf(s);
     final cronIso = _cronNext['${s['id']}'];
+    final subagents = (s['subagentCount'] as num?)?.toInt() ?? 0;
 
     return HardCard(
       color: ZT.surface,
@@ -634,6 +635,7 @@ class _SessionsPageState extends State<SessionsPage> {
               child: _pill('⏰ ${_cronCountdown(cronIso)}', 'cron'),
             ),
           if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
+          if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
           const SizedBox(width: 6),
           if (model.isNotEmpty) _pill(model, 'model'),
           const SizedBox(width: 6),
@@ -666,6 +668,7 @@ class _SessionsPageState extends State<SessionsPage> {
       'ended': (ZT.inkSoft, ZT.inkFaint),
       'local': (ZT.lemon, ZT.lemon),
       'cron': (ZT.lemon, ZT.lemon),
+      'subagent': (ZT.grape, ZT.grape),
       'model': (ZT.aqua, ZT.aqua),
       'project': (ZT.grape, ZT.grape),
       'tag': (ZT.inkSoft, ZT.inkFaint),
