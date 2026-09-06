@@ -124,6 +124,8 @@ describe('会话导出', () => {
     appendMessage(db, s.id, { kind: 'thinking', content: '先看返回结构' });
     appendMessage(db, s.id, { kind: 'tool_use', meta: { toolName: 'Bash' }, content: '{"command":"curl -s api"}' });
     appendMessage(db, s.id, { kind: 'tool_result', content: '{"code":200}', meta: {} });
+    appendMessage(db, s.id, { kind: 'tool_result', content: '输出里提到 is_error 字样,但其实成功了', meta: {} });
+    appendMessage(db, s.id, { kind: 'tool_result', content: 'exit code 1', meta: { isError: true } });
     appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '接口返回 200,没问题' });
     appendMessage(db, s.id, { kind: 'error', content: '上游超时一次' });
     appendMessage(db, s.id, { kind: 'usage', content: '' });
@@ -138,6 +140,9 @@ describe('会话导出', () => {
     expect(out.markdown).toContain('curl -s api');
     expect(out.markdown).toContain('⚠️ 上游超时一次');
     expect(out.markdown).not.toContain('complete'); // 控制事件不进导出
+    // 失败判定只认 meta.isError:正文含 "is_error" 字样的成功结果不标失败
+    expect(out.markdown).toContain('提到 is_error 字样');
+    expect(out.markdown.match(/结果\(失败\)/g)).toHaveLength(1);
   });
 
   it('导出按时间正序、未知会话返回 null', () => {

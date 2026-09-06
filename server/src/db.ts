@@ -212,7 +212,10 @@ export function buildSessionExport(db: Db, sessionId: string): { filename: strin
       try { name = (JSON.parse(m.meta ?? '{}') as { toolName?: string }).toolName ?? name; } catch { /* 忽略 */ }
       parts.push('', `🔧 **${name}** · ${t}`, '', '```', m.content, '```');
     } else if (m.kind === 'tool_result') {
-      const bad = m.content.indexOf('is_error') !== -1;
+      // 失败标志在 meta.isError(transform 落库时的独立字段);正文里恰好出现
+      // "is_error" 字样(比如工具输出了一段含该词的 JSON)不代表这一步失败了
+      let bad = false;
+      try { bad = (JSON.parse(m.meta ?? '{}') as { isError?: boolean }).isError === true; } catch { /* meta 坏按成功算 */ }
       parts.push('', `⚙️ 结果${bad ? '(失败)' : ''}:`, '', '```', m.content, '```');
     } else if (m.kind === 'error') {
       parts.push('', `⚠️ ${m.content}`);
