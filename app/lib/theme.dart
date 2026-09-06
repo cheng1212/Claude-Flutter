@@ -348,3 +348,67 @@ class _PressSinkState extends State<_PressSink> {
     );
   }
 }
+
+/// 主题化对话框工厂:统一面板底色、accent 描边、金调标题行。
+/// 所有确认/输入类弹窗走这里,别再用裸 AlertDialog(没有主题特征)。
+AlertDialog zDialog({
+  required String title,
+  IconData icon = Icons.tune_rounded,
+  Color accent = ZT.primary,
+  required Widget content,
+  List<Widget> actions = const [],
+}) {
+  return AlertDialog(
+    backgroundColor: ZT.surface,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(ZT.radius),
+      side: ZT.inkSide(w: 1.4, color: accent.withValues(alpha: 0.55)),
+    ),
+    titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+    contentPadding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
+    actionsPadding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+    title: Row(children: [
+      Icon(icon, size: 18, color: accent),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(title,
+            style: TextStyle(
+                fontSize: 15.5,
+                fontWeight: FontWeight.w900,
+                color: accent.withValues(alpha: 0.92))),
+      ),
+    ]),
+    content: content,
+    actions: actions,
+  );
+}
+
+/// 对话框统一按钮:primary 走焦糖实心,否则描边幽灵款。
+Widget dialogAction(String label, {required VoidCallback? onPressed, bool primary = false, Color color = ZT.primary}) {
+  if (primary) {
+    return BigButton(label: label, onPressed: onPressed, color: color);
+  }
+  return OutlinedButton(
+    onPressed: onPressed,
+    style: OutlinedButton.styleFrom(
+      side: ZT.inkSide(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(ZT.radius)),
+      foregroundColor: ZT.inkSoft,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    ),
+    child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+  );
+}
+
+/// 底部弹层顶部把手 + 金色顶线,包一层即有"自家弹层"的样子。
+Widget sheetHandle() {
+  return Column(children: [
+    Container(
+      width: 36,
+      height: 4,
+      margin: const EdgeInsets.only(top: 10, bottom: 4),
+      decoration: BoxDecoration(color: ZT.edge, borderRadius: BorderRadius.circular(99)),
+    ),
+    const Divider(height: 1, thickness: 1.2, color: Color(0x33E8590C)),
+  ]);
+}

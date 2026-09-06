@@ -235,14 +235,15 @@ class _SessionsPageState extends State<SessionsPage> {
   Future<void> _delete(Map<String, dynamic> session) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除会话?'),
-        content: Text("'${session['title'] ?? ''}' 及其历史将被删除。"),
+      builder: (ctx) => zDialog(
+        title: '删除会话?',
+        icon: Icons.delete_outline_rounded,
+        accent: ZT.rose,
+        content: Text("'${session['title'] ?? ''}' 及其全部历史将被删除,此操作不可撤销。",
+            style: const TextStyle(fontSize: 13, height: 1.5)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除', style: TextStyle(color: ZT.rose))),
+          dialogAction('取消', onPressed: () => Navigator.pop(ctx, false)),
+          dialogAction('删除', primary: true, color: ZT.rose, onPressed: () => Navigator.pop(ctx, true)),
         ],
       ),
     );
