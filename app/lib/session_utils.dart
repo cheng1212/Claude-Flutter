@@ -87,3 +87,12 @@ List<Map<String, dynamic>> filterSessions(
     return matchQuery(s);
   }).toList();
 }
+
+/// 倒计时格式:1天2小时 / 2小时03分 / 5分12秒 / 8秒。
+String formatCountdown(Duration d) {
+  if (d.isNegative) return '已到点';
+  if (d.inDays > 0) return '${d.inDays}天${d.inHours % 24}小时';
+  if (d.inHours > 0) return '${d.inHours}小时${(d.inMinutes % 60).toString().padLeft(2, '0')}分';
+  if (d.inMinutes > 0) return '${d.inMinutes}分${(d.inSeconds % 60).toString().padLeft(2, '0')}秒';
+  return '${d.inSeconds}秒';
+}

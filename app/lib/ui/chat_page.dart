@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
+import '../session_utils.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
@@ -29,6 +30,21 @@ class _ChatPageState extends State<ChatPage> {
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
   final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
+  bool _cronsOn = false; // 会话里有活跃定时任务时点亮
+
+  Future<void> _openCrons() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => _CronsSheet(app: app, sessionId: widget.sessionId),
+    );
+    if (mounted) setState(() {});
+  }
 
   ZApp get app => widget.app;
   ChatState get chat => app.chat;
@@ -635,11 +651,15 @@ class _ChatPageState extends State<ChatPage> {
   /// 模型贴直显当前模型名(超宽省略号,长按 Tooltip 看完整 id);有状态时点亮。
   Widget _quickBar() {
     final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
+    app.crons(sessionId: widget.sessionId).then((list) {
+      if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
+    });
     final tiles = <(IconData, String, String, Color?, bool, VoidCallback)>[
       (Icons.shield_rounded, '安全', '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
       (Icons.account_tree_rounded, '工具', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
+      (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
       (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (merged > 0 && mounted) {
@@ -1513,6 +1533,142 @@ class _SendOrStopState extends State<_SendOrStop> {
         child: Icon(Icons.arrow_upward_rounded,
             color: enabled ? ZT.onInk : ZT.inkFaint, size: 24),
       ),
+    );
+  }
+}
+
+
+/// 定时任务弹层:本会话的活跃任务 + 到点倒计时(每秒刷新)+ 删除。
+class _CronsSheet extends StatefulWidget {
+  final ZApp app;
+  final String sessionId;
+
+  const _CronsSheet({required this.app, required this.sessionId});
+
+  @override
+  State<_CronsSheet> createState() => _CronsSheetState();
+}
+
+class _CronsSheetState extends State<_CronsSheet> {
+  late Future<List<Map<String, dynamic>>> _future;
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.app.crons(sessionId: widget.sessionId);
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _remove(String id) async {
+    await widget.app.deleteCron(id);
+    setState(() => _future = widget.app.crons(sessionId: widget.sessionId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Container(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          sheetHandle(),
+          const SizedBox(height: 10),
+          const Row(children: [
+            Icon(Icons.alarm_rounded, size: 18, color: ZT.lemon),
+            SizedBox(width: 8),
+            Text('定时任务', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
+          ]),
+          const SizedBox(height: 10),
+          Flexible(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _future,
+              builder: (ctx, snap) {
+                final list = snap.data ?? const <Map<String, dynamic>>[];
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Padding(
+                      padding: EdgeInsets.all(18),
+                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+                }
+                if (list.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    child: Text('本会话还没有定时任务。对话里说"每 5 分钟检查一次构建"即可创建。',
+                        style: TextStyle(fontSize: 12.5, color: ZT.inkFaint, height: 1.6)),
+                  );
+                }
+                return ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: list.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, i) {
+                    final c = list[i];
+                    final nf = DateTime.tryParse('${c['next_fire'] ?? ''}');
+                    final left = nf == null ? '' : formatCountdown(nf.difference(DateTime.now()));
+                    return Container(
+                      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+                      decoration: ShapeDecoration(
+                        color: ZT.bg,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(ZT.radius),
+                            side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: 0.5))),
+                      ),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          Expanded(
+                            child: Text('${c['prompt'] ?? ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: '删除',
+                            icon: const Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
+                            onPressed: () => _remove('${c['id']}'),
+                          ),
+                        ]),
+                        const SizedBox(height: 4),
+                        Row(children: [
+                          _pillMono('${c['cron'] ?? ''}'),
+                          const SizedBox(width: 8),
+                          if ((c['recurring'] ?? 1) == 0) _pillMono('单次'),
+                          if ((c['durable'] ?? 0) == 1) const SizedBox(width: 8),
+                          if ((c['durable'] ?? 0) == 1) _pillMono('跨重启'),
+                          const Spacer(),
+                          Text('⏰ 下次 $left',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                        ]),
+                      ]),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _pillMono(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: ShapeDecoration(
+        color: ZT.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(4),
+            side: BorderSide(width: 1, color: ZT.edge)),
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
     );
   }
 }

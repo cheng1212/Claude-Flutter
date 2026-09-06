@@ -349,6 +349,23 @@ class ZApp extends ChangeNotifier {
     return merged;
   }
 
+  /// 定时任务列表;失败返回空。
+  Future<List<Map<String, dynamic>>> crons({String? sessionId}) async {
+    try {
+      return await _api.crons(sessionId: sessionId);
+    } on Object {
+      return const [];
+    }
+  }
+
+  Future<void> deleteCron(String id) async {
+    try {
+      await _api.deleteCron(id);
+    } on Object {
+      // 静默
+    }
+  }
+
   /// 导出会话 markdown;失败返回 null(调用方提示即可)。
   Future<({String filename, String markdown})?> exportSession(String id) async {
     try {

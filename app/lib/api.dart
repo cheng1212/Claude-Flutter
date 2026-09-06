@@ -72,6 +72,19 @@ class ZApi {
     return (res as Map).cast<String, dynamic>();
   }
 
+  /// 定时任务列表(active,含 next_fire)。
+  Future<List<Map<String, dynamic>>> crons({String? sessionId}) async {
+    final res = await _call('GET', sessionId == null ? '/api/crons' : '/api/crons?session=$sessionId', null);
+    final list = res is Map ? res['crons'] : null;
+    if (list is List) return [for (final c in list) (c as Map).cast<String, dynamic>()];
+    return const [];
+  }
+
+  /// 删除定时任务(标记删除)。
+  Future<void> deleteCron(String id) async {
+    await _call('DELETE', '/api/crons/$id', null);
+  }
+
   /// 完整重载:server 从磁盘 CLI 转录补回丢失事件(幂等),返回 {ok, merged}。
   Future<int> reloadSession(String id) async {
     final res = await _call('POST', '/api/sessions/$id/reload', null);
