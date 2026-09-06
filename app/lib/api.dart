@@ -72,6 +72,13 @@ class ZApi {
     return (res as Map).cast<String, dynamic>();
   }
 
+  /// 完整重载:server 从磁盘 CLI 转录补回丢失事件(幂等),返回 {ok, merged}。
+  Future<int> reloadSession(String id) async {
+    final res = await _call('POST', '/api/sessions/$id/reload', null);
+    final map = res is Map ? res.cast<String, dynamic>() : const <String, dynamic>{};
+    return (map['merged'] as num?)?.toInt() ?? 0;
+  }
+
   /// 导出会话为 markdown:服务端拼好,返回 {filename, markdown}。
   Future<({String filename, String markdown})> exportSession(String id) async {
     final res = await _call('GET', '/api/sessions/$id/export', null);
@@ -100,8 +107,8 @@ class ZApi {
   }
 
   /// 历史消息:{messages:[…], total};行内 meta 是完整出站事件(含 seq)。
-  Future<({List<Map<String, dynamic>> messages, int total})> messages(String id, {int limit = 500}) async {
-    final res = await _call('GET', '/api/sessions/$id/messages?limit=$limit', null);
+  Future<({List<Map<String, dynamic>> messages, int total})> messages(String id, {int limit = 500, int offset = 0}) async {
+    final res = await _call('GET', '/api/sessions/$id/messages?limit=$limit&offset=$offset', null);
     if (res is! Map) return (messages: const <Map<String, dynamic>>[], total: 0);
     final list = (res['messages'] as List? ?? const []);
     return (

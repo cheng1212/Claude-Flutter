@@ -640,7 +640,13 @@ class _ChatPageState extends State<ChatPage> {
       (Icons.account_tree_rounded, '工具', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
-      (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () => app.openSession(widget.sessionId)),
+      (Icons.refresh_rounded, '刷新', '刷新历史', null, app.historyLoading, () async {
+        final merged = await app.fullReload(widget.sessionId);
+        if (merged > 0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('完整重载:补回 $merged 条丢失消息')));
+        }
+      }),
     ];
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 2),

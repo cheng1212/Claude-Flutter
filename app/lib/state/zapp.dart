@@ -196,19 +196,26 @@ class ZApp extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      final hist = await _api.messages(id);
+      // 分页拉全量:突破单次 500 上限(长会话旧内容不再截断)
       final events = <Map<String, dynamic>>[];
       var maxSeq = 0;
-      for (final row in hist.messages) {
-        final ev = _rowEvent(row);
-        if (ev == null) continue;
-        // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
-        // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
-        final sq = (row['seq'] as num?)?.toInt() ?? 0;
-        ev['seq'] = sq;
-        events.add(ev);
-        if (sq > maxSeq) maxSeq = sq;
-      }
+      var total = 0;
+      var fetched = 0;
+      do {
+        final hist = await _api.messages(id, limit: 500, offset: fetched);
+        total = hist.total;
+        fetched += hist.messages.length;
+        for (final row in hist.messages) {
+          final ev = _rowEvent(row);
+          if (ev == null) continue;
+          // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
+          // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
+          final sq = (row['seq'] as num?)?.toInt() ?? 0;
+          ev['seq'] = sq;
+          events.add(ev);
+          if (sq > maxSeq) maxSeq = sq;
+        }
+      } while (fetched < total && total > 0);
       // REST 按 seq 倒序返回;归约要按时间正序,否则末尾事件先应用、其余全被去重。
       events.sort((a, b) =>
           ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
@@ -317,6 +324,19 @@ class ZApp extends ChangeNotifier {
     await _loadSessions();
     notifyListeners();
     return row;
+  }
+
+  /// 完整重载:先让 server 从 CLI 磁盘转录补回丢失事件,再重建会话(含分页全量)。
+  /// 返回补回条数;失败返回 -1(仍会走 openSession 重建)。
+  Future<int> fullReload(String id) async {
+    var merged = -1;
+    try {
+      merged = await _api.reloadSession(id);
+    } on Object {
+      merged = -1;
+    }
+    await openSession(id);
+    return merged;
   }
 
   /// 导出会话 markdown;失败返回 null(调用方提示即可)。

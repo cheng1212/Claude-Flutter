@@ -59,7 +59,7 @@ void main() {
       expect(fake.calls[2].path, '/api/sessions');
       expect(fake.calls[3].path, '/api/sessions/s1');
       expect(fake.calls[3].body, {'title': 'x', 'isPinned': true});
-      expect(fake.calls[5].path, '/api/sessions/s1/messages?limit=500');
+      expect(fake.calls[5].path, '/api/sessions/s1/messages?limit=500&offset=0');
     });
 
     test('非 2xx 映射为 ZApiException', () async {
