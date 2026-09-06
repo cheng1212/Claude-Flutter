@@ -8,11 +8,13 @@ import 'api.dart';
 import 'state/zapp.dart';
 import 'theme.dart';
 import 'ui/login_page.dart';
+import 'notify.dart';
 import 'ui/app_shell.dart';
 import 'ws.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Notify.init();
   runApp(const ZCodeApp());
 }
 
@@ -50,6 +52,8 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 前后台状态回写:后台时 complete/error/审批 会弹系统通知
+    _app?.appLifecycle = state.name;
     // 回到前台:刷新会话列表(WS 断线重连由 ZSocket 自己兜)
     if (state == AppLifecycleState.resumed) {
       unawaited(_app?.refreshSessions());

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../api.dart';
 import '../ws.dart';
+import '../notify.dart';
 import 'reducer.dart';
 
 class ZApp extends ChangeNotifier {
@@ -26,6 +27,9 @@ class ZApp extends ChangeNotifier {
   String? currentSessionId;
   ChatState chat = const ChatState();
   bool historyLoading = false;
+
+  /// App 前后台状态(main 的观察者回写):后台才允许弹通知。默认前台。
+  String appLifecycle = 'resumed';
 
   /// 最近一次操作错误(发送失败/历史拉取失败),UI 提示用。
   String? error;
@@ -147,7 +151,13 @@ class ZApp extends ChangeNotifier {
       return;
     }
     final sid = ev['sessionId'] as String?;
-    if (sid == null || sid != currentSessionId) return;
+    final decision = notifyDecision(
+        lifecycleState: appLifecycle,
+        kind: kind,
+        forCurrentSession: sid == currentSessionId,
+      );
+      if (decision != null) Notify.show(decision, _notifyBody(kind, ev));
+      if (sid == null || sid != currentSessionId) return;
     chat = applyEvent(chat, ev);
     if (kind == 'complete') unawaited(_loadSessions(silent: true));
     notifyListeners();
@@ -346,6 +356,14 @@ class ZApp extends ChangeNotifier {
     } on Object {
       return null;
     }
+  }
+
+  String _notifyBody(String kind, Map<String, dynamic> ev) {
+    if (kind == 'error') {
+      final c = '${ev['content'] ?? ''}';
+      return c.length > 60 ? c.substring(0, 60) : c;
+    }
+    return '有任务在后台结束了';
   }
 
   // ---------------------------------------------------------------- 对话动作

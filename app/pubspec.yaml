@@ -1,4 +1,4 @@
-﻿name: zcode_app
+name: zcode_app
 description: "zCode — 在手机上遥控 Claude Code(连接 zcode-server)。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -41,6 +41,7 @@ dependencies:
   shared_preferences: ^2.3.2
   image_picker: ^1.1.2
   mime: ^2.0.0
+  flutter_local_notifications: ^22.3.0
 
 dev_dependencies:
   fake_async: ^1.3.1
