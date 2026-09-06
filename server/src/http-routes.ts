@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
-import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession } from './db.js';
+import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport } from './db.js';
 import { importLocalSessions } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
@@ -58,6 +58,13 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
       deps.onSessionPatched?.((req.params as { id: string }).id, { model: patch.model, permissionMode: patch.permissionMode });
     }
     return row;
+  });
+
+  // 导出会话为 markdown(JSON 包裹,客户端拿 markdown 落盘/分享)
+  app.get('/api/sessions/:id/export', async (req, reply) => {
+    const out = buildSessionExport(deps.db, (req.params as { id: string }).id);
+    if (!out) return reply.code(404).send({ error: 'not found' });
+    return out;
   });
 
   // 复制会话:消息与配置全拷;fork_from 指向源 CLI 会话,下一轮 send 由 SDK forkSession 分叉独立 provider 会话。

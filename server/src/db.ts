@@ -168,6 +168,49 @@ export function deleteSession(db: Db, id: string): boolean {
   return db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes > 0;
 }
 
+/** 会话导出:消息按时间正序拼成 markdown;控制事件(usage/complete 等)不进导出。 */
+export function buildSessionExport(db: Db, sessionId: string): { filename: string; markdown: string } | null {
+  const s = getSession(db, sessionId);
+  if (!s) return null;
+  const msgs = db.prepare('SELECT kind, role, content, meta, created_at FROM messages WHERE session_id=? ORDER BY seq')
+    .all(sessionId) as { kind: string; role: string | null; content: string; meta: string | null; created_at: string }[];
+  const hh = (iso: string) => iso.replace('T', ' ').slice(0, 16);
+  const BS = String.fromCharCode(92);
+  const NL_CH = String.fromCharCode(10);
+  const parts: string[] = [
+    `# ${s.title}`,
+    '',
+    `- 模型:${s.model ?? 'default'}`,
+    `- 项目:${s.cwd ?? '未知'}`,
+    `- 消息数:${msgs.length}`,
+    `- 导出时间:${hh(now())}`,
+    '',
+    '---',
+  ];
+  for (const m of msgs) {
+    const t = hh(m.created_at);
+    if (m.kind === 'text') {
+      parts.push('', `**${m.role === 'user' ? '用户' : '助手'}** · ${t}`, '', m.content);
+    } else if (m.kind === 'thinking') {
+      parts.push('', `> 💭 *思考* · ${t}`, '> ' + m.content.split(NL_CH).join(NL_CH + '> '));
+    } else if (m.kind === 'tool_use') {
+      let name = '工具';
+      try { name = (JSON.parse(m.meta ?? '{}') as { toolName?: string }).toolName ?? name; } catch { /* 忽略 */ }
+      parts.push('', `🔧 **${name}** · ${t}`, '', '```', m.content, '```');
+    } else if (m.kind === 'tool_result') {
+      const bad = m.content.indexOf('is_error') !== -1;
+      parts.push('', `⚙️ 结果${bad ? '(失败)' : ''}:`, '', '```', m.content, '```');
+    } else if (m.kind === 'error') {
+      parts.push('', `⚠️ ${m.content}`);
+    }
+  }
+  const safe = s.title.replace(new RegExp('[' + BS + BS + '/:*?' + String.fromCharCode(34) + '<>|]', 'g'), '_');
+  return {
+    filename: `${safe || '会话'}-${sessionId.slice(0, 8)}.md`,
+    markdown: parts.join(NL_CH),
+  };
+}
+
 /** 复制会话:拷贝消息与配置;fork_from 记源 CLI 会话,首轮 send 由 SDK forkSession 分叉。 */
 export function forkSession(db: Db, sourceId: string): SessionRow | null {
   const src = getSession(db, sourceId);

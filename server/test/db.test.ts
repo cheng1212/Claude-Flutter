@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  openDb, createSession, getSession, listSessions, updateSession,
+  openDb, createSession, getSession, listSessions, updateSession, buildSessionExport,
   deleteSession, appendMessage, listMessages, createRun, finishRun, failStaleRuns,
 } from '../src/db.js';
 
@@ -100,5 +100,40 @@ describe('会话管理增强', () => {
     appendMessage(db, s.id, { kind: 'thinking', content: '想一想' });
     const row = listSessions(db).find(r => r.id === s.id) as unknown as { last_preview: string };
     expect(row.last_preview).toContain('想一想');
+  });
+});
+
+describe('会话导出', () => {
+  it('buildSessionExport 生成含标题/角色/工具/错误的 markdown', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: '导出我', cwd: 'D:\proj', model: 'glm-5.3-flash' });
+    appendMessage(db, s.id, { kind: 'text', role: 'user', content: '帮我看看这个接口' });
+    appendMessage(db, s.id, { kind: 'thinking', content: '先看返回结构' });
+    appendMessage(db, s.id, { kind: 'tool_use', meta: { toolName: 'Bash' }, content: '{"command":"curl -s api"}' });
+    appendMessage(db, s.id, { kind: 'tool_result', content: '{"code":200}', meta: {} });
+    appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '接口返回 200,没问题' });
+    appendMessage(db, s.id, { kind: 'error', content: '上游超时一次' });
+    appendMessage(db, s.id, { kind: 'usage', content: '' });
+    appendMessage(db, s.id, { kind: 'complete', content: '' });
+    const out = buildSessionExport(db, s.id)!;
+    expect(out.filename).toMatch(/\.md$/);
+    expect(out.markdown).toContain('# 导出我');
+    expect(out.markdown).toContain('glm-5.3-flash');
+    expect(out.markdown).toContain('**用户**');
+    expect(out.markdown).toContain('接口返回 200,没问题');
+    expect(out.markdown).toContain('🔧 **Bash**');
+    expect(out.markdown).toContain('curl -s api');
+    expect(out.markdown).toContain('⚠️ 上游超时一次');
+    expect(out.markdown).not.toContain('complete'); // 控制事件不进导出
+  });
+
+  it('导出按时间正序、未知会话返回 null', () => {
+    const db = openDb(':memory:');
+    expect(buildSessionExport(db, 'nope')).toBeNull();
+    const s = createSession(db, { title: '顺序' });
+    appendMessage(db, s.id, { kind: 'text', role: 'user', content: '第一句' });
+    appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '第二句' });
+    const md = buildSessionExport(db, s.id)!.markdown;
+    expect(md.indexOf('第一句')).toBeLessThan(md.indexOf('第二句'));
   });
 });
