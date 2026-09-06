@@ -5,6 +5,10 @@ type AnyRecord = Record<string, unknown>;
 // SDK 消息 → 内部事件的唯一映射点。纯函数,SDK 升级时对拍这里。
 export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
   const type = msg.type as string;
+  // 子代理帧标记:SDK 在子代理的消息顶层带 parent_tool_use_id;主线程帧没有。
+  const parentToolUseId = typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id
+    ? msg.parent_tool_use_id
+    : undefined;
 
   if (type === 'assistant') {
     const content = (msg.message as AnyRecord | undefined)?.content;
@@ -13,15 +17,16 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
     for (const block of content) {
       const b = block as AnyRecord;
       if (b.type === 'text' && typeof b.text === 'string' && b.text) {
-        out.push({ kind: 'text', role: 'assistant', content: b.text });
+        out.push({ kind: 'text', role: 'assistant', content: b.text, ...(parentToolUseId ? { parentToolUseId } : {}) });
       } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking) {
-        out.push({ kind: 'thinking', content: b.thinking });
+        out.push({ kind: 'thinking', content: b.thinking, ...(parentToolUseId ? { parentToolUseId } : {}) });
       } else if (b.type === 'tool_use') {
         out.push({
           kind: 'tool_use',
           toolId: String(b.id ?? ''),
           toolName: String(b.name ?? ''),
           toolInput: b.input ?? {},
+          ...(parentToolUseId ? { parentToolUseId } : {}),
         });
       }
     }
@@ -53,6 +58,7 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
           toolId: String(b.tool_use_id ?? ''),
           content: text,
           isError: Boolean(b.is_error),
+          ...(parentToolUseId ? { parentToolUseId } : {}),
         });
       }
     }
