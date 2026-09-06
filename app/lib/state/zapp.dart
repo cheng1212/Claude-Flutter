@@ -21,6 +21,12 @@ class ZApp extends ChangeNotifier {
   Timer? _sessionsDirtyTimer;
   bool _disposed = false;
 
+  /// openSession 后台补齐(首屏后的老消息拉取);_onEvent 顺手给它留 WS 底。
+  _Backfill? _backfill;
+
+  /// 打开会话的代际令牌:快速切换/重开时,旧打开流程的后续阶段全部作废。
+  int _openToken = 0;
+
   List<String> models = const [];
   List<Map<String, dynamic>> modelGroups = const [];
   List<Map<String, dynamic>> sessions = const [];
@@ -159,6 +165,7 @@ class ZApp extends ChangeNotifier {
       if (decision != null) Notify.show(decision, _notifyBody(kind, ev));
       if (sid == null || sid != currentSessionId) return;
     chat = applyEvent(chat, ev);
+    _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
     if (kind == 'complete') unawaited(_loadSessions(silent: true));
     notifyListeners();
   }
@@ -195,7 +202,8 @@ class ZApp extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 打开(或重开刷新)会话:先 REST 历史(meta 是完整出站事件)重建,再带 lastSeq 订阅续传。
+  /// 打开(或重开刷新)会话:首屏只等最新一页立即上屏,老消息后台补齐后整体换底。
+  /// 全量拉完才渲染是"进去转圈好久"的根源:大会话十几页串行拉完才画第一帧。
   Future<void> openSession(String id) async {
     // 同会话刷新时保留待审批卡片:审批请求不落库,REST 重建不出来;
     // 丢了卡片没人能批,服务端 runtime 会一直等(INTERACTIVE 工具无超时)→ 会话卡死。
@@ -204,68 +212,105 @@ class ZApp extends ChangeNotifier {
     chat = const ChatState();
     historyLoading = true;
     error = null;
+    final token = ++_openToken;
+    _backfill = null;
+    final bf = _Backfill(id);
+    _backfill = bf; // 先挂缓冲再拉取:补齐窗口内到达的 WS 事件留底,换底重放不丢
     notifyListeners();
     try {
-      // 分页拉全量:突破单次 500 上限(长会话旧内容不再截断)
-      final events = <Map<String, dynamic>>[];
-      var maxSeq = 0;
-      var total = 0;
-      var fetched = 0;
-      do {
-        final hist = await _api.messages(id, limit: 500, offset: fetched);
-        total = hist.total;
-        fetched += hist.messages.length;
-        for (final row in hist.messages) {
-          final ev = _rowEvent(row);
-          if (ev == null) continue;
-          // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
-          // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
-          final sq = (row['seq'] as num?)?.toInt() ?? 0;
-          ev['seq'] = sq;
-          events.add(ev);
-          if (sq > maxSeq) maxSeq = sq;
-        }
-      } while (fetched < total && total > 0);
-      // REST 按 seq 倒序返回;归约要按时间正序,否则末尾事件先应用、其余全被去重。
-      events.sort((a, b) =>
-          ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
-      var st = const ChatState();
-      for (final e in events) {
-        st = applyEvent(st, e);
-      }
-      if (maxSeq > st.lastSeq) {
-        st = ChatState(
-          rows: st.rows,
-          lastSeq: maxSeq,
-          running: st.running,
-          streamingText: st.streamingText,
-          streamingThinking: st.streamingThinking,
-          usage: st.usage,
-          pendingPermission: st.pendingPermission,
-        );
+      final first = await _api.messages(id, limit: 500, offset: 0);
+      if (token != _openToken) return;
+      final (headEvents, maxSeq) = _histEvents(first);
+      var st = _replay(headEvents, maxSeq);
+      if (keepPermission != null && st.pendingPermission == null) {
+        st = _withPermission(st, keepPermission);
       }
       chat = st;
-      if (keepPermission != null && chat.pendingPermission == null) {
-        chat = ChatState(
-          rows: chat.rows,
-          lastSeq: chat.lastSeq,
-          running: chat.running,
-          streamingText: chat.streamingText,
-          streamingThinking: chat.streamingThinking,
-          usage: chat.usage,
-          pendingPermission: keepPermission,
-        );
-      }
       historyLoading = false;
       notifyListeners();
+      // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
+      // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
       _socket.seedLastSeq(id, maxSeq > st.lastSeq ? maxSeq : st.lastSeq);
       _socket.subscribeSession(id);
+      if (first.total <= first.messages.length) {
+        _backfill = null;
+        return;
+      }
+      // 后台补齐老消息:拉齐后连同 WS 留底整体重放,一次换底(seq 去重天然挡重复)。
+      var fetched = first.messages.length;
+      while (fetched < first.total) {
+        final hist = await _api.messages(id, limit: 500, offset: fetched);
+        if (token != _openToken || _backfill != bf) return;
+        fetched += hist.messages.length;
+        bf.older.addAll(_histEvents(hist).$1);
+      }
+      var full = _replay([...headEvents, ...bf.older, ...bf.extra], maxSeq);
+      final livePermission = currentSessionId == id ? chat.pendingPermission : null;
+      if (livePermission != null && full.pendingPermission == null) {
+        full = _withPermission(full, livePermission);
+      }
+      if (token != _openToken || _backfill != bf) return;
+      _backfill = null;
+      if (currentSessionId == id) {
+        chat = full;
+        notifyListeners();
+      }
     } on Object catch (e) {
+      if (token != _openToken) return;
+      _backfill = null;
       historyLoading = false;
       error = '$e';
       notifyListeners();
     }
   }
+
+  /// 消息页(rows)→ 出站事件列表 + 最大 seq。
+  (List<Map<String, dynamic>>, int) _histEvents(
+      ({List<Map<String, dynamic>> messages, int total}) hist) {
+    final events = <Map<String, dynamic>>[];
+    var maxSeq = 0;
+    for (final row in hist.messages) {
+      final ev = _rowEvent(row);
+      if (ev == null) continue;
+      final sq = (row['seq'] as num?)?.toInt() ?? 0;
+      ev['seq'] = sq;
+      events.add(ev);
+      if (sq > maxSeq) maxSeq = sq;
+    }
+    return (events, maxSeq);
+  }
+
+  /// 排序重放一段事件(REST 按 seq 倒序返回,归约要按时间正序),水位抬到 maxSeq。
+  ChatState _replay(List<Map<String, dynamic>> events, int maxSeq) {
+    events.sort((a, b) =>
+        ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
+    var st = const ChatState();
+    for (final e in events) {
+      st = applyEvent(st, e);
+    }
+    if (maxSeq > st.lastSeq) {
+      st = ChatState(
+        rows: st.rows,
+        lastSeq: maxSeq,
+        running: st.running,
+        streamingText: st.streamingText,
+        streamingThinking: st.streamingThinking,
+        usage: st.usage,
+        pendingPermission: st.pendingPermission,
+      );
+    }
+    return st;
+  }
+
+  ChatState _withPermission(ChatState s, PermissionReq req) => ChatState(
+        rows: s.rows,
+        lastSeq: s.lastSeq,
+        running: s.running,
+        streamingText: s.streamingText,
+        streamingThinking: s.streamingThinking,
+        usage: s.usage,
+        pendingPermission: req,
+      );
 
   /// 消息行 meta → 出站事件(可能存成 JSON 字符串或已是 Map)。
   Map<String, dynamic>? _rowEvent(Map<String, dynamic> row) {
@@ -429,4 +474,13 @@ class ZApp extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+/// openSession 后台补齐的暂存:老页面事件 + 补齐窗口内到达的 WS 事件,
+/// 拉齐后合并整体重放换底。重开会话/切会话时整个实例被丢弃(代际令牌兜底)。
+class _Backfill {
+  final String id;
+  final List<Map<String, dynamic>> older = [];
+  final List<Map<String, dynamic>> extra = [];
+  _Backfill(this.id);
 }
