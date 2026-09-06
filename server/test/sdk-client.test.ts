@@ -330,3 +330,34 @@ describe('SessionRuntime', () => {
     expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: true });
   });
 });
+
+describe('SessionRuntime · fork', () => {
+  it('forkSession 预置 → options 带 resume+forkSession,init 返回新 id 并发 session_created', async () => {
+    const { events, emit } = collector();
+    const seen: { options: Record<string, unknown> | null } = { options: null };
+    const queryFn: QueryFn = ({ options }) => {
+      seen.options = options as Record<string, unknown>;
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'fork-new' };
+        yield { type: 'result', subtype: 'success', session_id: 'fork-new', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a1', providerSessionId: 'prov-old', forkSession: true, emit, queryFn });
+    await runtime.send('复制后续');
+    expect(seen.options?.resume).toBe('prov-old');
+    expect(seen.options?.forkSession).toBe(true);
+    expect(events[0]).toMatchObject({ kind: 'session_created', providerSessionId: 'fork-new' });
+    expect(events.at(-1)).toMatchObject({ kind: 'complete', exitCode: 0 });
+  });
+
+  it('非 fork 的 resume:init 回同一 id,不发 session_created(原语义不变)', async () => {
+    const { events, emit } = collector();
+    const queryFn: QueryFn = () => (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'prov-1' };
+      yield { type: 'result', subtype: 'success', session_id: 'prov-1', usage: {}, total_cost_usd: 0, duration_ms: 1 };
+    })();
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a1', providerSessionId: 'prov-1', emit, queryFn });
+    await runtime.send('继续');
+    expect(events.some((e) => e.kind === 'session_created')).toBe(false);
+  });
+});

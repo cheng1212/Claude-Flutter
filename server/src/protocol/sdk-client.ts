@@ -60,6 +60,8 @@ export type RuntimeOptions = {
   approvalTimeoutMs?: number;
   /** abort 强裁延迟:CLI 僵死时 interrupt/release 都解冻不了回合,等这么久后强判终态 */
   abortForceDelayMs?: number;
+  /** 复制会话:providerSessionId 为 fork 起点,首轮 init 回传的独立新 id 会回填并发 session_created */
+  forkSession?: boolean;
 };
 
 // 这些工具的审批在等用户交互,超时无意义 → 一直等
@@ -201,6 +203,7 @@ export class SessionRuntime {
       options.settings = route.settings; // 路由 settings 显式给出时整体覆盖
     }
     if (this.providerSessionId) options.resume = this.providerSessionId;
+    if (this.opts.forkSession && this.providerSessionId) options.forkSession = true;
     return options;
   }
 
@@ -312,9 +315,13 @@ export class SessionRuntime {
             busyRears = 0;
             if (raw.type === 'system' && raw.subtype === 'init') {
               const sessionId = raw.session_id;
-              if (!this.providerSessionId && typeof sessionId === 'string' && sessionId) {
-                this.providerSessionId = sessionId;
-                this.opts.emit({ kind: 'session_created', providerSessionId: sessionId });
+              if (typeof sessionId === 'string' && sessionId) {
+                // 新会话首捕;或 fork 分叉(init 回传 id ≠ resume 起点)→ 回填并发 session_created
+                if (!this.providerSessionId
+                  || (this.opts.forkSession === true && sessionId !== this.providerSessionId)) {
+                  this.providerSessionId = sessionId;
+                  this.opts.emit({ kind: 'session_created', providerSessionId: sessionId });
+                }
               }
               continue;
             }

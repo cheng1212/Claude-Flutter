@@ -20,7 +20,7 @@ const runtimes = new Map<string, SessionRuntime>();
 // 返回 null = 会话不存在;bareModel = 非路由别名的裸模型名(才值得对 CLI 现场设)。
 const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissionMode?: string }) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId) as
-    | { cwd: string | null; provider_session_id: string | null; model: string | null; permission_mode: string }
+    | { cwd: string | null; provider_session_id: string | null; fork_from: string | null; model: string | null; permission_mode: string }
     | undefined;
   if (!session) return null;
   const modelId = opts?.model ?? session.model ?? 'default';
@@ -33,7 +33,13 @@ const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissio
     permissionMode: opts?.permissionMode ?? session.permission_mode,
     routeSettings: resolved?.settings ?? null,
   };
-  return { session, cfg, bareModel: resolved ? null : (modelId === 'default' ? null : modelId) };
+  return {
+    session, cfg,
+    bareModel: resolved ? null : (modelId === 'default' ? null : modelId),
+    // 复制会话:无独立 provider id 且记了 fork_from → 首轮 send 用 SDK forkSession 分叉
+    resumeId: session.provider_session_id ?? session.fork_from ?? null,
+    fork: !session.provider_session_id && !!session.fork_from,
+  };
 };
 
 const app = await buildApp({
@@ -82,7 +88,8 @@ const gateway = attachWsGateway(app.server, {
     }
     const runtime = new SessionRuntime({
       appSessionId: sessionId,
-      providerSessionId: ctx.session.provider_session_id,
+      providerSessionId: ctx.resumeId,
+      forkSession: ctx.fork,
       cwd: ctx.session.cwd ?? process.cwd(),
       ...ctx.cfg,
       bgCeilingMs: config.bgCeilingMs,

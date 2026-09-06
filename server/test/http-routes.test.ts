@@ -226,3 +226,30 @@ describe('REST · 会话管理增强', () => {
     expect(first.project).toBeNull();
   });
 });
+
+describe('REST · 复制会话(fork)', () => {
+  it('POST /fork 复制消息与配置,fork_from=源 provider_session_id', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const created = await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: '源', model: 'glm-5.3-flash' } });
+    const id = (created.json() as { id: string }).id;
+    const { updateSession } = await import('../src/db.js');
+    updateSession(db, id, { providerSessionId: 'prov-src' });
+    appendMessage(db, id, { kind: 'text', role: 'user', content: '历史1' });
+    appendMessage(db, id, { kind: 'text', role: 'assistant', content: '历史2' });
+
+    const res = await app.inject({ method: 'POST', url: `/api/sessions/${id}/fork`, headers: H });
+    expect(res.statusCode).toBe(200);
+    const row = res.json() as { id: string; title: string; fork_from: string | null; provider_session_id: string | null; model: string | null };
+    expect(row.title).toBe('源 副本');
+    expect(row.fork_from).toBe('prov-src');
+    expect(row.provider_session_id).toBeNull(); // 等首轮 init 回填新 id
+    expect(row.model).toBe('glm-5.3-flash');
+
+    const msgs = await app.inject({ method: 'GET', url: `/api/sessions/${row.id}/messages`, headers: H });
+    expect((msgs.json() as { total: number }).total).toBe(2);
+
+    const missing = await app.inject({ method: 'POST', url: '/api/sessions/nope/fork', headers: H });
+    expect(missing.statusCode).toBe(404);
+  });
+});

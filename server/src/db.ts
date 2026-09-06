@@ -168,6 +168,29 @@ export function deleteSession(db: Db, id: string): boolean {
   return db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes > 0;
 }
 
+/** 复制会话:拷贝消息与配置;fork_from 记源 CLI 会话,首轮 send 由 SDK forkSession 分叉。 */
+export function forkSession(db: Db, sourceId: string): SessionRow | null {
+  const src = getSession(db, sourceId);
+  if (!src) return null;
+  let tags: string[] = [];
+  try { tags = JSON.parse(src.tags ?? '[]') as string[]; } catch { tags = []; }
+  const copy = createSession(db, {
+    title: (src.title || '会话') + ' 副本',
+    cwd: src.cwd ?? undefined,
+    model: src.model ?? undefined,
+    tags,
+    forkFrom: src.provider_session_id ?? undefined,
+  });
+  updateSession(db, copy.id, { permissionMode: src.permission_mode });
+  const rows = db.prepare('SELECT seq, kind, role, content, meta, created_at FROM messages WHERE session_id=? ORDER BY seq')
+    .all(sourceId) as MessageRow[];
+  const ins = db.prepare('INSERT INTO messages(id,session_id,seq,kind,role,content,meta,created_at) VALUES(?,?,?,?,?,?,?,?)');
+  db.transaction(() => {
+    for (const m of rows) ins.run(randomUUID(), copy.id, m.seq, m.kind, m.role, m.content, m.meta, m.created_at);
+  })();
+  return getSession(db, copy.id);
+}
+
 /** 墓碑集合(导入器拉黑名单)。 */
 export function listTombstonedProviderSessionIds(db: Db): Set<string> {
   const rows = db.prepare('SELECT provider_session_id FROM session_tombstones').all() as { provider_session_id: string }[];
