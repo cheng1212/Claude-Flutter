@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { nextFire } from './cron.js';
 
 export type Db = Database.Database;
 export type SessionRow = {
@@ -44,6 +45,12 @@ export function openDb(file: string): Db {
     CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
     CREATE TABLE IF NOT EXISTS session_tombstones(
       provider_session_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS crons(
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, cron TEXT NOT NULL,
+      prompt TEXT NOT NULL, recurring INTEGER NOT NULL DEFAULT 1,
+      durable INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_crons_session ON crons(session_id);
   `);
   // 迁移:旧库 sessions 无 source 列,补上(本地导入的会话置 'local')
   const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
@@ -226,6 +233,64 @@ export function buildSessionExport(db: Db, sessionId: string): { filename: strin
     filename: `${safe || '会话'}-${sessionId.slice(0, 8)}.md`,
     markdown: parts.join(NL_CH),
   };
+}
+
+export type CronRow = {
+  id: string; session_id: string; cron: string; prompt: string;
+  recurring: number; durable: number; status: string;
+  created_at: string; next_fire: string | null; session_title?: string;
+};
+
+/** 登记一条定时任务(来源:CronCreate 工具事件拦截)。 */
+export function registerCron(
+  db: Db, sessionId: string,
+  input: { cron: string; prompt: string; recurring?: boolean; durable?: boolean },
+): CronRow {
+  const id = randomUUID();
+  db.prepare('INSERT INTO crons(id,session_id,cron,prompt,recurring,durable,status,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(id, sessionId, input.cron, input.prompt, input.recurring === false ? 0 : 1, input.durable === true ? 1 : 0, 'active', now());
+  return db.prepare('SELECT * FROM crons WHERE id=?').get(id) as CronRow;
+}
+
+/** 按内容标记删除(来自 CronDelete 工具事件拦截,幂等)。 */
+export function markCronDeleted(db: Db, id: string): void {
+  db.prepare("UPDATE crons SET status='deleted' WHERE id=?").run(id);
+}
+
+/** active 任务列表;next_fire 现算。sessionId 省略=全部(附会话标题)。 */
+export function listCrons(db: Db, sessionId?: string): CronRow[] {
+  const rows = (sessionId
+    ? db.prepare("SELECT * FROM crons WHERE session_id=? AND status='active' ORDER BY created_at")
+    : db.prepare("SELECT c.*, se.title AS session_title FROM crons c LEFT JOIN sessions se ON se.id=c.session_id WHERE c.status='active' ORDER BY c.created_at"))
+    .all(...(sessionId ? [sessionId] : [])) as CronRow[];
+  const from = new Date();
+  return rows.map((r) => {
+    const nf = nextFire(r.cron, from);
+    return { ...r, next_fire: nf ? nf.toISOString() : null };
+  });
+}
+
+/** fanout 拦截:CronCreate/CronDelete 工具事件 → 服务端登记(倒计时数据源)。 */
+export function recordCronToolUse(db: Db, sessionId: string, event: { toolName?: unknown; toolInput?: unknown }): void {
+  const name = String(event.toolName ?? '');
+  if (name !== 'CronCreate' && name !== 'CronDelete') return;
+  const input = (event.toolInput ?? {}) as { cron?: unknown; prompt?: unknown; recurring?: unknown; durable?: unknown };
+  const cron = String(input.cron ?? '');
+  const prompt = String(input.prompt ?? '');
+  if (!cron || !prompt) return;
+  if (name === 'CronCreate') {
+    registerCron(db, sessionId, {
+      cron,
+      prompt,
+      recurring: input.recurring !== false,
+      durable: input.durable === true,
+    });
+    return;
+  }
+  // CronDelete:同会话 + 同 cron + 同 prompt 的 active 记录标记删除
+  for (const r of listCrons(db, sessionId)) {
+    if (r.cron === cron && r.prompt === prompt) markCronDeleted(db, r.id);
+  }
 }
 
 /** 复制会话:拷贝消息与配置;fork_from 记源 CLI 会话,首轮 send 由 SDK forkSession 分叉。 */

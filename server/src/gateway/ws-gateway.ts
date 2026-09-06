@@ -1,7 +1,7 @@
 import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Db } from '../db.js';
-import { appendMessage, updateSession, maxSeq, createRun, finishRun } from '../db.js';
+import { appendMessage, updateSession, maxSeq, createRun, finishRun, recordCronToolUse } from '../db.js';
 import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
 
 type RuntimeLike = {
@@ -74,6 +74,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
   const activeRuns = new Map<string, { runId: string; usage: unknown }>();
 
   const fanout = (sessionId: string, event: OutboundEvent): void => {
+    if (event.kind === 'tool_use') recordCronToolUse(deps.db, sessionId, event as unknown as { toolName?: unknown; toolInput?: unknown });
     if (event.kind === 'usage') {
       const row = activeRuns.get(sessionId);
       if (row) row.usage = event; // 完成时随 run 一起落库

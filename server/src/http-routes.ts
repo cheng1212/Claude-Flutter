@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
-import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport } from './db.js';
+import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
 import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
@@ -58,6 +58,14 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
       deps.onSessionPatched?.((req.params as { id: string }).id, { model: patch.model, permissionMode: patch.permissionMode });
     }
     return row;
+  });
+
+  // 定时任务列表(active;next_fire 现算,倒计时数据源)
+  app.get('/api/crons', async () => ({ crons: listCrons(deps.db) }));
+
+  app.delete('/api/crons/:id', async (req) => {
+    markCronDeleted(deps.db, (req.params as { id: string }).id);
+    return { ok: true };
   });
 
   // 完整重载:从磁盘 CLI 转录补回中断/重启丢失的事件(幂等)

@@ -155,3 +155,36 @@ describe('会话导出', () => {
     expect(md.indexOf('第一句')).toBeLessThan(md.indexOf('第二句'));
   });
 });
+
+describe('定时任务登记', () => {
+  it('registerCron 登记并列表(listCrons 附 next_fire),markCronDeleted 幂等删除', async () => {
+    const { openDb, createSession, registerCron, listCrons, markCronDeleted } = await import('../src/db.js');
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: '宿主会话' });
+    registerCron(db, s.id, { cron: '*/5 * * * *', prompt: '检查构建', recurring: true, durable: false });
+    registerCron(db, s.id, { cron: '0 9 * * 1-5', prompt: '晨报', recurring: true, durable: true });
+
+    const list = listCrons(db);
+    expect(list.length).toBe(2);
+    expect(list[0]).toMatchObject({ status: 'active', session_title: '宿主会话' });
+    expect(new Date(list[0].next_fire ?? '').toString()).not.toBe('Invalid Date');
+
+    markCronDeleted(db, list[0].id);
+    markCronDeleted(db, list[0].id); // 幂等
+    expect(listCrons(db).length).toBe(1);
+
+    const bySession = listCrons(db, s.id);
+    expect(bySession.length).toBe(1);
+  });
+
+  it('recordCronToolUse 拦截 CronCreate/CronDelete 工具事件', async () => {
+    const { openDb, createSession, recordCronToolUse, listCrons } = await import('../src/db.js');
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: 'x' });
+    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'CronCreate', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下', recurring: true } });
+    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'Other', toolInput: {} });
+    expect(listCrons(db).length).toBe(1);
+    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'CronDelete', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下' } });
+    expect(listCrons(db).length).toBe(0);
+  });
+});
