@@ -1,6 +1,9 @@
-// 会话列表:普通模式点开即聊;管理模式可多选置顶/删除。布局参考任务页的管理模式。
+// 会话列表(参考稿重设计):搜索 + 筛选 chips + 富卡片(状态/来源/模型/项目/时间)+ 行内菜单。
+// 数据来源:server /api/sessions 增强字段(last_preview/last_status/project/tags/archived)。
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../session_utils.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'chat_page.dart';
@@ -16,22 +19,17 @@ class SessionsPage extends StatefulWidget {
 }
 
 class _SessionsPageState extends State<SessionsPage> {
-  bool _manage = false;
-  final _picked = <String>{};
+  static const _kSortUpdated = 'updated';
+  static const _kSortCreated = 'created';
+
+  final _search = TextEditingController();
   String _query = '';
+  SessionFilter _filter = SessionFilter.all;
+  String? _project; // 项目 chip 选中时生效
+  String _sort = _kSortUpdated;
+  bool _reloadTick = false; // 刷新按钮转圈
 
   ZApp get app => widget.app;
-
-  /// 搜索过滤:标题或最后消息命中(大小写不敏感)。
-  List<Map<String, dynamic>> get _filtered {
-    final q = _query.toLowerCase();
-    if (q.isEmpty) return app.sessions;
-    return app.sessions.where((s) {
-      final title = '${s['title'] ?? ''}'.toLowerCase();
-      final last = '${s['last_message'] ?? ''}'.toLowerCase();
-      return title.contains(q) || last.contains(q);
-    }).toList();
-  }
 
   @override
   void initState() {
@@ -43,6 +41,7 @@ class _SessionsPageState extends State<SessionsPage> {
   @override
   void dispose() {
     app.removeListener(_onApp);
+    _search.dispose();
     super.dispose();
   }
 
@@ -73,63 +72,6 @@ class _SessionsPageState extends State<SessionsPage> {
     app.refreshSessions();
   }
 
-  void _toggleManage() {
-    setState(() {
-      _manage = !_manage;
-      _picked.clear();
-    });
-  }
-
-  Future<void> _deletePicked() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除会话?'),
-        content: Text('将删除选中的 ${_picked.length} 个会话及历史。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除', style: TextStyle(color: ZT.rose))),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final ids = _picked.toList();
-    try {
-      final r = await app.deleteSessions(ids);
-      if (mounted && r.missing.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('已删 ${r.deleted} 个;${r.missing.length} 个此前已删过')));
-      }
-    } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('删除失败: $e')));
-      }
-    }
-    setState(() => _picked.clear());
-  }
-
-  Future<void> _pinPicked() async {
-    final pinned = _isPinned(app.sessions.firstWhere(
-      (s) => '${s['id']}' == _picked.first,
-      orElse: () => const {},
-    ));
-    for (final id in _picked) {
-      try {
-        await app.patchSession(id, isPinned: !pinned);
-      } on Object catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('操作失败: $e')));
-        }
-        break;
-      }
-    }
-    setState(() => _picked.clear());
-  }
-
   Future<void> _rename(Map<String, dynamic> session) async {
     final controller = TextEditingController(text: '${session['title'] ?? ''}');
     final title = await showDialog<String>(
@@ -149,14 +91,540 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       await app.patchSession('${session['id']}', title: title);
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('重命名失败: $e')));
-      }
+      _toast('重命名失败: $e');
     }
   }
 
-  /// 设置面板:显示当前连接信息;「切换服务器」才走登出。别再一点齿轮就掉登录页。
+  Future<void> _moveToProject(Map<String, dynamic> session) async {
+    final controller = TextEditingController(text: '${session['cwd'] ?? ''}');
+    final cwd = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移动到项目'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '工作目录,如 D:\\work\\myapp'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('确定')),
+        ],
+      ),
+    );
+    if (cwd == null || cwd.isEmpty) return;
+    try {
+      await app.patchSession('${session['id']}', cwd: cwd);
+    } on Object catch (e) {
+      _toast('移动失败: $e');
+    }
+  }
+
+  Future<void> _editTags(Map<String, dynamic> session) async {
+    final current = tagsOf(session);
+    final controller = TextEditingController(text: current.join(', '));
+    final raw = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('添加标签'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '用逗号分隔,如 Flutter, 重要'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text('确定')),
+        ],
+      ),
+    );
+    if (raw == null) return;
+    final tags = raw.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty).toList();
+    try {
+      await app.patchSession('${session['id']}', tags: tags);
+    } on Object catch (e) {
+      _toast('标签保存失败: $e');
+    }
+  }
+
+  Future<void> _fork(Map<String, dynamic> session) async {
+    _toast('正在复制「${session['title']}」…');
+    try {
+      final copy = await app.forkSession('${session['id']}');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已创建副本「${copy['title'] ?? ''}」'),
+        action: SnackBarAction(
+          label: '打开',
+          onPressed: () {
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ChatPage(app: app, sessionId: '${copy['id']}'),
+            ));
+          },
+        ),
+      ));
+    } on Object catch (e) {
+      _toast('复制失败: $e');
+    }
+  }
+
+  Future<void> _export(Map<String, dynamic> session) async {
+    final id = '${session['id']}';
+    final title = '${session['title'] ?? '会话'}';
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SafeArea(
+        child: FutureBuilder<({String filename, String markdown})?>(
+          future: app.exportSession(id),
+          builder: (ctx, snap) {
+            final out = snap.data;
+            return Container(
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  const Icon(Icons.ios_share_rounded, size: 17, color: ZT.aqua),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('导出 · $title', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
+                  if (out != null)
+                    IconButton(
+                      tooltip: '复制全文',
+                      icon: const Icon(Icons.content_copy_rounded, size: 17),
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: out.markdown));
+                        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+                      },
+                    ),
+                ]),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: out == null
+                      ? Text('导出失败,请稍后再试。', style: TextStyle(fontSize: 12.5, color: ZT.inkSoft))
+                      : SingleChildScrollView(
+                          child: SelectableText(
+                            out.markdown,
+                            style: const TextStyle(fontSize: 11.5, height: 1.5, fontFamily: ZT.mono, color: ZT.inkSoft),
+                          ),
+                        ),
+                ),
+              ]),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _delete(Map<String, dynamic> session) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除会话?'),
+        content: Text("'${session['title'] ?? ''}' 及其历史将被删除。"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除', style: TextStyle(color: ZT.rose))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await app.deleteSession('${session['id']}');
+    } on Object catch (e) {
+      _toast('删除失败: $e');
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ---------------------------------------------------------------- helpers
+
+  List<Map<String, dynamic>> _visibleSessions() {
+    final raw = app.sessions;
+    final sorted = [...raw];
+    sorted.sort((a, b) {
+      if (_sort == _kSortCreated) {
+        return '${b['created_at'] ?? ''}'.compareTo('${a['created_at'] ?? ''}');
+      }
+      return '${b['updated_at'] ?? ''}'.compareTo('${a['updated_at'] ?? ''}');
+    });
+    return filterSessions(sorted, filter: _filter, query: _query, project: _project);
+  }
+
+  String _previewOf(Map<String, dynamic> s) {
+    final v = s['last_preview'] ?? s['last_message'] ?? '';
+    return '$v'.trim();
+  }
+
+  String _timeLabel(Map<String, dynamic> s) {
+    final raw = '${s['updated_at'] ?? s['created_at'] ?? ''}';
+    final t = DateTime.tryParse(raw);
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return '刚刚';
+    if (d.inHours < 1) return '${d.inMinutes} 分钟前';
+    if (d.inDays < 1) return '${d.inHours} 小时前';
+    if (d.inDays < 30) return '${d.inDays} 天前';
+    return '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
+  }
+
+  // ---------------------------------------------------------------- build
+
+  @override
+  Widget build(BuildContext context) {
+    final sessions = _visibleSessions();
+    return Scaffold(
+      backgroundColor: ZT.bg,
+      appBar: AppBar(
+        title: Row(children: [
+          const Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
+          const SizedBox(width: 8),
+          const Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+        ]),
+        actions: [
+          IconButton(
+            tooltip: '刷新',
+            icon: _reloadTick
+                ? const SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh_rounded, size: 21),
+            onPressed: () async {
+              setState(() => _reloadTick = true);
+              await app.refreshSessions();
+              if (mounted) setState(() => _reloadTick = false);
+            },
+          ),
+          IconButton(
+            tooltip: '设置',
+            onPressed: _openSettings,
+            icon: const Icon(Icons.settings_outlined, size: 20),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: ZT.primary,
+        foregroundColor: ZT.onInk,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: ZT.inkSide(w: 1.5, color: ZT.ink),
+        ),
+        onPressed: _newSession,
+        child: const Icon(Icons.add_rounded, size: 28),
+      ),
+      body: Column(children: [
+        if (!app.linked) _linkStrip(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+          child: TextField(
+            controller: _search,
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              hintText: '搜索会话…',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              isDense: true,
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 46,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            children: [
+              _chip('全部', SessionFilter.all),
+              _chip('置顶', SessionFilter.pinned),
+              _chip('归档', SessionFilter.archived),
+              _chip(_project == null ? '项目' : '项目 · $_project', SessionFilter.project),
+              const SizedBox(width: 4),
+              PopupMenuButton<String>(
+                tooltip: '排序',
+                initialValue: _sort,
+                onSelected: (v) => setState(() => _sort = v),
+                itemBuilder: (ctx) => const [
+                  PopupMenuItem(value: _kSortUpdated, child: Text('↓ 最近更新')),
+                  PopupMenuItem(value: _kSortCreated, child: Text('↓ 最近创建')),
+                ],
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: ShapeDecoration(
+                    color: ZT.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(999),
+                      side: ZT.inkSide(),
+                    ),
+                  ),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.swap_vert_rounded, size: 15, color: ZT.inkSoft),
+                    SizedBox(width: 4),
+                    Text('排序', style: TextStyle(fontSize: 12.5, color: ZT.inkSoft)),
+                  ]),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: RefreshIndicator(
+            color: ZT.primary,
+            backgroundColor: ZT.surface,
+            onRefresh: app.refreshSessions,
+            child: sessions.isEmpty
+                ? ListView(children: [
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.55,
+                      child: Center(
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.chat_bubble_outline_rounded, size: 40, color: ZT.inkFaint),
+                          const SizedBox(height: 12),
+                          Text(app.linked ? '这里空空如也' : '等待连接…',
+                              style: const TextStyle(fontSize: 13, color: ZT.inkFaint)),
+                        ]),
+                      ),
+                    ),
+                  ])
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 90),
+                    itemCount: sessions.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) => _sessionCard(sessions[i]),
+                  ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _chip(String label, SessionFilter f) {
+    final selected = _filter == f && (f != SessionFilter.project || _project != null);
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () {
+          if (f == SessionFilter.project) {
+            _pickProject();
+            return;
+          }
+          setState(() {
+            _filter = f;
+            _project = null;
+          });
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+          decoration: ShapeDecoration(
+            color: selected ? ZT.primary.withValues(alpha: 0.12) : ZT.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+              side: ZT.inkSide(w: selected ? 1.5 : 1.2, color: selected ? ZT.primary : ZT.edge),
+            ),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                  color: selected ? ZT.primary : ZT.inkSoft)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickProject() async {
+    final projects = <String>{};
+    for (final s in app.sessions) {
+      final p = '${s['project'] ?? ''}';
+      final arch = s['archived'];
+      if (p.isNotEmpty && !(arch == 1 || arch == true)) projects.add(p);
+    }
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('按项目筛选'),
+        backgroundColor: ZT.surface,
+        children: [
+          for (final p in projects.toList()..sort)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, p),
+              child: Text(p, style: const TextStyle(fontSize: 13.5)),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      if (picked != null) {
+        _project = picked;
+        _filter = SessionFilter.project;
+      } else {
+        _project = null;
+        if (_filter == SessionFilter.project) _filter = SessionFilter.all;
+      }
+    });
+  }
+
+  Widget _linkStrip() {
+    return Material(
+      color: ZT.lemon,
+      child: InkWell(
+        onTap: () => app.bootstrap(),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Row(children: [
+            const PulseDot(color: ZT.rose, animate: true, size: 7),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('未连接(${app.linkFailure ?? app.error ?? '连接中'})—— 点此重连',
+                  style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk)),
+            ),
+            const Icon(Icons.refresh_rounded, size: 16, color: ZT.onInk),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _sessionCard(Map<String, dynamic> s) {
+    final pinned = (s['is_pinned'] ?? 0) == 1 || s['is_pinned'] == true;
+    final badge = statusBadgeOf(s);
+    final preview = _previewOf(s);
+    final model = '${s['model'] ?? ''}';
+    final project = '${s['project'] ?? ''}';
+    final tags = tagsOf(s);
+
+    return HardCard(
+      color: ZT.surface,
+      onTap: () => _openChat(s),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          if (pinned) ...[
+            const Icon(Icons.push_pin_rounded, size: 13, color: ZT.primary),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text('${s['title'] ?? '未命名会话'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
+            onPressed: () => _sessionMenu(s),
+          ),
+        ]),
+        if (preview.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(preview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, height: 1.45, color: ZT.inkSoft)),
+          ),
+        const SizedBox(height: 7),
+        Row(children: [
+          if (badge != null) _pill(badge.label, badge.kind),
+          const SizedBox(width: 6),
+          if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
+          const SizedBox(width: 6),
+          if (model.isNotEmpty) _pill(model, 'model'),
+          const SizedBox(width: 6),
+          if (project.isNotEmpty) _pill(project, 'project'),
+          for (final t in tags.take(2)) ...[
+            const SizedBox(width: 6),
+            _pill(t, 'tag'),
+          ],
+          const Spacer(),
+          Text(_timeLabel(s), style: const TextStyle(fontSize: 11, color: ZT.inkFaint)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _pill(String label, String kind) {
+    final colors = {
+      'running': (ZT.primary, ZT.primary),
+      'done': (ZT.aqua, ZT.aqua),
+      'paused': (ZT.lemon, ZT.lemon),
+      'failed': (ZT.rose, ZT.rose),
+      'ended': (ZT.inkSoft, ZT.inkFaint),
+      'local': (ZT.lemon, ZT.lemon),
+      'model': (ZT.aqua, ZT.aqua),
+      'project': (ZT.grape, ZT.grape),
+      'tag': (ZT.inkSoft, ZT.inkFaint),
+    };
+    final c = colors[kind] ?? (ZT.inkSoft, ZT.inkFaint);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: ShapeDecoration(
+        color: c.$1.withValues(alpha: 0.09),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(4),
+            side: BorderSide(width: 1, color: c.$2.withValues(alpha: 0.45))),
+      ),
+      child: Text(label,
+          style: TextStyle(fontSize: 10.5, color: c.$1, fontFamily: kind == 'model' ? ZT.mono : ZT.sans)),
+    );
+  }
+
+  Future<void> _sessionMenu(Map<String, dynamic> s) {
+    final pinned = (s['is_pinned'] ?? 0) == 1 || s['is_pinned'] == true;
+    final archived = (s['archived'] ?? 0) == 1 || s['archived'] == true;
+    return showModalBottomSheet(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 6),
+          for (final item in [
+            (Icons.edit_rounded, '重命名', ZT.ink, () => _rename(s)),
+            (Icons.push_pin_rounded, pinned ? '取消置顶' : '置顶', ZT.ink, () => app.patchSession('${s['id']}', isPinned: !pinned)),
+            (Icons.folder_open_rounded, '移动到项目', ZT.ink, () => _moveToProject(s)),
+            (Icons.sell_rounded, '添加标签', ZT.ink, () => _editTags(s)),
+            (Icons.copy_rounded, '复制会话', ZT.ink, () => _fork(s)),
+            (Icons.ios_share_rounded, '导出', ZT.ink, () => _export(s)),
+            (
+              archived ? Icons.unarchive_rounded : Icons.archive_rounded,
+              archived ? '取消归档' : '归档',
+              ZT.ink,
+              () => app.patchSession('${s['id']}', archived: !archived)
+            ),
+            (Icons.delete_outline_rounded, '删除', ZT.rose, () => _delete(s)),
+          ])
+            ListTile(
+              leading: Icon(item.$1, size: 19, color: item.$3),
+              title: Text(item.$2, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: item.$3)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await item.$4();
+              },
+            ),
+          const SizedBox(height: 6),
+        ]),
+      ),
+    );
+  }
+
+  /// 设置面板(A4 底部导航「我的」落地前的临时位置):连接状态与登出。
   Future<void> _openSettings() async {
     final link = app.linked ? '已连接' : (app.linkFailure ?? '连接中…');
     await showModalBottomSheet(
@@ -205,425 +673,13 @@ class _SessionsPageState extends State<SessionsPage> {
       child: Row(children: [
         Text(label, style: const TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
         const Spacer(),
-        Text(value,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
+        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
       ]),
     );
-  }
-
-  // ---------------------------------------------------------------- build
-
-  @override
-  Widget build(BuildContext context) {
-    final sessions = _filtered;
-    return Scaffold(
-      backgroundColor: ZT.bg,
-      appBar: AppBar(
-        title: Row(children: [
-          const Icon(Icons.terminal_rounded, size: 19, color: ZT.primary),
-          const SizedBox(width: 8),
-          Text(_manage ? '已选 ${_picked.length}' : '会话',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-        ]),
-        actions: [
-          if (_manage) ...[
-            // 全选/反选:批量清理旧会话不用一个个点
-            TextButton(
-                onPressed: sessions.isEmpty ? null : () {
-                  setState(() {
-                    if (_picked.length == sessions.length) {
-                      _picked.clear();
-                    } else {
-                      _picked
-                        ..clear()
-                        ..addAll(sessions.map((s) => '${s['id']}'));
-                    }
-                  });
-                },
-                child: Text(_picked.isNotEmpty && _picked.length == sessions.length ? '取消' : '全选')),
-            TextButton(onPressed: _toggleManage, child: const Text('完成')),
-          ] else ...[
-            // 手动刷新:除了下拉,给个一眼能看到的按钮;"运行中"徽章数据也靠它和 dirty 广播
-            IconButton(
-                tooltip: '刷新',
-                onPressed: app.refreshSessions,
-                icon: const Icon(Icons.refresh_rounded, size: 20)),
-            IconButton(
-                tooltip: '设置',
-                onPressed: _openSettings,
-                icon: const Icon(Icons.settings_outlined, size: 20)),
-            IconButton(
-                tooltip: '管理',
-                onPressed: sessions.isEmpty ? null : _toggleManage,
-                icon: const Icon(Icons.checklist_rounded, size: 20)),
-          ],
-        ],
-      ),
-      floatingActionButton: _manage
-          ? null
-          : FloatingActionButton(
-              backgroundColor: ZT.primary,
-              foregroundColor: ZT.onInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ZT.radius),
-                side: ZT.inkSide(w: 1.5, color: ZT.ink),
-              ),
-              onPressed: _newSession,
-              child: const Icon(Icons.add_rounded),
-            ),
-      bottomNavigationBar: _manage && _picked.isNotEmpty
-          ? _manageBar()
-          : null,
-      body: Column(children: [
-        if (!app.linked) _linkStrip(),
-        if (app.sessions.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
-            child: TextField(
-              onChanged: (v) => setState(() => _query = v.trim()),
-              style: const TextStyle(fontSize: 13.5),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索会话…',
-                prefixIcon: const Icon(Icons.search_rounded, size: 18),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(Icons.close_rounded, size: 16),
-                        onPressed: () => setState(() => _query = ''),
-                      ),
-              ),
-            ),
-          ),
-        Expanded(
-          child: RefreshIndicator(
-            color: ZT.primary,
-            backgroundColor: ZT.surface,
-            onRefresh: app.refreshSessions,
-            child: sessions.isEmpty
-                ? ListView(children: [
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.6,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.chat_bubble_outline_rounded,
-                                size: 40, color: ZT.inkFaint),
-                            const SizedBox(height: 12),
-                            Text(app.linked ? '还没有会话' : '等待连接…',
-                                style: TextStyle(
-                                    fontSize: 13, color: ZT.inkFaint)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ])
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 90),
-                    itemCount: sessions.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final s = sessions[i];
-                      return _sessionTile(s);
-                    },
-                  ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _linkStrip() {
-    return Material(
-      color: ZT.lemon,
-      child: InkWell(
-        onTap: () => app.bootstrap(),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          child: Row(children: [
-            const PulseDot(color: ZT.rose, animate: true, size: 7),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '未连接(${app.linkFailure ?? app.error ?? '连接中'})—— 点此重连',
-                style: const TextStyle(
-                    fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk),
-              ),
-            ),
-            const Icon(Icons.refresh_rounded, size: 16, color: ZT.onInk),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _sessionTile(Map<String, dynamic> s) {
-    final id = '${s['id']}';
-    final title = '${s['title'] ?? '未命名会话'}';
-    final model = '${s['model'] ?? ''}';
-    final lastMessage = '${s['last_message'] ?? ''}'.trim();
-    final pinned = _isPinned(s);
-    final running = s['isRunning'] == true;
-    final awaiting = s['awaitingApproval'] == true;
-    final picked = _picked.contains(id);
-
-    return HardCard(
-      color: picked ? ZT.surfaceHi : ZT.surface,
-      onTap: () {
-        if (_manage) {
-          setState(() => picked ? _picked.remove(id) : _picked.add(id));
-        } else {
-          _openChat(s);
-        }
-      },
-      onLongPress: _manage ? null : _toggleManage,
-      child: Row(children: [
-        if (_manage)
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: Icon(
-              picked ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
-              size: 20,
-              color: picked ? ZT.primary : ZT.inkFaint,
-            ),
-          ),
-        if (pinned && !_manage)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Icon(Icons.push_pin_rounded, size: 13, color: ZT.lemon),
-          ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
-              if (lastMessage.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(lastMessage,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: ZT.inkSoft)),
-                ),
-              const SizedBox(height: 4),
-              Row(children: [
-                // 待确认徽章:等审批的会话最需要用户回去处理,琥珀色优先于"运行中"
-                if (awaiting)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: ShapeDecoration(
-                      color: ZT.lemon.withValues(alpha: 0.12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(2),
-                          side: BorderSide(
-                              width: 1, color: ZT.lemon.withValues(alpha: 0.7))),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const PulseDot(color: ZT.lemon, animate: true, size: 5),
-                      const SizedBox(width: 4),
-                      Text('待确认',
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: ZT.lemon,
-                              fontFamily: ZT.sans)),
-                    ]),
-                  ),
-                if (running)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: ShapeDecoration(
-                      color: ZT.primary.withValues(alpha: 0.1),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(2),
-                          side: BorderSide(
-                              width: 1, color: ZT.primary.withValues(alpha: 0.5))),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const PulseDot(color: ZT.primary, animate: true, size: 5),
-                      const SizedBox(width: 4),
-                      Text('运行中',
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: ZT.primary,
-                              fontFamily: ZT.sans)),
-                    ]),
-                  ),
-                if (s['source'] == 'local')
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: ShapeDecoration(
-                      color: ZT.lemon.withValues(alpha: 0.1),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(2),
-                          side: BorderSide(
-                              width: 1, color: ZT.lemon.withValues(alpha: 0.5))),
-                    ),
-                    child: const Text('本地',
-                        style: TextStyle(
-                            fontSize: 10, color: ZT.lemon, fontFamily: ZT.sans)),
-                  ),
-                if (s['source'] == 'local') const SizedBox(width: 8),
-                if (model.isNotEmpty && model != 'default') ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: ShapeDecoration(
-                      color: ZT.aqua.withValues(alpha: 0.1),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(2),
-                          side: BorderSide(
-                              width: 1, color: ZT.aqua.withValues(alpha: 0.5))),
-                    ),
-                    child: Text(model,
-                        style: const TextStyle(
-                            fontSize: 10, color: ZT.aqua, fontFamily: ZT.mono)),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Text(_timeLabel(s),
-                    style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
-              ]),
-            ],
-          ),
-        ),
-        if (!_manage)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
-            onPressed: () => _sessionMenu(s),
-          ),
-      ]),
-    );
-  }
-
-  Future<void> _sessionMenu(Map<String, dynamic> s) {
-    return showModalBottomSheet(
-      context: context,
-      backgroundColor: ZT.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
-        side: BorderSide(color: ZT.edge),
-      ),
-      builder: (ctx) {
-        final pinned = _isPinned(s);
-        return SafeArea(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(height: 6),
-            for (final (label, icon, color, onTap) in [
-              (
-                pinned ? '取消置顶' : '置顶',
-                Icons.push_pin_rounded,
-                ZT.lemon,
-                () => app.patchSession('${s['id']}', isPinned: !pinned)
-              ),
-              ('重命名', Icons.edit_rounded, ZT.aqua, () => _rename(s)),
-              (
-                '删除',
-                Icons.delete_outline_rounded,
-                ZT.rose,
-                () async {
-                  final ok = await showDialog<bool>(
-                    context: ctx,
-                    builder: (dctx) => AlertDialog(
-                      title: const Text('删除会话?'),
-                      content: Text("'${s['title'] ?? ''}' 及其历史将被删除。"),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(dctx, false),
-                            child: const Text('取消')),
-                        TextButton(
-                            onPressed: () => Navigator.pop(dctx, true),
-                            child: const Text('删除',
-                                style: TextStyle(color: ZT.rose))),
-                      ],
-                    ),
-                  );
-                  if (ok == true) await app.deleteSession('${s['id']}');
-                },
-              ),
-            ])
-              ListTile(
-                leading: Icon(icon, size: 20, color: color),
-                title: Text(label,
-                    style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                        color: color)),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await onTap();
-                },
-              ),
-            const SizedBox(height: 6),
-          ]),
-        );
-      },
-    );
-  }
-
-  Widget _manageBar() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: ZT.surface,
-        border: Border(top: BorderSide(width: 1.4, color: ZT.primary)),
-      ),
-      padding: EdgeInsets.only(
-          left: 14, right: 14, top: 8, bottom: 8 + MediaQuery.of(context).padding.bottom),
-      child: Row(children: [
-        Expanded(
-          child: BigButton(
-            label: '置顶/取消',
-            icon: Icons.push_pin_rounded,
-            color: ZT.lemon,
-            onPressed: _picked.isEmpty ? null : _pinPicked,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: BigButton(
-            label: '删除',
-            icon: Icons.delete_outline_rounded,
-            color: ZT.rose,
-            textColor: Colors.white,
-            onPressed: _picked.isEmpty ? null : _deletePicked,
-          ),
-        ),
-      ]),
-    );
-  }
-
-  // ---------------------------------------------------------------- helpers
-
-  bool _isPinned(Map<String, dynamic> s) {
-    final v = s['isPinned'] ?? s['is_pinned'];
-    return v == true || v == 1;
-  }
-
-  String _timeLabel(Map<String, dynamic> s) {
-    final raw = '${s['updatedAt'] ?? s['updated_at'] ?? s['createdAt'] ?? s['created_at'] ?? ''}';
-    final t = DateTime.tryParse(raw);
-    if (t == null) return '';
-    final now = DateTime.now();
-    final d = now.difference(t);
-    if (d.inMinutes < 1) return '刚刚';
-    if (d.inHours < 1) return '${d.inMinutes} 分钟前';
-    if (d.inDays < 1) return '${d.inHours} 小时前';
-    if (d.inDays < 30) return '${d.inDays} 天前';
-    return '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
   }
 }
 
-/// 新建会话弹窗:标题(可空,后端自动) + 模型(可缺省)。
+/// 新建会话弹窗(保留原有交互)。
 class _NewSessionDialog extends StatefulWidget {
   final ZApp app;
 

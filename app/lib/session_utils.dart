@@ -1,5 +1,4 @@
 // 会话列表状态徽章与筛选(Dart,与 Flutter 页面解耦,可单测)。
-import 'package:flutter/material.dart';
 
 /// 筛选维度(对应参考稿 chips:全部/置顶/归档/项目)。
 enum SessionFilter { all, pinned, archived, project }

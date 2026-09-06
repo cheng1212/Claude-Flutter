@@ -54,7 +54,7 @@ class ZApi {
     return (res as Map).cast<String, dynamic>();
   }
 
-  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags}) async {
+  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
     await _call('PATCH', '/api/sessions/$id', {
       'title': ?title,
       'isPinned': ?isPinned,
@@ -62,6 +62,7 @@ class ZApi {
       'permissionMode': ?permissionMode,
       'archived': ?archived,
       'tags': ?tags,
+      'cwd': ?cwd,
     });
   }
 

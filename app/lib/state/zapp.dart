@@ -305,10 +305,27 @@ class ZApp extends ChangeNotifier {
     }
   }
 
-  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode}) async {
-    await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode);
+  Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
+    await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode, archived: archived, tags: tags, cwd: cwd);
     await _loadSessions();
     notifyListeners();
+  }
+
+  /// 复制会话(fork):服务端拷贝消息与配置;完成后刷新列表,返回新会话行。
+  Future<Map<String, dynamic>> forkSession(String id) async {
+    final row = await _api.forkSession(id);
+    await _loadSessions();
+    notifyListeners();
+    return row;
+  }
+
+  /// 导出会话 markdown;失败返回 null(调用方提示即可)。
+  Future<({String filename, String markdown})?> exportSession(String id) async {
+    try {
+      return await _api.exportSession(id);
+    } on Object {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------- 对话动作
