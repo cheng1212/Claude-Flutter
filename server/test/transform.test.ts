@@ -90,7 +90,7 @@ describe('transformMessage', () => {
     expect(transformMessage({
       type: 'system', subtype: 'task_started', session_id: 's',
       task_id: 'k1', description: '跑测试', task_type: 'local_agent', is_backgrounded: true,
-    })).toEqual([{ kind: 'task_started', taskId: 'k1', description: '跑测试', taskType: 'local_agent' }]);
+    })).toEqual([{ kind: 'task_started', taskId: 'k1', description: '跑测试', taskType: 'local_agent', isBackgrounded: true }]);
 
     expect(transformMessage({
       type: 'system', subtype: 'task_notification', session_id: 's',

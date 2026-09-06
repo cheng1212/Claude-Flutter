@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
 import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
+import { readOutputTail } from './backgrounds.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
 export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[] }): void {
@@ -117,10 +118,17 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     });
   });
 
-  // 后台任务列表(Bash run_in_background 登记的 shell)
-  app.get('/api/sessions/:id/backgrounds', async (req) => ({
-    backgrounds: deps.backgrounds?.((req.params as { id: string }).id) ?? [],
-  }));
+  // 后台任务列表(Bash run_in_background + SDK task_* 登记的统一视图;
+  // 带落盘输出文件的任务现场读最新输出尾,不等模型调 BashOutput)
+  app.get('/api/sessions/:id/backgrounds', async (req) => {
+    const rows = (deps.backgrounds?.((req.params as { id: string }).id) ?? []) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      if (typeof row.outputFile === 'string' && row.outputFile) {
+        row.outputTail = await readOutputTail(row.outputFile);
+      }
+    }
+    return { backgrounds: rows };
+  });
 
   // 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成(按字符量估算)
   app.get('/api/sessions/:id/usage', async (req) => {

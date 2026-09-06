@@ -19,6 +19,10 @@ export type WsGatewayDeps = {
   backgrounds?: {
     onToolUse(sessionId: string, toolName: string, toolId: string, input: unknown): void;
     onToolResult(sessionId: string, toolId: string, content: string, isError: boolean): void;
+    onTaskEvent(sessionId: string, ev: {
+      kind: string; taskId?: string; toolUseId?: string; description?: string;
+      taskType?: string; subagentType?: string; status?: string; summary?: string; outputFile?: string;
+    }): void;
   };
   runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
 };
@@ -96,6 +100,9 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
         String((event as { content?: unknown }).content ?? ''),
         (event as { isError?: unknown }).isError === true,
       );
+    }
+    if (event.kind === 'task_started' || event.kind === 'task_updated' || event.kind === 'task_complete') {
+      backgrounds?.onTaskEvent(sessionId, event as unknown as { kind: string; taskId?: string });
     }
     if (event.kind === 'usage') {
       const row = activeRuns.get(sessionId);

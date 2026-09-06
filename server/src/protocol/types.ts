@@ -7,8 +7,16 @@ export type ProtocolEvent =
   | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown }
   | { kind: 'tool_result'; toolId: string; content: string; isError: boolean }
   | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown }
-  | { kind: 'task_started'; taskId: string; description: string; taskType?: string }
-  | { kind: 'task_complete'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
+  | {
+    kind: 'task_started'; taskId: string; description: string; taskType?: string;
+    toolUseId?: string; subagentType?: string; isBackgrounded?: boolean; spawnDepth?: number;
+  }
+  | {
+    kind: 'task_updated'; taskId: string;
+    status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused';
+    isBackgrounded?: boolean;
+  }
+  | { kind: 'task_complete'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string; outputFile?: string }
   | {
     kind: 'usage';
     inputTokens: number;
