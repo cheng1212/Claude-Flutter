@@ -8,7 +8,7 @@ import 'api.dart';
 import 'state/zapp.dart';
 import 'theme.dart';
 import 'ui/login_page.dart';
-import 'ui/sessions_page.dart';
+import 'ui/app_shell.dart';
 import 'ws.dart';
 
 Future<void> main() async {
@@ -136,7 +136,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
                   error: _loginError,
                   busy: _connecting,
                 )
-              : SessionsPage(app: _app!, onLogout: _logout),
+              : AppShell(app: _app!, onLogout: _logout),
     );
   }
 }

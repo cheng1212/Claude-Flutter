@@ -12,7 +12,10 @@ class SessionsPage extends StatefulWidget {
   final ZApp app;
   final VoidCallback onLogout;
 
-  const SessionsPage({super.key, required this.app, required this.onLogout});
+  /// 由项目 tab 点入时携带的初始项目过滤(AppShell 以 Key 重挂载生效)。
+  final String? initialProject;
+
+  const SessionsPage({super.key, required this.app, required this.onLogout, this.initialProject});
 
   @override
   State<SessionsPage> createState() => _SessionsPageState();
@@ -35,6 +38,10 @@ class _SessionsPageState extends State<SessionsPage> {
   void initState() {
     super.initState();
     app.addListener(_onApp);
+    if (widget.initialProject != null) {
+      _project = widget.initialProject;
+      _filter = SessionFilter.project;
+    }
     app.refreshSessions();
   }
 
