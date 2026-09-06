@@ -1,14 +1,14 @@
 export type ProtocolEvent =
-  | { kind: 'session_created'; providerSessionId: string }
-  | { kind: 'text'; role: 'assistant' | 'user'; content: string; images?: string[] }
-  | { kind: 'stream_delta'; content: string }
-  | { kind: 'thinking'; content: string }
-  | { kind: 'thinking_delta'; content: string }
-  | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown }
-  | { kind: 'tool_result'; toolId: string; content: string; isError: boolean }
-  | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown }
-  | { kind: 'task_started'; taskId: string; description: string; taskType?: string }
-  | { kind: 'task_complete'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
+  | { kind: 'session_created'; providerSessionId: string; parentToolUseId?: string }
+  | { kind: 'text'; role: 'assistant' | 'user'; content: string; images?: string[]; parentToolUseId?: string }
+  | { kind: 'stream_delta'; content: string; parentToolUseId?: string }
+  | { kind: 'thinking'; content: string; parentToolUseId?: string }
+  | { kind: 'thinking_delta'; content: string; parentToolUseId?: string }
+  | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown; parentToolUseId?: string }
+  | { kind: 'tool_result'; toolId: string; content: string; isError: boolean; parentToolUseId?: string }
+  | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown; parentToolUseId?: string }
+  | { kind: 'task_started'; taskId: string; description: string; taskType?: string; parentToolUseId?: string }
+  | { kind: 'task_complete'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string; parentToolUseId?: string }
   | {
     kind: 'usage';
     inputTokens: number;
@@ -21,9 +21,10 @@ export type ProtocolEvent =
     /** 主模型上下文窗口大小(tokens);SDK 未给时为 0 */
     contextWindow: number;
     maxOutputTokens: number;
+    parentToolUseId?: string;
   }
-  | { kind: 'complete'; exitCode: number; aborted: boolean }
-  | { kind: 'error'; content: string };
+  | { kind: 'complete'; exitCode: number; aborted: boolean; parentToolUseId?: string }
+  | { kind: 'error'; content: string; parentToolUseId?: string };
 
 /** 后台保活判定:这些工具会把工作留到 result 之后。 */
 export const DEFERRED_WORK_TOOLS = new Set(['Monitor', 'ScheduleWakeup', 'CronCreate', 'TaskCreate']);
