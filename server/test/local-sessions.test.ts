@@ -176,7 +176,7 @@ describe('reloadSessionTranscript · 完整重载', () => {
       expect(r1.merged).toBe(2);
       const page = listMessages(db, s.id, { limit: 10 });
       expect(page.total).toBe(2);
-      expect(page.messages.map((m) => JSON.parse(m.meta).content ?? m.content)).toContain('丢失的提问');
+      expect(page.messages.map((m) => JSON.parse(m.meta ?? '{}').content ?? m.content)).toContain('丢失的提问');
 
       const r2 = reloadSessionTranscript(db, s.id);
       expect(r2.merged).toBe(0); // 幂等

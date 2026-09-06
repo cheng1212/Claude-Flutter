@@ -181,10 +181,10 @@ describe('定时任务登记', () => {
     const { openDb, createSession, recordCronToolUse, listCrons } = await import('../src/db.js');
     const db = openDb(':memory:');
     const s = createSession(db, { title: 'x' });
-    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'CronCreate', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下', recurring: true } });
-    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'Other', toolInput: {} });
+    recordCronToolUse(db, s.id, { toolName: 'CronCreate', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下', recurring: true } });
+    recordCronToolUse(db, s.id, { toolName: 'Other', toolInput: {} });
     expect(listCrons(db).length).toBe(1);
-    recordCronToolUse(db, s.id, { kind: 'tool_use', toolName: 'CronDelete', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下' } });
+    recordCronToolUse(db, s.id, { toolName: 'CronDelete', toolInput: { cron: '*/10 * * * *', prompt: '轮询一下' } });
     expect(listCrons(db).length).toBe(0);
   });
 });

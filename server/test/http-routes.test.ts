@@ -227,6 +227,23 @@ describe('REST · 会话管理增强', () => {
   });
 });
 
+describe('REST · 定时任务', () => {
+  it('GET /api/crons 支持 ?session= 过滤(会话弹层/快捷条只取本会话)', async () => {
+    const db = openDb(':memory:');
+    const { recordCronToolUse } = await import('../src/db.js');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const a = (await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: 'a' } })).json() as { id: string };
+    const b = (await app.inject({ method: 'POST', url: '/api/sessions', headers: H, payload: { title: 'b' } })).json() as { id: string };
+    recordCronToolUse(db, a.id, { toolName: 'CronCreate', toolInput: { cron: '*/10 * * * *', prompt: '给A', recurring: true } });
+    recordCronToolUse(db, b.id, { toolName: 'CronCreate', toolInput: { cron: '*/20 * * * *', prompt: '给B', recurring: true } });
+    const all = (await app.inject({ method: 'GET', url: '/api/crons', headers: H })).json() as { crons: unknown[] };
+    expect(all.crons.length).toBe(2);
+    const onlyA = (await app.inject({ method: 'GET', url: `/api/crons?session=${a.id}`, headers: H })).json() as { crons: { prompt: string }[] };
+    expect(onlyA.crons.length).toBe(1);
+    expect(onlyA.crons[0].prompt).toBe('给A');
+  });
+});
+
 describe('REST · 复制会话(fork)', () => {
   it('POST /fork 复制消息与配置,fork_from=源 provider_session_id', async () => {
     const db = openDb(':memory:');

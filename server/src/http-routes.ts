@@ -61,7 +61,11 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   });
 
   // 定时任务列表(active;next_fire 现算,倒计时数据源)
-  app.get('/api/crons', async () => ({ crons: listCrons(deps.db) }));
+  // ?session= 会话过滤:app 会话弹层/快捷条指示灯都以"本会话"语义使用,漏传会混入别会话的 cron
+  app.get('/api/crons', async (req) => {
+    const q = req.query as { session?: string };
+    return { crons: listCrons(deps.db, q.session || undefined) };
+  });
 
   app.delete('/api/crons/:id', async (req) => {
     markCronDeleted(deps.db, (req.params as { id: string }).id);
