@@ -160,8 +160,13 @@ class ZApi {
   }
 
   /// 历史消息:{messages:[…], total};行内 meta 是完整出站事件(含 seq)。
-  Future<({List<Map<String, dynamic>> messages, int total})> messages(String id, {int limit = 500, int offset = 0}) async {
-    final res = await _call('GET', '/api/sessions/$id/messages?limit=$limit&offset=$offset', null);
+  /// beforeSeq 给"比该 seq 更旧的一页"——分页期间新消息插入(更高 seq)时,
+  /// offset 窗口会整体上移丢一截;按 seq 锚点翻页则免疫漂移。
+  Future<({List<Map<String, dynamic>> messages, int total})> messages(String id, {int limit = 500, int offset = 0, int? beforeSeq}) async {
+    final q = beforeSeq != null
+        ? 'limit=$limit&beforeSeq=$beforeSeq'
+        : 'limit=$limit&offset=$offset';
+    final res = await _call('GET', '/api/sessions/$id/messages?$q', null);
     if (res is! Map) return (messages: const <Map<String, dynamic>>[], total: 0);
     final list = (res['messages'] as List? ?? const []);
     return (

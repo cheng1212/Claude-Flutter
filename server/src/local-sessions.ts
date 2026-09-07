@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appendOutbound, createSession, getSession, getSessionByProviderSessionId, listTombstonedProviderSessionIds, maxSeq, type Db } from './db.js';
+import { appendOutbound, createSession, getSession, getSessionByProviderSessionId, listTombstonedProviderSessionIds, type Db } from './db.js';
 import type { ProtocolEvent } from './protocol/types.js';
 type AnyRecord = Record<string, unknown>;
 
@@ -78,15 +78,22 @@ function findProjectFiles(rootDir: string): string[] {
 
 /**
  * 完整重载:按 provider_session_id 找磁盘转录,把库里缺的事件补回来。
- * 合并按内容指纹(kind+content前120)去重,追加在现有消息尾部(seq 续号)。
- * 用于:回合中断/服务重启导致事件未落库、刷新不出后续内容的自救。
+ * 旧实现按内容指纹(kind+content前120)逐条追加在尾部——两个致命缺陷:
+ * 1) 缺的是中段事件时追加到尾部,消息顺序错乱;
+ * 2) 同文消息(反复"继续"/相同工具调用)靠"存在即跳过"会永久吞掉。
+ * 现改为"完整重建":磁盘转录才是权威真相,按文件行序重新铺 seq,
+ * 顺序天然正确、同文消息也一条不丢。多端(PC 用 CloudCLI 驱动)期间
+ * 本服务漏落库的消息,刷新即从转录全量找回。
+ * 注意:会话正在本服务上跑时(isRunning),DB 由实时流权威维护,重建会把
+ * maxSeq 拉低、与 registry 的 seq 指针错位 → 跳过(实时流本就实时更新)。
  */
 export function reloadSessionTranscript(
   db: import('./db.js').Db, sessionId: string,
-  opts: { projectsDir?: string } = {},
+  opts: { projectsDir?: string; isRunning?: boolean } = {},
 ): { merged: number } {
   const session = getSession(db, sessionId);
   if (!session?.provider_session_id) return { merged: 0 };
+  if (opts.isRunning) return { merged: 0 };
   const target = session.provider_session_id + '.jsonl';
   const projectsDir = opts.projectsDir ?? path.join(claudeHome(), 'projects');
   let filePath: string | null = null;
@@ -95,35 +102,23 @@ export function reloadSessionTranscript(
   }
   if (!filePath) return { merged: 0 };
 
-  // 指纹按条数对齐:库内已有 N 条的指纹,转录里前 N 条视为已入库,余量照补。
-  // "存在即跳过"会把同文重复消息(反复"继续"、同样的工具调用)永远吞掉。
-  const quota = new Map<string, number>();
-  for (const r of db.prepare(
-    'SELECT kind, substr(content,1,120) c, COUNT(*) n FROM messages WHERE session_id=? GROUP BY kind, c',
-  ).all(sessionId) as { kind: string; c: string; n: number }[]) {
-    quota.set(r.kind + '|' + r.c, r.n);
-  }
-  let seq = maxSeq(db, sessionId);
-  let merged = 0;
+  const events: ProtocolEvent[] = [];
   for (const line of readAllLines(filePath)) {
     const raw = parseObj(line);
     if (!raw) continue;
-    for (const ev of normalizeTranscriptLine(raw)) {
-      const content = ev.kind === 'tool_use'
-        ? JSON.stringify((ev as { toolInput?: unknown }).toolInput ?? {})
-        : String((ev as { content?: string }).content ?? '');
-      const fp = ev.kind + '|' + content.slice(0, 120);
-      const left = quota.get(fp) ?? 0;
-      if (left > 0) {
-        quota.set(fp, left - 1); // 这条对应库内已有的一份
-        continue;
-      }
+    for (const ev of normalizeTranscriptLine(raw)) events.push(ev);
+  }
+  const before = (db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId) as { c: number }).c;
+  db.transaction(() => {
+    db.prepare('DELETE FROM messages WHERE session_id=?').run(sessionId);
+    let seq = 0;
+    for (const ev of events) {
       seq += 1;
       appendOutbound(db, sessionId, { seq, ...ev });
-      merged += 1;
     }
-  }
-  return { merged };
+  })();
+  const after = (db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId) as { c: number }).c;
+  return { merged: after - before };
 }
 
 /** 按 provider_session_id 找磁盘转录(父会话文件;跳过 subagents 内部转写)。 */
@@ -369,6 +364,8 @@ export function normalizeTranscriptLine(raw: AnyRecord): ProtocolEvent[] {
 
   if (role === 'user' && content && raw.isMeta !== true) {
     if (Array.isArray(content)) {
+      const textParts: string[] = [];
+      const images: string[] = [];
       for (const part of content) {
         const block = part as AnyRecord;
         if (block.type === 'tool_result') {
@@ -383,9 +380,18 @@ export function normalizeTranscriptLine(raw: AnyRecord): ProtocolEvent[] {
           }
         } else if (block.type === 'text') {
           const text = cleanUserText((block.text as string) ?? '');
-          if (text && !isInternalContent(text)) out.push({ kind: 'text', role: 'user', content: text });
+          if (text && !isInternalContent(text)) textParts.push(text);
+        } else if (block.type === 'image') {
+          // 转录里图片是 base64 content block,还原成 data URI,前端气泡可直接回显。
+          const src = block.source as AnyRecord | undefined;
+          const media = typeof src?.media_type === 'string' ? src.media_type : '';
+          const data = typeof src?.data === 'string' ? src.data : '';
+          if (media.startsWith('image/') && data) images.push(`data:${media};base64,${data}`);
         }
-        // image block 无渲染支持,导入时忽略
+      }
+      const text = textParts.join('\n').trim();
+      if (text || images.length > 0) {
+        out.push({ kind: 'text', role: 'user', content: text, ...(images.length ? { images } : {}) });
       }
     } else if (typeof content === 'string') {
       const text = content;

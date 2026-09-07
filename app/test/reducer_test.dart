@@ -243,6 +243,14 @@ void main() {
     expect(s.pendingPermission, isNull);
   });
 
+  test('rollbackLocalUser:撤回乐观行时一并清 running(发送失败不留假运行中)', () {
+    var s = applyLocalUser(const ChatState(), '发不出去');
+    expect(s.running, isTrue); // 乐观置位
+    s = rollbackLocalUser(s);
+    expect(s.rows, isEmpty);
+    expect(s.running, isFalse); // 撤回应同步清 running,否则按钮卡 STOP
+  });
+
   test('upstream_status:落地真实相位,终态与新回合清空,无效相位忽略', () {
     var s = applyLocalUser(const ChatState(), '查一下');
     expect(s.upstreamPhase, isNull); // 新回合开始:上一回合的相位不得残留

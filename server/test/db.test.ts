@@ -30,6 +30,24 @@ describe('db', () => {
     const tail = listMessages(db, s.id, { limit: 10, offset: 20 });
     expect(tail.messages[0].seq).toBe(5);
   });
+  it('beforeSeq 锚点翻更旧页:新消息插入不漂移', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: 'x' });
+    for (let i = 1; i <= 30; i++) {
+      appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: `m${i}` });
+    }
+    // 第一页取最新 10 条(seq 30..21),minSeq=21;beforeSeq=21 应返回 20..11
+    const page = listMessages(db, s.id, { limit: 10, offset: 0 });
+    expect(page.messages[0].seq).toBe(30);
+    const minSeq = page.messages[page.messages.length - 1].seq;
+    expect(minSeq).toBe(21);
+    // 模拟翻页期间新插入 5 条(seq 31..35):offset 分页会漂移,锚点分页不受影响
+    for (let i = 31; i <= 35; i++) {
+      appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: `m${i}` });
+    }
+    const older = listMessages(db, s.id, { limit: 10, beforeSeq: minSeq });
+    expect(older.messages.map((m) => m.seq)).toEqual([20, 19, 18, 17, 16, 15, 14, 13, 12, 11]);
+  });
   it('run 记录成本与用量', () => {
     const db = openDb(':memory:');
     const s = createSession(db, { title: 'r' });

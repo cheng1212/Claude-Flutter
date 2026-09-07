@@ -95,7 +95,8 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
 
   // 完整重载:从磁盘 CLI 转录补回中断/重启丢失的事件(幂等)
   app.post('/api/sessions/:id/reload', async (req) => {
-    const r = reloadSessionTranscript(deps.db, (req.params as { id: string }).id);
+    const id = (req.params as { id: string }).id;
+    const r = reloadSessionTranscript(deps.db, id, { isRunning: deps.isRunning?.(id) ?? false });
     return { ok: true, ...r };
   });
 
@@ -135,10 +136,11 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
 
   app.get('/api/sessions/:id/messages', async (req) => {
     const id = (req.params as { id: string }).id;
-    const q = req.query as { limit?: string; offset?: string };
+    const q = req.query as { limit?: string; offset?: string; beforeSeq?: string };
     return listMessages(deps.db, id, {
       limit: q.limit ? Number(q.limit) : undefined,
       offset: q.offset ? Number(q.offset) : undefined,
+      beforeSeq: q.beforeSeq ? Number(q.beforeSeq) : undefined,
     });
   });
 

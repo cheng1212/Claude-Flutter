@@ -89,21 +89,25 @@ void main() {
   test('openSession 首屏:最新一页到齐即上屏,不等全量分页', () async {
     await openEmpty();
     final gate = Completer<void>();
-    Object? pageFor(int offset) => {
-          'messages': [
-            for (var i = 0; i < 500 && offset + i < 1200; i++)
-              {
-                'seq': offset + i + 1,
-                'role': 'user',
-                'meta': {'kind': 'text', 'role': 'assistant', 'seq': offset + i + 1, 'content': 'm${offset + i + 1}'},
-              }
-          ],
-          'total': 1200,
-        };
+    // 真实 API 语义:seq 1..1200,offset=0 返回最新 500(seq 1200..701),
+    // beforeSeq 返回"比它更旧"的一页。首屏只等第一页,老消息后台按锚点补齐。
+    Map<String, dynamic> pageFor({int? beforeSeq, int? offset}) {
+      final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
+      final msgs = <Map>[];
+      for (var s = high; s > high - 500 && s >= 1; s--) {
+        msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
+      }
+      return {'messages': msgs, 'total': 1200};
+    }
+
     http.responder = (c) {
       if (c.path.startsWith('/api/sessions/s1/messages')) {
-        final offset = int.parse(Uri.parse(c.path).queryParameters['offset'] ?? '0');
-        return offset == 0 ? pageFor(0) : gate.future.then((_) => pageFor(offset));
+        final q = Uri.parse(c.path).queryParameters;
+        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
+        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
+        final page = pageFor(beforeSeq: beforeSeq, offset: offset);
+        final isFirst = beforeSeq == null;
+        return isFirst ? page : gate.future.then((_) => page);
       }
       return null;
     };
@@ -111,7 +115,7 @@ void main() {
     await pump(const Duration(milliseconds: 20));
     expect(app.historyLoading, isFalse, reason: '首屏只等最新一页,老消息后台补');
     expect(app.chat.rows.length, 500);
-    expect((app.chat.rows.first as TextRow).content, 'm1');
+    expect((app.chat.rows.first as TextRow).content, 'm701'); // 最新一页的最小 seq
     gate.complete();
     await opening;
     expect(app.chat.rows.length, 1200, reason: '补齐换底后全量在列');
@@ -140,21 +144,19 @@ void main() {
     await openEmpty();
     http.responder = (c) {
       if (c.path.startsWith('/api/sessions/s1/messages')) {
-        final offset = int.parse(Uri.parse(c.path).queryParameters['offset'] ?? '0');
-        if (offset == 500) {
+        final q = Uri.parse(c.path).queryParameters;
+        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
+        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
+        final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
+        // 首轮补齐(比最新页更旧)时,窗口内到达一条 live 事件,换底必须不吞
+        if (beforeSeq == 701) {
           channel.serverPush({'kind': 'text', 'role': 'assistant', 'seq': 1201, 'sessionId': 's1', 'content': 'live'});
         }
-        return {
-          'messages': [
-            for (var i = 0; i < 500 && offset + i < 1200; i++)
-              {
-                'seq': offset + i + 1,
-                'role': 'user',
-                'meta': {'kind': 'text', 'role': 'assistant', 'seq': offset + i + 1, 'content': 'm${offset + i + 1}'},
-              }
-          ],
-          'total': 1200,
-        };
+        final msgs = <Map>[];
+        for (var s = high; s > high - 500 && s >= 1; s--) {
+          msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
+        }
+        return {'messages': msgs, 'total': 1200};
       }
       return null;
     };

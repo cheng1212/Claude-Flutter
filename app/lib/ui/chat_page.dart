@@ -744,7 +744,7 @@ class _ChatPageState extends State<ChatPage> {
           showToast(context, switch (merged) {
             > 0 => '完整重载:补回 $merged 条丢失消息',
             == 0 => '已对齐 CLI 转录,没有缺失消息',
-            _ => '转录重载失败,已按本地历史重建',
+            _ => '已按 CLI 转录重建(清掉了 ${-merged} 条旧进程残留事件)',
           });
         }
       }),
@@ -981,20 +981,24 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
           const SizedBox(width: 8),
-          // 逐字刷新:不依赖页面重建
+          // 逐字刷新:不依赖页面重建;再叠一层监听已选图片——只选图不输字时,
+          // 单靠 _input 不会重建按钮,发送键会一直灰着发不出去。
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _input,
-            builder: (context, value, _) => _SendOrStop(
-              // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
-              canStop: chat.running && app.socket.state == ZSocketState.open,
-              stopping: _stopping && chat.running,
-              hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
-              onSend: _send,
-              onStop: () {
-                HapticFeedback.mediumImpact();
-                setState(() => _stopping = true); // 乐观反馈:别等 CLI 掐断流才给动静
-                app.abort();
-              },
+            builder: (context, value, _) => ValueListenableBuilder<List<String>>(
+              valueListenable: _pendingImages,
+              builder: (context, images, _) => _SendOrStop(
+                // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
+                canStop: chat.running && app.socket.state == ZSocketState.open,
+                stopping: _stopping && chat.running,
+                hasText: value.text.trim().isNotEmpty || images.isNotEmpty,
+                onSend: _send,
+                onStop: () {
+                  HapticFeedback.mediumImpact();
+                  setState(() => _stopping = true); // 乐观反馈:别等 CLI 掐断流才给动静
+                  app.abort();
+                },
+              ),
             ),
           ),
         ]),

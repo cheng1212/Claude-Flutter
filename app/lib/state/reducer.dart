@@ -347,9 +347,11 @@ ChatState applyPermissionAnswer(ChatState s) {
 }
 
 /// 回滚末尾的乐观用户行(WS 未连上、发送失败时)。
+/// 乐观置位的 running 一并清掉:这条消息根本没在服务端开跑,不清会让
+/// 发送/停止按钮冻结在"运行中"(明明没在跑却显示停止、发不出去)。
 ChatState rollbackLocalUser(ChatState s) {
   final idx = s.rows.lastIndexWhere((r) => r is UserRow && r.pending);
   if (idx < 0) return s;
   final rows = [...s.rows]..removeAt(idx);
-  return _with(s, rows: rows);
+  return _with(s, rows: rows, running: false);
 }

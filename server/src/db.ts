@@ -370,10 +370,17 @@ export function appendOutbound(
 }
 
 export function listMessages(
-  db: Db, sessionId: string, opts: { limit?: number; offset?: number } = {},
+  db: Db, sessionId: string, opts: { limit?: number; offset?: number; beforeSeq?: number } = {},
 ): { messages: MessageRow[]; total: number } {
   const total = (db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId) as { c: number }).c;
   const limit = Math.min(opts.limit ?? 200, 500);
+  // 锚点分页:beforeSeq 取"比该 seq 更旧的一页"。分页期间若新消息插入(更高 seq),
+  // offset 分页会让窗口整体上移、丢一截;按 seq 锚点走则天然免疫新消息漂移。
+  if (opts.beforeSeq !== undefined && Number.isFinite(opts.beforeSeq)) {
+    const messages = db.prepare('SELECT * FROM messages WHERE session_id=? AND seq < ? ORDER BY seq DESC LIMIT ?')
+      .all(sessionId, opts.beforeSeq, limit) as MessageRow[];
+    return { messages, total };
+  }
   const offset = Math.max(opts.offset ?? 0, 0);
   const messages = db.prepare('SELECT * FROM messages WHERE session_id=? ORDER BY seq DESC LIMIT ? OFFSET ?')
     .all(sessionId, limit, offset) as MessageRow[];

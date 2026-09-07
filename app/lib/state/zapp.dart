@@ -236,13 +236,17 @@ class ZApp extends ChangeNotifier {
         _backfill = null;
         return;
       }
-      // 后台补齐老消息:拉齐后连同 WS 留底整体重放,一次换底(seq 去重天然挡重复)。
-      var fetched = first.messages.length;
-      while (fetched < first.total) {
-        final hist = await _api.messages(id, limit: 500, offset: fetched);
+      // 后台补齐老消息:按 seq 锚点翻更旧页——offset 分页期间若新消息插入(更高 seq),
+      // 窗口会整体上移、整段漏掉;锚点(比当前最小 seq 更旧)免疫漂移,翻到底为止。
+      var beforeSeq = _minSeqOf(headEvents);
+      while (beforeSeq != null) {
+        final hist = await _api.messages(id, limit: 500, beforeSeq: beforeSeq);
         if (token != _openToken || _backfill != bf) return;
-        fetched += hist.messages.length;
-        bf.older.addAll(_histEvents(hist).$1);
+        final (older, _) = _histEvents(hist);
+        if (older.isEmpty) break;
+        bf.older.addAll(older);
+        beforeSeq = _minSeqOf(older);
+        if (hist.messages.length < 500) break; // 不足一页 = 已翻到最旧
       }
       var full = _replay([...headEvents, ...bf.older, ...bf.extra], maxSeq);
       final livePermission = currentSessionId == id ? chat.pendingPermission : null;
@@ -278,6 +282,17 @@ class ZApp extends ChangeNotifier {
       if (sq > maxSeq) maxSeq = sq;
     }
     return (events, maxSeq);
+  }
+
+  /// 事件列表里的最小 seq(锚点翻页的"更旧"边界);空列表返回 null。
+  int? _minSeqOf(List<Map<String, dynamic>> events) {
+    int? min;
+    for (final e in events) {
+      final s = (e['seq'] as num?)?.toInt();
+      if (s == null) continue;
+      if (min == null || s < min) min = s;
+    }
+    return min;
   }
 
   /// 排序重放一段事件(REST 按 seq 倒序返回,归约要按时间正序),水位抬到 maxSeq。

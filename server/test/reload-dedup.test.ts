@@ -51,4 +51,52 @@ describe('reloadSessionTranscript · 重复消息补回', () => {
     const again = reloadSessionTranscript(db, s.id);
     expect(again.merged).toBe(0); // 幂等
   });
+
+  it('中段缺消息:重建后按转录顺序铺开,不追加到尾部', async () => {
+    const { openDb, createSession, updateSession, appendOutbound, listMessages } = await import('../src/db.js');
+    const { reloadSessionTranscript } = await import('../src/local-sessions.js');
+
+    const provId = 'prov-order-1';
+    const projDir = path.join(home, 'projects', 'D--work-app');
+    fs.mkdirSync(projDir, { recursive: true });
+    // 转录权威真相:第一问 → 第一答 → 第二问 → 第二答
+    const lines = ['第一问', '第一答', '第二问', '第二答']
+      .map((t) => JSON.stringify({ type: t.startsWith('第一问') || t.startsWith('第二问') ? 'user' : 'assistant', sessionId: provId, cwd: 'D:\\work\\app', message: { role: t.startsWith('第一问') || t.startsWith('第二问') ? 'user' : 'assistant', content: t } }));
+    fs.writeFileSync(path.join(projDir, provId + '.jsonl'), [...lines, ''].join('\n'));
+
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: '断线' });
+    updateSession(db, s.id, { providerSessionId: provId });
+    // 库里只有首尾两条(中段 第一答/第二问 因断线漏落库)
+    appendOutbound(db, s.id, { seq: 1, kind: 'text', role: 'user', content: '第一问' });
+    appendOutbound(db, s.id, { seq: 2, kind: 'text', role: 'assistant', content: '第二答' });
+
+    reloadSessionTranscript(db, s.id);
+
+    const rows = listMessages(db, s.id, { limit: 10 }).messages;
+    rows.sort((a, b) => a.seq - b.seq); // listMessages 默认 DESC,升序后才是时间序
+    const contents = rows.map((m) => String((JSON.parse(String(m.meta)) as { content?: unknown }).content ?? m.content));
+    expect(contents).toEqual(['第一问', '第一答', '第二问', '第二答']); // 顺序正确,中段补回
+  });
+
+  it('会话正在本服务跑时不重建(实时流权威,防 seq 锁步打乱)', async () => {
+    const { openDb, createSession, updateSession, appendOutbound } = await import('../src/db.js');
+    const { reloadSessionTranscript } = await import('../src/local-sessions.js');
+
+    const provId = 'prov-running-1';
+    const projDir = path.join(home, 'projects', 'D--work-app');
+    fs.mkdirSync(projDir, { recursive: true });
+    fs.writeFileSync(path.join(projDir, provId + '.jsonl'), [
+      JSON.stringify({ type: 'user', sessionId: provId, cwd: 'D:\\work\\app', message: { role: 'user', content: '跑着呢' } }),
+      '',
+    ].join('\n'));
+
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: '跑' });
+    updateSession(db, s.id, { providerSessionId: provId });
+    appendOutbound(db, s.id, { seq: 1, kind: 'text', role: 'user', content: '跑着呢' });
+
+    const r = reloadSessionTranscript(db, s.id, { isRunning: true });
+    expect(r.merged).toBe(0); // 不重建
+  });
 });
