@@ -116,3 +116,13 @@ String? cronExpiryLabel(String? createdAtIso, {required bool recurring}) {
   if (t == null) return null;
   return '${_clock(t.add(const Duration(days: 7)))} 自动过期';
 }
+
+/// 会话相位:状态 chip 与发送/停止按钮的唯一判据。
+/// 连接不在位时一律「断线」——运行中状态在断网期间会冻结成假象
+/// (complete 事件永远到不了),此时停止无效、发送必败,UI 不许装作还在运行。
+String chatPhase({required bool running, required bool hasPermission, required bool socketOpen}) {
+  if (!socketOpen) return 'reconnecting';
+  if (hasPermission) return 'permission';
+  if (running) return 'running';
+  return 'idle';
+}

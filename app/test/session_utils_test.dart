@@ -99,4 +99,16 @@ void main() {
       expect(cronExpiryLabel(null, recurring: true), isNull);
     });
   });
+
+  group('chatPhase 相位判据', () {
+    test('连接不在位一律断线,running 冻结也不能假显示', () {
+      expect(chatPhase(running: true, hasPermission: true, socketOpen: false), 'reconnecting');
+      expect(chatPhase(running: true, hasPermission: false, socketOpen: false), 'reconnecting');
+    });
+    test('连接在位:permission > running > idle', () {
+      expect(chatPhase(running: true, hasPermission: true, socketOpen: true), 'permission');
+      expect(chatPhase(running: true, hasPermission: false, socketOpen: true), 'running');
+      expect(chatPhase(running: false, hasPermission: false, socketOpen: true), 'idle');
+    });
+  });
 }

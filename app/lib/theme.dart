@@ -188,6 +188,7 @@ class StatusChip extends StatelessWidget {
     final (Color color, String label) = switch (p) {
       'running' || 'working' || 'processing' => (ZT.primary, '运行中'),
       'waiting' || 'permission' => (ZT.lemon, '待确认'),
+      'reconnecting' => (ZT.rose, '断线'),
       'error' || 'failed' => (ZT.rose, '异常'),
       'done' || 'idle' || '' => (ZT.inkSoft, '空闲'),
       _ => (ZT.aqua, phase),
