@@ -33,6 +33,7 @@ class _ChatPageState extends State<ChatPage> {
   final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
+  bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
 
   Future<void> _pickReference() async {
     final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
@@ -189,6 +190,7 @@ class _ChatPageState extends State<ChatPage> {
     final text = _input.text.trim();
     final images = _pendingImages.value;
     if (text.isEmpty && images.isEmpty) return;
+    _stopping = false; // 新回合开跑,停止盲区状态作废
     // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
     final ok = app.sendChat(text, model: _model, permissionMode: _mode, images: images);
     if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
@@ -1006,10 +1008,12 @@ class _ChatPageState extends State<ChatPage> {
             builder: (context, value, _) => _SendOrStop(
               // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
               canStop: chat.running && app.socket.state == ZSocketState.open,
+              stopping: _stopping && chat.running,
               hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
               onSend: _send,
               onStop: () {
                 HapticFeedback.mediumImpact();
+                setState(() => _stopping = true); // 乐观反馈:别等 CLI 掐断流才给动静
                 app.abort();
               },
             ),
@@ -1650,11 +1654,15 @@ class _SendOrStop extends StatefulWidget {
   final VoidCallback onSend;
   final VoidCallback onStop;
 
+  /// 已点停止、正在等 CLI 落定的窗口期:按钮转圈防重复点,给即时反馈
+  final bool stopping;
+
   const _SendOrStop({
     required this.canStop,
     required this.hasText,
     required this.onSend,
     required this.onStop,
+    this.stopping = false,
   });
 
   @override
@@ -1666,12 +1674,14 @@ class _SendOrStopState extends State<_SendOrStop> {
 
   @override
   Widget build(BuildContext context) {
+    // 停止乐观反馈:点下瞬间就转「停止中」,不等 CLI 掐断流再转回(0.5~3 秒体感盲区)
     if (widget.canStop) {
+      final stopping = widget.stopping;
       return GestureDetector(
         onTapDown: (_) => setState(() => _pressed = true),
         onTapUp: (_) => setState(() => _pressed = false),
         onTapCancel: () => setState(() => _pressed = false),
-        onTap: widget.onStop,
+        onTap: stopping ? null : widget.onStop,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 90),
           width: 46,
@@ -1686,7 +1696,13 @@ class _SendOrStopState extends State<_SendOrStop> {
             ),
             shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose.withValues(alpha: 0.5)),
           ),
-          child: const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
+          child: stopping
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+                )
+              : const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
         ),
       );
     }
