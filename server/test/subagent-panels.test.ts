@@ -37,7 +37,7 @@ describe('子代理虚拟会话', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'agent-aaa.jsonl'), [
       JSON.stringify({ parentUuid: null, isSidechain: true, agentId: 'aaa', type: 'user', message: { role: 'user', content: '子任务提示' } }),
-      JSON.stringify({ sessionId: 'prov-sub-1', type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '子代理回答' }] } }),
+      JSON.stringify({ sessionId: 'prov-sub-1', model: 'nvidia/nemotron-3-ultra', type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '子代理回答' }] } }),
       '',
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(dir, 'agent-aaa.meta.json'), JSON.stringify({
@@ -50,9 +50,12 @@ describe('子代理虚拟会话', () => {
     const aaa = rows.find((r: { agentId: string }) => r.agentId === 'agent-aaa');
     expect(aaa).toMatchObject({
       agentId: 'agent-aaa', agentType: 'general-purpose', description: '搜集资料',
-      toolUseId: 'tool-1', spawnDepth: 1,
+      toolUseId: 'tool-1', spawnDepth: 1, model: 'nvidia/nemotron-3-ultra',
     });
     expect((aaa as { bytes: number }).bytes).toBeGreaterThan(0);
+    // 转录里没有 model 字段 → 空串(面板显示"继承主模型")
+    const bbb = rows.find((r: { agentId: string }) => r.agentId === 'agent-bbb');
+    expect((bbb as { model: string }).model).toBe('');
   });
 
   it('readSubagentTranscript:转录行还原为消息事件,seq 按行序;路径穿越给空', async () => {
