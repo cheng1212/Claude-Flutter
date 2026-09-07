@@ -1,11 +1,28 @@
 import type { FastifyInstance } from 'fastify';
+import path from 'node:path';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
 import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
+import { listProjects, createProject } from './projects.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[] }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string }): void {
+  // 项目文件夹:总目录下的子文件夹 = 项目;新建会话/移动会话从这里选,也可现场新建
+  app.get('/api/projects', async () => {
+    const root = deps.projectsRoot ?? '';
+    return { root, projects: root ? listProjects(root) : [] };
+  });
+
+  app.post('/api/projects', async (req, reply) => {
+    const root = deps.projectsRoot ?? '';
+    if (!root) return reply.code(400).send({ error: '未配置项目总目录' });
+    const body = (req.body ?? {}) as { name?: unknown };
+    const created = createProject(root, String(body.name ?? ''));
+    if (!created.ok) return reply.code(400).send({ error: '项目名非法(禁空/禁路径符号/禁 .. 与 Windows 保留名)' });
+    return { ok: true, name: created.name, cwd: path.join(root, created.name) };
+  });
+
   app.get('/api/models', async () => listModels(loadRoutes(deps.routesPath)));
 
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));

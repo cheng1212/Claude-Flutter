@@ -18,6 +18,8 @@ export type AppOptions = {
   isRunning?: (sessionId: string) => boolean;
   /** 后台任务列表(注入 BackgroundRegistry.list):/api/sessions/:id/backgrounds */
   backgrounds?: (sessionId: string) => unknown[];
+  /** 项目文件夹总目录(/api/projects 列出/新建子文件夹) */
+  projectsRoot?: string;
   /** 会话是否在等审批(注入 runtime.pendingPermissions):列表接口据此标"待确认"徽章 */
   isAwaiting?: (sessionId: string) => boolean;
   /** 在跑会话数(注入):health 暴露,手机端诊断"连的是不是旧进程" */
@@ -78,7 +80,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     });
   }
   if (opts.db && opts.routesPath) {
-    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting });
+    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot });
   }
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/') || req.url.startsWith('/api/health')) return;

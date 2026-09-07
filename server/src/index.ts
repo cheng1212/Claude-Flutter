@@ -49,6 +49,7 @@ const app = await buildApp({
   db,
   routesPath: config.routesPath,
   publicDir: config.publicDir,
+  projectsRoot: config.projectsRoot,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),
   backgrounds: (sessionId) => backgrounds.list(sessionId),
@@ -98,6 +99,8 @@ const gateway = attachWsGateway(app.server, {
       ...ctx.cfg,
       bgCeilingMs: config.bgCeilingMs,
       approvalTimeoutMs: config.approvalTimeoutMs,
+      // 子代理模型约束:设置后本服务器所有会话派子代理一律用此模型(如 'haiku')
+      subagentModel: process.env.ZCODE_SUBAGENT_MODEL || undefined,
       emit: (event) => registry.push(sessionId, event),
     });
     runtimes.set(sessionId, runtime);

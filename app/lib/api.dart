@@ -85,6 +85,22 @@ class ZApi {
     await _call('DELETE', '/api/crons/$id', null);
   }
 
+  /// 项目文件夹:总目录 + 其下项目名列表。
+  Future<({String root, List<String> names})> projects() async {
+    final res = await _call('GET', '/api/projects', null);
+    if (res is! Map) return (root: '', names: const <String>[]);
+    final list = res['projects'] as List? ?? const [];
+    final names = [for (final p in list) if (p is Map) '${p['name']}'];
+    return (root: '${res['root'] ?? ''}', names: names);
+  }
+
+  /// 新建项目文件夹,返回其 cwd;失败抛错(调用方提示)。
+  Future<String> createProject(String name) async {
+    final res = await _call('POST', '/api/projects', {'name': name});
+    if (res is Map && res['cwd'] != null) return '${res['cwd']}';
+    throw Exception('新建项目失败');
+  }
+
   /// 完整重载:server 从磁盘 CLI 转录补回丢失事件(幂等),返回 {ok, merged}。
   Future<int> reloadSession(String id) async {
     final res = await _call('POST', '/api/sessions/$id/reload', null);

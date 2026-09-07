@@ -13,7 +13,8 @@ import '../session_utils.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
-import 'chat_panels.dart';
+import 'tasks_sheet.dart';
+import 'toast.dart';
 import '../ws.dart';
 import 'rows.dart';
 
@@ -33,6 +34,7 @@ class _ChatPageState extends State<ChatPage> {
   final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
+  bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
 
   Future<void> _pickReference() async {
     final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
@@ -71,10 +73,11 @@ class _ChatPageState extends State<ChatPage> {
 
   void _toastRef(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showToast(context, msg);
   }
 
-  Future<void> _openSubagents() async {
+  /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
+  Future<void> _openTasks() async {
     await showModalBottomSheet(
       context: context,
       backgroundColor: ZT.surface,
@@ -83,39 +86,11 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
-      builder: (ctx) => SubagentsSheet(
+      builder: (ctx) => TasksSheet(
         app: app,
         sessionId: widget.sessionId,
         rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>()),
       ),
-    );
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _openBackgrounds() async {
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: ZT.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
-        side: BorderSide(color: ZT.edge),
-      ),
-      builder: (ctx) => BackgroundsSheet(app: app, sessionId: widget.sessionId),
-    );
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _openCrons() async {
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: ZT.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
-        side: BorderSide(color: ZT.edge),
-      ),
-      builder: (ctx) => _CronsSheet(app: app, sessionId: widget.sessionId),
     );
     if (mounted) setState(() {});
   }
@@ -189,6 +164,7 @@ class _ChatPageState extends State<ChatPage> {
     final text = _input.text.trim();
     final images = _pendingImages.value;
     if (text.isEmpty && images.isEmpty) return;
+    _stopping = false; // 新回合开跑,停止盲区状态作废
     // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
     final ok = app.sendChat(text, model: _model, permissionMode: _mode, images: images);
     if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
@@ -209,28 +185,19 @@ class _ChatPageState extends State<ChatPage> {
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
       if (bytes.lengthInBytes > 5 * 1024 * 1024) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('图片超过 5MB,换个小的')));
-        }
+        if (mounted) showToast(context, '图片超过 5MB,换个小的');
         return;
       }
       final mime = lookupMimeType(picked.path) ?? 'image/jpeg';
       final uri = 'data:$mime;base64,${base64Encode(bytes)}';
       final next = [..._pendingImages.value, uri];
       if (next.length > 4) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('一次最多 4 张')));
-        }
+        if (mounted) showToast(context, '一次最多 4 张');
         return;
       }
       _pendingImages.value = next;
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('选图失败: $e')));
-      }
+      if (mounted) showToast(context, '选图失败: $e');
     }
   }
 
@@ -641,11 +608,26 @@ class _ChatPageState extends State<ChatPage> {
           StatusChip(phase: _phase(), compact: true),
         ]),
         actions: [
-          _PanelsMenu(
-            cronsOn: _cronsOn,
-            subsOn: subsOn,
-            bgOn: bgOn,
-            onOpen: _openPanel,
+          // 引用直达:把另一会话的上下文带进来(三个任务面板已合并进底部「任务」)
+          InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: _pickReference,
+            child: Container(
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: ShapeDecoration(
+                color: ZT.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                  side: ZT.inkSide(w: 1.2),
+                ),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.link_rounded, size: 15, color: ZT.inkSoft),
+                SizedBox(width: 4),
+                Text('引用', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+              ]),
+            ),
           ),
         ],
       ),
@@ -670,7 +652,7 @@ class _ChatPageState extends State<ChatPage> {
               },
             ),
           _composer(),
-          _quickBar(planOn),
+          _quickBar(planOn, subsOn || bgOn),
         ]),
       ),
     );
@@ -735,36 +717,31 @@ class _ChatPageState extends State<ChatPage> {
     return id;
   }
 
-  /// 「更多」下拉的四个面板入口共用一条分发通道。
-  void _openPanel(String which) {
-    switch (which) {
-      case 'crons':
-        _openCrons();
-      case 'subs':
-        _openSubagents();
-      case 'bg':
-        _openBackgrounds();
-      case 'ref':
-        _pickReference();
-    }
-  }
-
-  /// 底部快捷条:模型 + 安全/思考/计划/刷新 共 5 个等宽磁贴。
-  /// 定时任务/子代理/后台/引用收进右上角「更多」下拉(_PanelsMenu),给磁贴留位。
+  /// 底部快捷条:模型 + 安全/思考/计划/任务/刷新 共 6 个等宽磁贴。
+  /// 子代理/后台/定时合并进「任务」磁贴(三 Tab 弹窗);引用在右上角直达。
   /// 模型贴直显当前模型名(超宽省略号,长按 Tooltip 看完整 id);有状态时点亮。
-  Widget _quickBar(bool planOn) {
+  Widget _quickBar(bool planOn, bool taskOn) {
     final tiles = <(IconData, String, String, Color?, bool, VoidCallback)>[
       (Icons.shield_rounded, '安全', '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
       (Icons.account_tree_rounded, '计划', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
+      // 任务中心:子代理/后台/定时 三 Tab;任一有活动点亮紫色
+      (
+        Icons.checklist_rounded,
+        '任务',
+        '子代理 · 后台任务 · 定时任务',
+        (taskOn || _cronsOn) ? ZT.grape : null,
+        false,
+        _openTasks,
+      ),
       (Icons.refresh_rounded, '刷新', '全量重载:从 CLI 转录补回丢失消息', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(switch (merged) {
+          showToast(context, switch (merged) {
             > 0 => '完整重载:补回 $merged 条丢失消息',
             == 0 => '已对齐 CLI 转录,没有缺失消息',
             _ => '转录重载失败,已按本地历史重建',
-          })));
+          });
         }
       }),
     ];
@@ -1006,10 +983,12 @@ class _ChatPageState extends State<ChatPage> {
             builder: (context, value, _) => _SendOrStop(
               // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
               canStop: chat.running && app.socket.state == ZSocketState.open,
+              stopping: _stopping && chat.running,
               hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
               onSend: _send,
               onStop: () {
                 HapticFeedback.mediumImpact();
+                setState(() => _stopping = true); // 乐观反馈:别等 CLI 掐断流才给动静
                 app.abort();
               },
             ),
@@ -1162,88 +1141,6 @@ class _GroupRow extends StatelessWidget {
             ]),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// 底部快捷磁贴:图标在上、短标签在下,外层 Expanded 等宽(按用户排版稿)。
-/// 长标签放进 Tooltip(如「权限模式:每次确认」),贴面上只留两字短词。
-/// 右上角「更多」下拉:定时任务/子代理/后台/引用 四个面板入口。
-/// 快捷条只留高频磁贴,低频面板收进来;有活动的面板在菜单里点亮主题色,
-/// 触发按钮上随之亮一颗小圆点,状态不因收纳而消失。
-class _PanelsMenu extends StatelessWidget {
-  final bool cronsOn;
-  final bool subsOn;
-  final bool bgOn;
-  final void Function(String which) onOpen;
-
-  const _PanelsMenu({
-    required this.cronsOn,
-    required this.subsOn,
-    required this.bgOn,
-    required this.onOpen,
-  });
-
-  PopupMenuItem<String> _item(String value, IconData icon, String label, Color? accent) {
-    final c = accent ?? ZT.inkSoft;
-    return PopupMenuItem<String>(
-      value: value,
-      child: Row(children: [
-        Icon(icon, size: 18, color: c),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  color: accent ?? ZT.ink)),
-        ),
-        if (accent != null) PulseDot(color: accent, animate: true, size: 6),
-      ]),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final anyOn = cronsOn || subsOn || bgOn;
-    return PopupMenuButton<String>(
-      tooltip: '定时 / 子代理 / 后台 / 引用',
-      color: ZT.surface,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ZT.radius), side: ZT.inkSide()),
-      onSelected: onOpen,
-      itemBuilder: (ctx) => [
-        _item('crons', Icons.alarm_rounded, '定时任务', cronsOn ? ZT.lemon : null),
-        _item('subs', Icons.hub_rounded, '子代理', subsOn ? ZT.grape : null),
-        _item('bg', Icons.memory_rounded, '后台任务', bgOn ? ZT.aqua : null),
-        _item('ref', Icons.link_rounded, '引用会话', null),
-      ],
-      child: Container(
-        margin: const EdgeInsets.only(right: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: ShapeDecoration(
-          color: ZT.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(999),
-            side: ZT.inkSide(w: 1.2),
-          ),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (anyOn) ...[
-            Container(
-                width: 6,
-                height: 6,
-                decoration:
-                    BoxDecoration(color: ZT.primary, shape: BoxShape.circle)),
-            const SizedBox(width: 5),
-          ],
-          const Text('更多',
-              style: TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
-          const SizedBox(width: 4),
-          const Icon(Icons.expand_more_rounded, size: 15, color: ZT.inkSoft),
-        ]),
       ),
     );
   }
@@ -1650,11 +1547,15 @@ class _SendOrStop extends StatefulWidget {
   final VoidCallback onSend;
   final VoidCallback onStop;
 
+  /// 已点停止、正在等 CLI 落定的窗口期:按钮转圈防重复点,给即时反馈
+  final bool stopping;
+
   const _SendOrStop({
     required this.canStop,
     required this.hasText,
     required this.onSend,
     required this.onStop,
+    this.stopping = false,
   });
 
   @override
@@ -1666,12 +1567,14 @@ class _SendOrStopState extends State<_SendOrStop> {
 
   @override
   Widget build(BuildContext context) {
+    // 停止乐观反馈:点下瞬间就转「停止中」,不等 CLI 掐断流再转回(0.5~3 秒体感盲区)
     if (widget.canStop) {
+      final stopping = widget.stopping;
       return GestureDetector(
         onTapDown: (_) => setState(() => _pressed = true),
         onTapUp: (_) => setState(() => _pressed = false),
         onTapCancel: () => setState(() => _pressed = false),
-        onTap: widget.onStop,
+        onTap: stopping ? null : widget.onStop,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 90),
           width: 46,
@@ -1686,7 +1589,13 @@ class _SendOrStopState extends State<_SendOrStop> {
             ),
             shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose.withValues(alpha: 0.5)),
           ),
-          child: const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
+          child: stopping
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+                )
+              : const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
         ),
       );
     }
@@ -1714,147 +1623,6 @@ class _SendOrStopState extends State<_SendOrStop> {
         child: Icon(Icons.arrow_upward_rounded,
             color: enabled ? ZT.onInk : ZT.inkFaint, size: 24),
       ),
-    );
-  }
-}
-
-
-/// 定时任务弹层:本会话的活跃任务 + 到点倒计时(每秒刷新)+ 删除。
-class _CronsSheet extends StatefulWidget {
-  final ZApp app;
-  final String sessionId;
-
-  const _CronsSheet({required this.app, required this.sessionId});
-
-  @override
-  State<_CronsSheet> createState() => _CronsSheetState();
-}
-
-class _CronsSheetState extends State<_CronsSheet> {
-  late Future<List<Map<String, dynamic>>> _future;
-  Timer? _tick;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = widget.app.crons(sessionId: widget.sessionId);
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _tick?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _remove(String id) async {
-    await widget.app.deleteCron(id);
-    setState(() => _future = widget.app.crons(sessionId: widget.sessionId));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          sheetHandle(),
-          const SizedBox(height: 10),
-          const Row(children: [
-            Icon(Icons.alarm_rounded, size: 18, color: ZT.lemon),
-            SizedBox(width: 8),
-            Text('定时任务', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
-          ]),
-          const SizedBox(height: 10),
-          Flexible(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _future,
-              builder: (ctx, snap) {
-                final list = snap.data ?? const <Map<String, dynamic>>[];
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Padding(
-                      padding: EdgeInsets.all(18),
-                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
-                }
-                if (list.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    child: Text('本会话还没有定时任务。对话里说"每 5 分钟检查一次构建"即可创建。',
-                        style: TextStyle(fontSize: 12.5, color: ZT.inkFaint, height: 1.6)),
-                  );
-                }
-                return ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                  itemBuilder: (context, i) {
-                    final c = list[i];
-                    final recurring = (c['recurring'] ?? 1) == 1;
-                    final next = cronNextLabel(c['next_fire'] == null ? null : '${c['next_fire']}', DateTime.now());
-                    final expiry = cronExpiryLabel(c['created_at'] == null ? null : '${c['created_at']}', recurring: recurring);
-                    return Container(
-                      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-                      decoration: ShapeDecoration(
-                        color: ZT.bg,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(ZT.radius),
-                            side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: 0.5))),
-                      ),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(children: [
-                          Expanded(
-                            child: Text('${c['prompt'] ?? ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                          ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: '删除',
-                            icon: const Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
-                            onPressed: () => _remove('${c['id']}'),
-                          ),
-                        ]),
-                        const SizedBox(height: 4),
-                        Row(children: [
-                          _pillMono('${c['cron'] ?? ''}'),
-                          const SizedBox(width: 8),
-                          _pillMono(recurring ? '循环' : '单次'),
-                          if ((c['durable'] ?? 0) == 1) const SizedBox(width: 8),
-                          if ((c['durable'] ?? 0) == 1) _pillMono('跨重启'),
-                        ]),
-                        const SizedBox(height: 5),
-                        Text('⏰ 下次 $next',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
-                        if (expiry != null) ...[
-                          const SizedBox(height: 2),
-                          Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
-                        ],
-                      ]),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _pillMono(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: ShapeDecoration(
-        color: ZT.surface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(4),
-            side: BorderSide(width: 1, color: ZT.edge)),
-      ),
-      child: Text(label, style: const TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
     );
   }
 }

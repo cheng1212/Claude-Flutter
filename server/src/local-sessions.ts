@@ -141,9 +141,26 @@ export type SubagentSummary = {
   description: string;
   toolUseId: string;
   spawnDepth: number;
+  /** 真实使用的模型(转录 assistant 行的 model;采样不到为空 = 继承主模型) */
+  model: string;
   bytes: number;
   updatedAt: string;
 };
+
+/** 从转录头部采样真实模型名(只读前 64KB,不等整份转录)。 */
+function sampleTranscriptModel(filePath: string): string {
+  let fh: number | undefined;
+  try {
+    fh = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(65536);
+    const n = fs.readSync(fh, buf, 0, buf.length, 0);
+    return buf.toString('utf8', 0, n).match(/"model":"([^"]+)"/)?.[1] ?? '';
+  } catch {
+    return '';
+  } finally {
+    if (fh !== undefined) fs.closeSync(fh);
+  }
+}
 
 /**
  * 子代理虚拟会话列表:父转录同目录 subagents/ 下的 agent-*.jsonl + .meta.json。
@@ -189,6 +206,7 @@ export function listSubagents(db: Db, sessionId: string, opts: { projectsDir?: s
       description: String(meta.description ?? ''),
       toolUseId: String(meta.toolUseId ?? ''),
       spawnDepth: typeof meta.spawnDepth === 'number' ? meta.spawnDepth : 0,
+      model: sampleTranscriptModel(full),
       bytes,
       updatedAt,
     });

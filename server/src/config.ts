@@ -11,6 +11,8 @@ export type ServerConfig = {
   dataDir: string;
   routesPath: string;
   publicDir: string;
+  /** 项目文件夹总目录:子文件夹 = 项目,新建/移动会话从这里选 */
+  projectsRoot: string;
   bgCeilingMs: number;
   approvalTimeoutMs: number;
 };
@@ -24,6 +26,9 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   // 静态分发目录(/download/*):放 APK 等给手机直接下载的文件,免鉴权
   const publicDir = process.env.ZCODE_PUBLIC_DIR ?? path.join(dataDir, 'public');
   fs.mkdirSync(publicDir, { recursive: true });
+  // 项目总目录:用户要求建在用户目录下的固定位置,之后子文件夹全由用户/手机端自建
+  const projectsRoot = process.env.ZCODE_PROJECTS_ROOT ?? path.join(os.homedir(), 'zcode-projects');
+  fs.mkdirSync(projectsRoot, { recursive: true });
   const file = path.join(dataDir, 'config.json');
   let stored: { token?: string } = {};
   try {
@@ -46,6 +51,7 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
     routesPath: process.env.ZCODE_CLAUDE_ROUTES_PATH
       ?? path.join(os.homedir(), 'litellm', 'claude-routes.json'),
     publicDir,
+    projectsRoot,
     bgCeilingMs: Number(process.env.ZCODE_BG_CEILING_MS) || 30 * 60 * 1000,
     approvalTimeoutMs: Number(process.env.ZCODE_APPROVAL_TIMEOUT_MS) || 10 * 60 * 1000,
   };

@@ -10,6 +10,7 @@ import '../state/zapp.dart';
 import '../theme.dart';
 import 'chat_page.dart';
 import 'crons_sheet.dart';
+import 'toast.dart';
 
 class SessionsPage extends StatefulWidget {
   final ZApp app;
@@ -131,30 +132,24 @@ class _SessionsPageState extends State<SessionsPage> {
   }
 
   Future<void> _moveToProject(Map<String, dynamic> session) async {
-    final controller = TextEditingController(text: '${session['cwd'] ?? ''}');
-    final cwd = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('移动到项目'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '工作目录,如 D:\\work\\myapp'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-              child: const Text('确定')),
-        ],
-      ),
-    );
+    final cwd = await _pickProjectCwd();
     if (cwd == null || cwd.isEmpty) return;
     try {
       await app.patchSession('${session['id']}', cwd: cwd);
+      _toast('已移动到项目');
     } on Object catch (e) {
       _toast('移动失败: $e');
     }
+  }
+
+  /// 项目选择弹层:总目录下的项目文件夹列表,可现场新建,也可自定义路径。返回 cwd。
+  Future<String?> _pickProjectCwd() async {
+    final pro = await app.projects();
+    if (!mounted) return null;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => _ProjectPickerDialog(app: app, root: pro.root, names: pro.names),
+    );
   }
 
   Future<void> _editTags(Map<String, dynamic> session) async {
@@ -191,17 +186,16 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final copy = await app.forkSession('${session['id']}');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('已创建副本「${copy['title'] ?? ''}」'),
-        action: SnackBarAction(
-          label: '打开',
-          onPressed: () {
-            Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ChatPage(app: app, sessionId: '${copy['id']}'),
-            ));
-          },
-        ),
-      ));
+      showToast(
+        context,
+        '已创建副本「${copy['title'] ?? ''}」',
+        actionLabel: '打开',
+        onAction: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ChatPage(app: app, sessionId: '${copy['id']}'),
+          ));
+        },
+      );
     } on Object catch (e) {
       _toast('复制失败: $e');
     }
@@ -237,7 +231,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       icon: const Icon(Icons.content_copy_rounded, size: 17),
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: out.markdown));
-                        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+                        showToast(ctx, '已复制到剪贴板');
                       },
                     ),
                 ]),
@@ -285,7 +279,7 @@ class _SessionsPageState extends State<SessionsPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showToast(context, msg);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -797,6 +791,8 @@ class _NewSessionDialog extends StatefulWidget {
 class _NewSessionDialogState extends State<_NewSessionDialog> {
   final _title = TextEditingController();
   String _model = 'default';
+  String? _cwd; // 选中的项目文件夹;null = 默认(服务器目录)
+  String _projectLabel = '默认';
 
   @override
   void dispose() {
@@ -804,18 +800,31 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
     super.dispose();
   }
 
+  Future<void> _pickProject() async {
+    final pro = await widget.app.projects();
+    if (!mounted) return;
+    final cwd = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _ProjectPickerDialog(app: widget.app, root: pro.root, names: pro.names),
+    );
+    if (cwd == null || !mounted) return;
+    setState(() {
+      _cwd = cwd;
+      final segs = cwd.split(RegExp(r'[\\/]'));
+      _projectLabel = segs.isNotEmpty && segs.last.isNotEmpty ? segs.last : cwd;
+    });
+  }
+
   Future<void> _create() async {
     try {
       final s = await widget.app.createSession(
         title: _title.text.trim().isEmpty ? null : _title.text.trim(),
         model: _model == 'default' ? null : _model,
+        cwd: _cwd,
       );
       if (mounted) Navigator.pop(context, s);
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('创建失败: $e')));
-      }
+      if (mounted) showToast(context, '创建失败: $e');
     }
   }
 
@@ -842,10 +851,140 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
           ],
           onChanged: (v) => setState(() => _model = v ?? 'default'),
         ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder_open_rounded, size: 19, color: ZT.grape),
+          title: Text('项目:$_projectLabel', style: const TextStyle(fontSize: 13.5)),
+          subtitle: _cwd == null ? null : Text(_cwd!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkSoft),
+          onTap: _pickProject,
+        ),
       ]),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
         BigButton(label: '开始', icon: Icons.bolt_rounded, onPressed: _create),
+      ],
+    );
+  }
+}
+
+/// 项目选择弹层:总目录下的项目文件夹列表 + 现场新建 + 自定义路径。返回 cwd。
+class _ProjectPickerDialog extends StatefulWidget {
+  final ZApp app;
+  final String root;
+  final List<String> names;
+
+  const _ProjectPickerDialog({required this.app, required this.root, required this.names});
+
+  @override
+  State<_ProjectPickerDialog> createState() => _ProjectPickerDialogState();
+}
+
+class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
+  final _name = TextEditingController();
+  bool _creating = false;
+  bool _custom = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _createNew() async {
+    final n = _name.text.trim();
+    if (n.isEmpty) return;
+    try {
+      final cwd = await widget.app.createProject(n);
+      if (mounted) Navigator.pop(context, cwd);
+    } on Object catch (e) {
+      if (mounted) showToast(context, '新建失败: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: ZT.surface,
+      title: const Text('选择项目文件夹'),
+      content: SizedBox(
+        width: 320,
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (widget.root.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('总目录:${widget.root}\n电脑上在这里建子文件夹,就会出现在下面',
+                  style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint, height: 1.45)),
+            ),
+          if (_custom)
+            TextField(
+              controller: _name,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: r'完整工作目录,如 D:\work\myapp'),
+            )
+          else if (_creating)
+            TextField(
+              controller: _name,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '项目名,如 商城后端'),
+            )
+          else ...[
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260),
+              child: widget.names.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      child: Text('总目录下还没有项目文件夹。点下面「新建项目」创建第一个。',
+                          style: TextStyle(fontSize: 11.5, color: ZT.inkFaint, height: 1.5)),
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final n in widget.names)
+                          ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.folder_rounded, size: 19, color: ZT.lemon),
+                            title: Text(n, style: const TextStyle(fontSize: 13.5)),
+                            onTap: () => Navigator.pop(context, joinProjectCwd(widget.root, n)),
+                          ),
+                      ],
+                    ),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.create_new_folder_rounded, size: 19, color: ZT.grape),
+              title: const Text('新建项目…', style: TextStyle(fontSize: 13.5)),
+              onTap: () => setState(() => _creating = true),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.edit_location_alt_outlined, size: 19, color: ZT.inkSoft),
+              title: const Text('自定义路径…', style: TextStyle(fontSize: 13.5)),
+              onTap: () => setState(() => _custom = true),
+            ),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            if (_creating || _custom) {
+              setState(() {
+                _creating = false;
+                _custom = false;
+              });
+            } else {
+              Navigator.pop(context);
+            }
+          },
+          child: Text(_creating || _custom ? '返回' : '取消'),
+        ),
+        if (_creating)
+          TextButton(onPressed: _createNew, child: const Text('创建并选择'))
+        else if (_custom)
+          TextButton(
+              onPressed: () => Navigator.pop(context, _name.text.trim()),
+              child: const Text('确定')),
       ],
     );
   }
