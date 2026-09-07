@@ -14,6 +14,7 @@ import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'tasks_sheet.dart';
+import 'toast.dart';
 import '../ws.dart';
 import 'rows.dart';
 
@@ -72,7 +73,7 @@ class _ChatPageState extends State<ChatPage> {
 
   void _toastRef(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showToast(context, msg);
   }
 
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
@@ -184,28 +185,19 @@ class _ChatPageState extends State<ChatPage> {
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
       if (bytes.lengthInBytes > 5 * 1024 * 1024) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('图片超过 5MB,换个小的')));
-        }
+        if (mounted) showToast(context, '图片超过 5MB,换个小的');
         return;
       }
       final mime = lookupMimeType(picked.path) ?? 'image/jpeg';
       final uri = 'data:$mime;base64,${base64Encode(bytes)}';
       final next = [..._pendingImages.value, uri];
       if (next.length > 4) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('一次最多 4 张')));
-        }
+        if (mounted) showToast(context, '一次最多 4 张');
         return;
       }
       _pendingImages.value = next;
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('选图失败: $e')));
-      }
+      if (mounted) showToast(context, '选图失败: $e');
     }
   }
 
@@ -745,11 +737,11 @@ class _ChatPageState extends State<ChatPage> {
       (Icons.refresh_rounded, '刷新', '全量重载:从 CLI 转录补回丢失消息', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(switch (merged) {
+          showToast(context, switch (merged) {
             > 0 => '完整重载:补回 $merged 条丢失消息',
             == 0 => '已对齐 CLI 转录,没有缺失消息',
             _ => '转录重载失败,已按本地历史重建',
-          })));
+          });
         }
       }),
     ];

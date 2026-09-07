@@ -10,6 +10,7 @@ import '../state/zapp.dart';
 import '../theme.dart';
 import 'chat_page.dart';
 import 'crons_sheet.dart';
+import 'toast.dart';
 
 class SessionsPage extends StatefulWidget {
   final ZApp app;
@@ -185,17 +186,16 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final copy = await app.forkSession('${session['id']}');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('已创建副本「${copy['title'] ?? ''}」'),
-        action: SnackBarAction(
-          label: '打开',
-          onPressed: () {
-            Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ChatPage(app: app, sessionId: '${copy['id']}'),
-            ));
-          },
-        ),
-      ));
+      showToast(
+        context,
+        '已创建副本「${copy['title'] ?? ''}」',
+        actionLabel: '打开',
+        onAction: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ChatPage(app: app, sessionId: '${copy['id']}'),
+          ));
+        },
+      );
     } on Object catch (e) {
       _toast('复制失败: $e');
     }
@@ -231,7 +231,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       icon: const Icon(Icons.content_copy_rounded, size: 17),
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: out.markdown));
-                        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+                        showToast(ctx, '已复制到剪贴板');
                       },
                     ),
                 ]),
@@ -279,7 +279,7 @@ class _SessionsPageState extends State<SessionsPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showToast(context, msg);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -824,10 +824,7 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
       );
       if (mounted) Navigator.pop(context, s);
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('创建失败: $e')));
-      }
+      if (mounted) showToast(context, '创建失败: $e');
     }
   }
 
@@ -901,9 +898,7 @@ class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
       final cwd = await widget.app.createProject(n);
       if (mounted) Navigator.pop(context, cwd);
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('新建失败: $e')));
-      }
+      if (mounted) showToast(context, '新建失败: $e');
     }
   }
 
