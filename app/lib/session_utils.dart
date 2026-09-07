@@ -126,3 +126,12 @@ String chatPhase({required bool running, required bool hasPermission, required b
   if (running) return 'running';
   return 'idle';
 }
+
+/// 项目 cwd 拼接:分隔符认服务器的(总目录里带 \ 就是 Windows 路径),
+/// 手机端是 Android,不能用本机分隔符。
+String joinProjectCwd(String root, String name) {
+  if (root.isEmpty) return name;
+  if (root.endsWith('\\') || root.endsWith('/')) return '$root$name';
+  final sep = root.contains('\\') ? '\\' : '/';
+  return '$root$sep$name';
+}

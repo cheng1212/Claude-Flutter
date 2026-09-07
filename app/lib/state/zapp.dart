@@ -430,6 +430,18 @@ class ZApp extends ChangeNotifier {
     }
   }
 
+  /// 项目文件夹(总目录 + 名字列表);失败给空。
+  Future<({String root, List<String> names})> projects() async {
+    try {
+      return await _api.projects();
+    } on Object {
+      return (root: '', names: const <String>[]);
+    }
+  }
+
+  /// 新建项目文件夹,返回其 cwd;失败抛错(对话框提示)。
+  Future<String> createProject(String name) => _api.createProject(name);
+
   Future<void> deleteCron(String id) async {
     try {
       await _api.deleteCron(id);

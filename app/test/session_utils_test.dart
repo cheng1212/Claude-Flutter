@@ -111,4 +111,12 @@ void main() {
       expect(chatPhase(running: false, hasPermission: false, socketOpen: true), 'idle');
     });
   });
+
+  group('joinProjectCwd', () {
+    test('按服务器路径分隔符拼项目 cwd', () {
+      expect(joinProjectCwd('C:\\Users\\x\\zcode-projects', '商城'), 'C:\\Users\\x\\zcode-projects\\商城');
+      expect(joinProjectCwd('/home/x/zcode-projects', 'shop'), '/home/x/zcode-projects/shop');
+      expect(joinProjectCwd('C:\\root\\', 'p'), 'C:\\root\\p');
+    });
+  });
 }
