@@ -235,6 +235,26 @@ void main() {
     expect((sub['sessions'] as List).first, {'sessionId': 's1', 'lastSeq': 3});
   });
 
+  test('openSession 历史末尾无 complete(reload 重建):running 不冻结成假运行中', () async {
+    await openEmpty();
+    // 末尾是 text 没有 complete:重建历史推断 running 会把按钮卡成 STOP
+    http.responder = (c) => {
+          'messages': [
+            {'seq': 2, 'meta': jsonEncode({'kind': 'text', 'role': 'assistant', 'content': '回答', 'seq': 2})},
+            {'seq': 1, 'meta': jsonEncode({'kind': 'text', 'role': 'user', 'content': '问题', 'seq': 1})},
+          ],
+          'total': 2,
+        };
+    await app.openSession('s1');
+    expect(app.chat.rows.length, 2);
+    // running 不能被历史推断;真实态由 subscribed.isProcessing 驱动
+    expect(app.chat.running, isFalse, reason: '末条 text 不代表正在跑,不能冻结成运行中');
+    // 服务器说没在跑:subscribed isProcessing=false 到齐后也保持 idle
+    channel.serverPush({'kind': 'subscribed', 'sessionId': 's1', 'isProcessing': false});
+    await pump();
+    expect(app.chat.running, isFalse);
+  });
+
   test('openSession 同会话刷新保留待审批卡片(审批不落库,丢了没人能批)', () async {
     await openEmpty();
     channel.serverPush({

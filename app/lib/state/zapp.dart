@@ -256,6 +256,19 @@ class ZApp extends ChangeNotifier {
       if (token != _openToken || _backfill != bf) return;
       _backfill = null;
       if (currentSessionId == id) {
+        // 换底不能把 subscribed/实时事件已设定的 running 冲掉:保留它,
+        // 重建本身不推断 running(_replay 已归零),实时态只由 subscribed/终态事件驱动。
+        full = ChatState(
+          rows: full.rows,
+          lastSeq: full.lastSeq,
+          running: chat.running,
+          streamingText: full.streamingText,
+          streamingThinking: full.streamingThinking,
+          usage: full.usage,
+          pendingPermission: full.pendingPermission,
+          upstreamPhase: full.upstreamPhase,
+          upstreamAt: full.upstreamAt,
+        );
         chat = full;
         notifyListeners();
       }
@@ -296,6 +309,9 @@ class ZApp extends ChangeNotifier {
   }
 
   /// 排序重放一段事件(REST 按 seq 倒序返回,归约要按时间正序),水位抬到 maxSeq。
+  /// 不推断 running:重建的历史最后一条是 text/tool 不代表"正在跑",
+  /// running 只该由 subscribed.isProcessing + 实时终态/开始事件驱动,否则
+  /// 重放后若缺 complete(如 reload 重建)会冻结成假"运行中"、按钮卡 STOP。
   ChatState _replay(List<Map<String, dynamic>> events, int maxSeq) {
     events.sort((a, b) =>
         ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
@@ -303,18 +319,18 @@ class ZApp extends ChangeNotifier {
     for (final e in events) {
       st = applyEvent(st, e);
     }
-    if (maxSeq > st.lastSeq) {
-      st = ChatState(
-        rows: st.rows,
-        lastSeq: maxSeq,
-        running: st.running,
-        streamingText: st.streamingText,
-        streamingThinking: st.streamingThinking,
-        usage: st.usage,
-        pendingPermission: st.pendingPermission,
-      );
-    }
-    return st;
+    // 重建一律从"空闲"起步;真实 running 由随后到达的 subscribed/实时事件设定。
+    return ChatState(
+      rows: st.rows,
+      lastSeq: st.lastSeq > maxSeq ? st.lastSeq : maxSeq,
+      streamingText: st.streamingText,
+      streamingThinking: st.streamingThinking,
+      usage: st.usage,
+      pendingPermission: st.pendingPermission,
+      upstreamPhase: st.upstreamPhase,
+      upstreamAt: st.upstreamAt,
+      running: false,
+    );
   }
 
   ChatState _withPermission(ChatState s, PermissionReq req) => ChatState(
