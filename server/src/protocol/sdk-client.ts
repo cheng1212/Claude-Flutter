@@ -62,7 +62,24 @@ export type RuntimeOptions = {
   abortForceDelayMs?: number;
   /** 复制会话:providerSessionId 为 fork 起点,首轮 init 回传的独立新 id 会回填并发 session_created */
   forkSession?: boolean;
+  /** 子代理模型约束:配置后,本会话派 Agent/Task 一律强制用此模型(防挑贵模型) */
+  subagentModel?: string;
 };
+
+/**
+ * 子代理模型约束决策:Agent/Task 派发且配置了强制模型 → allow 并改写 input.model
+ * (updatedInput 对模型透明,它以为是自己选的);未配置/非派发工具 → null 走正常审批。
+ */
+export function subagentModelDecision(
+  toolName: string,
+  input: unknown,
+  forcedModel: string | undefined | null,
+): { behavior: 'allow'; updatedInput: Record<string, unknown> } | null {
+  if (!forcedModel) return null;
+  if (toolName !== 'Agent' && toolName !== 'Task') return null;
+  const inp = (input ?? {}) as Record<string, unknown>;
+  return { behavior: 'allow', updatedInput: { ...inp, model: forcedModel } };
+}
 
 // 这些工具的审批在等用户交互,超时无意义 → 一直等
 const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
@@ -210,6 +227,9 @@ export class SessionRuntime {
   }
 
   private canUseTool = async (toolName: string, input: unknown): Promise<CanUseToolResult> => {
+    // 子代理模型约束:配置了强制模型时,派子代理不经审批直接改写派发参数(对模型透明)
+    const forced = subagentModelDecision(toolName, input, this.opts.subagentModel);
+    if (forced) return forced;
     // 会话级记住的工具直接放行:审批疲劳是手机端最大的日常摩擦,用户显式勾选过就是授权
     if (this.sessionAllowed.has(toolName)) {
       return { behavior: 'allow', updatedInput: input };

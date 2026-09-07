@@ -99,6 +99,8 @@ const gateway = attachWsGateway(app.server, {
       ...ctx.cfg,
       bgCeilingMs: config.bgCeilingMs,
       approvalTimeoutMs: config.approvalTimeoutMs,
+      // 子代理模型约束:设置后本服务器所有会话派子代理一律用此模型(如 'haiku')
+      subagentModel: process.env.ZCODE_SUBAGENT_MODEL || undefined,
       emit: (event) => registry.push(sessionId, event),
     });
     runtimes.set(sessionId, runtime);
