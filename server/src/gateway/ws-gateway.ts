@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Db } from '../db.js';
 import { appendMessage, updateSession, maxSeq, createRun, finishRun, recordCronToolUse } from '../db.js';
+import { cronExpectCreate, cronResolveCreate, cronResolveDelete } from '../cron-links.js';
 import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
 
 type RuntimeLike = {
@@ -85,19 +86,29 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
 
   const fanout = (sessionId: string, event: OutboundEvent): void => {
     if (event.kind === 'tool_use') {
+      const cronToolName = String((event as { toolName?: unknown }).toolName ?? '');
+      const cronToolId = String((event as { toolId?: unknown }).toolId ?? '');
       recordCronToolUse(deps.db, sessionId, event as unknown as { toolName?: unknown; toolInput?: unknown });
+      // cron 双 id 绑定:CronCreate 记"等结果",CronDelete 按 CLI job id 命中镜像行标删
+      if (cronToolName === 'CronCreate') cronExpectCreate(sessionId, cronToolId);
+      if (cronToolName === 'CronDelete') {
+        const delId = String(((event as { toolInput?: unknown }).toolInput as { id?: unknown } | undefined)?.id ?? '');
+        if (delId) cronResolveDelete(deps.db, sessionId, delId);
+      }
       backgrounds?.onToolUse(
         sessionId,
-        String((event as { toolName?: unknown }).toolName ?? ''),
-        String((event as { toolId?: unknown }).toolId ?? ''),
+        cronToolName,
+        cronToolId,
         (event as { toolInput?: unknown }).toolInput,
       );
     }
     if (event.kind === 'tool_result') {
+      const cronContent = String((event as { content?: unknown }).content ?? '');
+      cronResolveCreate(deps.db, sessionId, String((event as { toolId?: unknown }).toolId ?? ''), cronContent);
       backgrounds?.onToolResult(
         sessionId,
         String((event as { toolId?: unknown }).toolId ?? ''),
-        String((event as { content?: unknown }).content ?? ''),
+        cronContent,
         (event as { isError?: unknown }).isError === true,
       );
     }
