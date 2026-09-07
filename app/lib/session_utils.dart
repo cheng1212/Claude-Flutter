@@ -135,3 +135,14 @@ String joinProjectCwd(String root, String name) {
   final sep = root.contains('\\') ? '\\' : '/';
   return '$root$sep$name';
 }
+
+/// 思考等级选项随模型变:deepseek 系三档(低/中/高),qwen 系与其他 开/关。
+/// value:low/medium/high = SDK thinking 预算分级;'on' = 不注入(模型默认开);
+/// 'off' = 注入 disabled。实测 DeepSeek 开关真实生效、预算弱分级;GLM 忽略参数。
+List<(String, String)> thinkingOptionsFor(String modelId) {
+  final id = modelId.toLowerCase();
+  if (id.contains('deepseek')) {
+    return [('低', 'low'), ('中', 'medium'), ('高', 'high')];
+  }
+  return [('开', 'on'), ('关', 'off')];
+}

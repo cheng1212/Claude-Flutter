@@ -119,4 +119,14 @@ void main() {
       expect(joinProjectCwd('C:\\root\\', 'p'), 'C:\\root\\p');
     });
   });
+
+  group('thinkingOptionsFor', () {
+    test('deepseek 系三档(低/中/高);qwen 与其他 开/关', () {
+      expect(thinkingOptionsFor('deepseek-v4-flash'), [('低', 'low'), ('中', 'medium'), ('高', 'high')]);
+      expect(thinkingOptionsFor('DeepSeek-V4-Pro'), [('低', 'low'), ('中', 'medium'), ('高', 'high')]);
+      expect(thinkingOptionsFor('go-qwen3.8-flash'), orderedEquals([('开', 'on'), ('关', 'off')]));
+      expect(thinkingOptionsFor('glm-5.3-flash'), orderedEquals([('开', 'on'), ('关', 'off')]));
+      expect(thinkingOptionsFor('default'), orderedEquals([('开', 'on'), ('关', 'off')]));
+    });
+  });
 }
