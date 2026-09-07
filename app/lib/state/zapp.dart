@@ -471,14 +471,14 @@ class ZApp extends ChangeNotifier {
 
   /// 发消息:本地乐观行(pending),WS 发出;发不出去就回滚。images = data URI 列表。
   /// 返回 false = 没发出去(连接断开),调用方可把原文回填输入框。
-  bool sendChat(String content, {String? model, String? permissionMode, List<String> images = const []}) {
+  bool sendChat(String content, {String? model, String? permissionMode, String? thinking, List<String> images = const []}) {
     final sid = currentSessionId;
     final text = content.trim();
     if (sid == null || (text.isEmpty && images.isEmpty)) return false;
     chat = applyLocalUser(chat, text.isEmpty ? '[图片] ×${images.length}' : text, images: images);
     notifyListeners();
     try {
-      _socket.sendChat(sid, text, model: model, permissionMode: permissionMode, images: images);
+      _socket.sendChat(sid, text, model: model, permissionMode: permissionMode, thinking: thinking, images: images);
       return true;
     } on Object {
       chat = rollbackLocalUser(chat);

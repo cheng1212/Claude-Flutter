@@ -35,6 +35,7 @@ class _ChatPageState extends State<ChatPage> {
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
+  String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
 
   Future<void> _pickReference() async {
     final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
@@ -165,8 +166,8 @@ class _ChatPageState extends State<ChatPage> {
     final images = _pendingImages.value;
     if (text.isEmpty && images.isEmpty) return;
     _stopping = false; // 新回合开跑,停止盲区状态作废
-    // 显式带上当前 model/权限模式:热切换双保险(服务端本来也会读 DB 最新值)
-    final ok = app.sendChat(text, model: _model, permissionMode: _mode, images: images);
+    // 显式带上当前 model/权限模式/思考等级:热切换双保险(服务端本来也会读 DB 最新值)
+    final ok = app.sendChat(text, model: _model, permissionMode: _mode, thinking: _thinking, images: images);
     if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
     _input.clear();
     _pendingImages.value = const [];
@@ -201,7 +202,7 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 二级模型选择:第一级供应商(智谱/深度求索/英伟达…),点进去第二级模型列表。
+  /// 模型选择弹层:选模型(分组)→ 思考等级(随模型动态变档位)→ 完成。
   Future<void> _pickModel() async {
     final current = _model;
     // 分组数据还没拉到就现拉一次
@@ -213,8 +214,8 @@ class _ChatPageState extends State<ChatPage> {
       }
     }
     if (!mounted) return;
-    final sheetHeight = MediaQuery.of(context).size.height * 0.7;
-    final picked = await showModalBottomSheet<String>(
+    final sheetHeight = MediaQuery.of(context).size.height * 0.75;
+    final picked = await showModalBottomSheet<(String, String?)>(
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
@@ -226,16 +227,19 @@ class _ChatPageState extends State<ChatPage> {
         child: Container(
           constraints: BoxConstraints(maxHeight: sheetHeight),
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-          child: _ModelGroupPicker(
+          child: _ModelThinkingSheet(
             groups: app.modelGroups,
-            current: current,
-            onPick: (m) => Navigator.pop(ctx, m),
+            currentModel: current,
+            currentThinking: _thinking,
           ),
         ),
       ),
     );
-    if (picked == null || picked == current) return;
-    await app.patchSession(widget.sessionId, model: picked);
+    if (picked == null) return;
+    final (model, thinking) = picked;
+    if (model != current) await app.patchSession(widget.sessionId, model: model);
+    if (!mounted) return;
+    setState(() => _thinking = thinking);
   }
 
   Future<void> _pickMode() async {
@@ -1002,6 +1006,103 @@ class _ChatPageState extends State<ChatPage> {
 // ---------------------------------------------------------------- widgets
 
 /// 二级模型选择器:一级供应商列表,点供应商展开该组的模型列表。
+/// 模型 + 思考等级 一体选择弹层:思考档位随选中模型动态变化
+/// (deepseek 系三档,qwen 系与其他 开/关),「完成」一次性带回两者。
+/// 再点一次已选中的档位 = 回到「默认」(不注入,模型自己的行为)。
+class _ModelThinkingSheet extends StatefulWidget {
+  final List<Map<String, dynamic>> groups;
+  final String currentModel;
+  final String? currentThinking;
+
+  const _ModelThinkingSheet({
+    required this.groups,
+    required this.currentModel,
+    this.currentThinking,
+  });
+
+  @override
+  State<_ModelThinkingSheet> createState() => _ModelThinkingSheetState();
+}
+
+class _ModelThinkingSheetState extends State<_ModelThinkingSheet> {
+  late String _model;
+  String? _thinking;
+
+  @override
+  void initState() {
+    super.initState();
+    _model = widget.currentModel;
+    _thinking = widget.currentThinking;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final options = thinkingOptionsFor(_model);
+    // 换了模型后原档位不在新选项里 → 回落默认
+    final selected = options.any((o) => o.$2 == _thinking) ? _thinking : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _ModelGroupPicker(
+            groups: widget.groups,
+            current: _model,
+            onPick: (m) => setState(() {
+              _model = m;
+              if (!thinkingOptionsFor(m).any((o) => o.$2 == _thinking)) _thinking = null;
+            }),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          const Icon(Icons.psychology_alt_rounded, size: 15, color: ZT.grape),
+          const SizedBox(width: 6),
+          const Text('思考等级', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+          const SizedBox(width: 6),
+          Text(selected == null ? '· 默认' : '',
+              style: const TextStyle(fontSize: 11, color: ZT.inkFaint)),
+        ]),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final (label, value) in options) _thinkingPill(label, value, selected == value),
+          ],
+        ),
+        const SizedBox(height: 12),
+        BigButton(
+          label: '完成',
+          icon: Icons.check_rounded,
+          onPressed: () => Navigator.pop(context, (_model, _thinking)),
+        ),
+      ],
+    );
+  }
+
+  Widget _thinkingPill(String label, String value, bool selected) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () => setState(() => _thinking = _thinking == value ? null : value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: ShapeDecoration(
+          color: selected ? ZT.primary.withValues(alpha: 0.14) : ZT.bg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+            side: ZT.inkSide(w: selected ? 1.5 : 1.2, color: selected ? ZT.primary : ZT.edge),
+          ),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: selected ? ZT.primary : ZT.inkSoft)),
+      ),
+    );
+  }
+}
+
 class _ModelGroupPicker extends StatefulWidget {
   final List<Map<String, dynamic>> groups;
   final String current;

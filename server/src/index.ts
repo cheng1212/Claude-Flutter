@@ -20,7 +20,7 @@ const runtimes = new Map<string, SessionRuntime>();
 
 // runtimeFor 与 PATCH 回调共用的"会话配置现算":DB 现值 + routes 热读。
 // 返回 null = 会话不存在;bareModel = 非路由别名的裸模型名(才值得对 CLI 现场设)。
-const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissionMode?: string }) => {
+const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissionMode?: string; thinking?: string }) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId) as
     | { cwd: string | null; provider_session_id: string | null; fork_from: string | null; model: string | null; permission_mode: string }
     | undefined;
@@ -34,6 +34,8 @@ const refreshCfg = (sessionId: string, opts?: { model?: string | null; permissio
     model: resolved ? undefined : (modelId === 'default' ? undefined : modelId),
     permissionMode: opts?.permissionMode ?? session.permission_mode,
     routeSettings: resolved?.settings ?? null,
+    // 思考等级(会话内存态,chat.send options 传入;off/low/medium/high,on=模型默认)
+    thinkingLevel: opts?.thinking,
   };
   return {
     session, cfg,

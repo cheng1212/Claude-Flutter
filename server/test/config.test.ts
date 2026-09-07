@@ -16,13 +16,13 @@ describe('config', () => {
     expect(b.routesPath.toLowerCase()).toContain('claude-routes.json');
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  it('遗留弱令牌 123456 一次性升级为随机值', () => {
+  it('显式弱令牌 123456 保留不升级(用户局域网自用明确要求)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-cfg-'));
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ token: '123456' }));
     const a = loadOrCreateConfig(dir);
-    expect(a.token).not.toBe('123456');
-    const again = loadOrCreateConfig(dir);
-    expect(again.token).toBe(a.token); // 升级一次后稳定
+    expect(a.token).toBe('123456');
+    const b = loadOrCreateConfig(dir);
+    expect(b.token).toBe('123456'); // 稳定,不会被偷偷换掉
     fs.rmSync(dir, { recursive: true, force: true });
   });
   it('环境变量 ZCODE_TOKEN 覆盖存储值', () => {

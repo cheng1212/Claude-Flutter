@@ -203,13 +203,14 @@ class ZSocket {
     if (state == ZSocketState.open) _resubscribe();
   }
 
-  void sendChat(String sessionId, String content, {String? model, String? permissionMode, List<String> images = const []}) {
+  void sendChat(String sessionId, String content, {String? model, String? permissionMode, String? thinking, List<String> images = const []}) {
     // default 不占 options:显式发 'default' 会在服务端压掉 DB 里 PATCH 过的模式
     // (UI 列表偶发没拉到时 _mode 兜底 'default',那一轮权限就被悄悄降级),缺省让服务端读 DB。
     final options = <String, dynamic>{
       if (model != null && model.isNotEmpty && model != 'default') 'model': model,
       if (permissionMode != null && permissionMode.isNotEmpty && permissionMode != 'default')
         'permissionMode': permissionMode,
+      if (thinking != null && thinking.isNotEmpty) 'thinking': thinking,
     };
     _send({
       'type': 'chat.send',

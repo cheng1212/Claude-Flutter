@@ -36,10 +36,10 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   } catch {
     // 首次运行,文件不存在
   }
-  // token 不再兜底 '123456':0.0.0.0 + 弱令牌 = 局域网内任何设备可驱动 CLI 执行任意命令。
-  // 首启随机生成;发现遗留弱令牌一次性升级。env 显式指定永远最优先(自部署覆盖)。
-  const legacy = stored.token === '123456';
-  const token = process.env.ZCODE_TOKEN ?? (stored.token && !legacy ? stored.token : randomBytes(18).toString('base64url'));
+  // token:env 显式指定永远最优先(自部署覆盖);存储值照用——含显式弱令牌 123456
+  // (用户局域网自用明确要求,2026-09-08)。首启无存储值才随机生成。
+  // 0.0.0.0 + 弱令牌 = 局域网内任何设备可驱动 CLI 执行任意命令,自担风险。
+  const token = process.env.ZCODE_TOKEN ?? (stored.token || randomBytes(18).toString('base64url'));
   if (stored.token !== token) {
     fs.writeFileSync(file, JSON.stringify({ token }, null, 2));
   }

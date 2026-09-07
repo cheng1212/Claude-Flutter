@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Db } from '../db.js';
 import { appendMessage, updateSession, maxSeq, createRun, finishRun, recordCronToolUse } from '../db.js';
+import { cronExpectCreate, cronResolveCreate, cronResolveDelete } from '../cron-links.js';
 import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
 
 type RuntimeLike = {
@@ -24,7 +25,7 @@ export type WsGatewayDeps = {
       taskType?: string; subagentType?: string; status?: string; summary?: string; outputFile?: string;
     }): void;
   };
-  runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
+  runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string; thinking?: string }): RuntimeLike;
 };
 
 /** attachWsGateway 返回的句柄:供外部(上游代理)往已订阅客户端推瞬态状态。 */
@@ -85,19 +86,29 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
 
   const fanout = (sessionId: string, event: OutboundEvent): void => {
     if (event.kind === 'tool_use') {
+      const cronToolName = String((event as { toolName?: unknown }).toolName ?? '');
+      const cronToolId = String((event as { toolId?: unknown }).toolId ?? '');
       recordCronToolUse(deps.db, sessionId, event as unknown as { toolName?: unknown; toolInput?: unknown });
+      // cron 双 id 绑定:CronCreate 记"等结果",CronDelete 按 CLI job id 命中镜像行标删
+      if (cronToolName === 'CronCreate') cronExpectCreate(sessionId, cronToolId);
+      if (cronToolName === 'CronDelete') {
+        const delId = String(((event as { toolInput?: unknown }).toolInput as { id?: unknown } | undefined)?.id ?? '');
+        if (delId) cronResolveDelete(deps.db, sessionId, delId);
+      }
       backgrounds?.onToolUse(
         sessionId,
-        String((event as { toolName?: unknown }).toolName ?? ''),
-        String((event as { toolId?: unknown }).toolId ?? ''),
+        cronToolName,
+        cronToolId,
         (event as { toolInput?: unknown }).toolInput,
       );
     }
     if (event.kind === 'tool_result') {
+      const cronContent = String((event as { content?: unknown }).content ?? '');
+      cronResolveCreate(deps.db, sessionId, String((event as { toolId?: unknown }).toolId ?? ''), cronContent);
       backgrounds?.onToolResult(
         sessionId,
         String((event as { toolId?: unknown }).toolId ?? ''),
-        String((event as { content?: unknown }).content ?? ''),
+        cronContent,
         (event as { isError?: unknown }).isError === true,
       );
     }
@@ -241,7 +252,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
           ? data.images.filter((x: unknown): x is string =>
               typeof x === 'string' && x.length <= MAX_IMAGE_URI && /^data:image\//.test(x)).slice(0, 4)
           : [];
-        const options = (data.options ?? {}) as { model?: string; permissionMode?: string };
+        const options = (data.options ?? {}) as { model?: string; permissionMode?: string; thinking?: string };
         if (!sessionId || (!content && images.length === 0)) { send(ws, { kind: 'error', content: 'sessionId and content required' }); return; }
         if (deps.registry.isRunning(sessionId)) { send(ws, { kind: 'error', content: 'RUN_IN_PROGRESS', sessionId }); return; }
 
@@ -250,7 +261,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
         // 会话已删/不存在会抛错 → 回 error,不让异常炸掉 ws 事件循环。
         let runtime: RuntimeLike;
         try {
-          runtime = deps.runtimeFor(sessionId, { model: options.model, permissionMode: options.permissionMode });
+          runtime = deps.runtimeFor(sessionId, { model: options.model, permissionMode: options.permissionMode, thinking: options.thinking });
         } catch (error) {
           send(ws, { kind: 'error', content: error instanceof Error ? error.message : String(error), sessionId });
           return;
