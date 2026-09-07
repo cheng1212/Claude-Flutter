@@ -676,11 +676,11 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  String _phase() {
-    if (chat.pendingPermission != null) return 'permission';
-    if (chat.running) return 'running';
-    return 'idle';
-  }
+  String _phase() => chatPhase(
+        running: chat.running,
+        hasPermission: chat.pendingPermission != null,
+        socketOpen: app.socket.state == ZSocketState.open,
+      );
 
   Widget _reconnectStrip() {
     return Material(
@@ -1004,7 +1004,8 @@ class _ChatPageState extends State<ChatPage> {
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _input,
             builder: (context, value, _) => _SendOrStop(
-              canStop: chat.running,
+              // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
+              canStop: chat.running && app.socket.state == ZSocketState.open,
               hasText: value.text.trim().isNotEmpty || _pendingImages.value.isNotEmpty,
               onSend: _send,
               onStop: () {
