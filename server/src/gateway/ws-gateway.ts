@@ -25,7 +25,7 @@ export type WsGatewayDeps = {
       taskType?: string; subagentType?: string; status?: string; summary?: string; outputFile?: string;
     }): void;
   };
-  runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string }): RuntimeLike;
+  runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string; thinking?: string }): RuntimeLike;
 };
 
 /** attachWsGateway 返回的句柄:供外部(上游代理)往已订阅客户端推瞬态状态。 */
@@ -252,7 +252,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
           ? data.images.filter((x: unknown): x is string =>
               typeof x === 'string' && x.length <= MAX_IMAGE_URI && /^data:image\//.test(x)).slice(0, 4)
           : [];
-        const options = (data.options ?? {}) as { model?: string; permissionMode?: string };
+        const options = (data.options ?? {}) as { model?: string; permissionMode?: string; thinking?: string };
         if (!sessionId || (!content && images.length === 0)) { send(ws, { kind: 'error', content: 'sessionId and content required' }); return; }
         if (deps.registry.isRunning(sessionId)) { send(ws, { kind: 'error', content: 'RUN_IN_PROGRESS', sessionId }); return; }
 
@@ -261,7 +261,7 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
         // 会话已删/不存在会抛错 → 回 error,不让异常炸掉 ws 事件循环。
         let runtime: RuntimeLike;
         try {
-          runtime = deps.runtimeFor(sessionId, { model: options.model, permissionMode: options.permissionMode });
+          runtime = deps.runtimeFor(sessionId, { model: options.model, permissionMode: options.permissionMode, thinking: options.thinking });
         } catch (error) {
           send(ws, { kind: 'error', content: error instanceof Error ? error.message : String(error), sessionId });
           return;

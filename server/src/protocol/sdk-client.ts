@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { query as defaultQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { ThinkingConfig } from '@anthropic-ai/claude-agent-sdk';
 import { transformMessage } from './transform.js';
 import { startsBackgroundWork, type ProtocolEvent } from './types.js';
 import { resolveClaudeExecutable } from './cli-path.js';
@@ -64,6 +65,8 @@ export type RuntimeOptions = {
   forkSession?: boolean;
   /** 子代理模型约束:配置后,本会话派 Agent/Task 一律强制用此模型(防挑贵模型) */
   subagentModel?: string;
+  /** 思考等级:off/low/medium/high;on 或未设置 = 不注入(模型默认) */
+  thinkingLevel?: string;
 };
 
 /**
@@ -79,6 +82,21 @@ export function subagentModelDecision(
   if (toolName !== 'Agent' && toolName !== 'Task') return null;
   const inp = (input ?? {}) as Record<string, unknown>;
   return { behavior: 'allow', updatedInput: { ...inp, model: forcedModel } };
+}
+
+/**
+ * 思考等级 → SDK thinking 配置(标准 Anthropic thinking 协议)。
+ * 实测:DeepSeek 端点 disabled 真实生效,预算分级弱响应;GLM 忽略此参数(永远思考)。
+ * 'on'/未设置 → undefined:不注入,维持各模型自己的默认行为(qwen3.8 默认开)。
+ */
+export function thinkingConfigOf(level: string | undefined | null): ThinkingConfig | undefined {
+  switch (level) {
+    case 'off': return { type: 'disabled' };
+    case 'low': return { type: 'enabled', budgetTokens: 4096 };
+    case 'medium': return { type: 'enabled', budgetTokens: 16384 };
+    case 'high': return { type: 'enabled', budgetTokens: 31999 };
+    default: return undefined;
+  }
 }
 
 // 这些工具的审批在等用户交互,超时无意义 → 一直等
@@ -161,8 +179,8 @@ export class SessionRuntime {
    * 会话级配置热更新(权限模式/模型/路由)。只影响后续回合的 buildOptions,
    * 已拉起的 CLI 进程不重启;下一条 send 起生效。
    */
-  update(cfg: { model?: string | null; permissionMode?: string; routeSettings?: AnyRecord | null }): void {
-    this.opts = { ...this.opts, ...cfg };
+  update(cfg: { model?: string | null; permissionMode?: string; routeSettings?: AnyRecord | null; thinkingLevel?: string | null }): void {
+    this.opts = { ...this.opts, ...cfg, thinkingLevel: cfg.thinkingLevel ?? undefined };
   }
 
   /** 对在跑的 CLI 实例热设权限模式:本回合内后续工具调用立即生效(下一轮 buildOptions 也带,双保险)。 */
@@ -205,6 +223,8 @@ export class SessionRuntime {
     };
     const model = route?.model ?? this.opts.model ?? undefined;
     if (model) options.model = model;
+    const thinking = thinkingConfigOf(this.opts.thinkingLevel);
+    if (thinking) options.thinking = thinking;
     const permissionMode = this.opts.permissionMode;
     if (permissionMode && permissionMode !== 'default') {
       options.permissionMode = permissionMode;
