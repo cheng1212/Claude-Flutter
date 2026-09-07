@@ -77,4 +77,26 @@ void main() {
       expect(tagsOf({}), isEmpty);
     });
   });
+
+  group('cron 时间文案', () {
+    final now = DateTime(2026, 9, 7, 12, 0, 0);
+    test('未来触发:钟表时刻 + 倒计时', () {
+      final iso = DateTime(2026, 9, 8, 9, 30).toIso8601String();
+      expect(cronNextLabel(iso, now), '9月8日 09:30 · 21小时30分后');
+    });
+    test('已过点:只给钟表时刻(等待触发)', () {
+      final iso = DateTime(2026, 9, 7, 8, 0).toIso8601String();
+      expect(cronNextLabel(iso, now), '9月7日 08:00');
+    });
+    test('空或坏值:无排期', () {
+      expect(cronNextLabel(null, now), '无排期');
+      expect(cronNextLabel('xxx', now), '无排期');
+    });
+    test('循环任务给 7 天自动过期;一次性不给', () {
+      final created = DateTime(2026, 9, 7, 12, 0).toIso8601String();
+      expect(cronExpiryLabel(created, recurring: true), '9月14日 12:00 自动过期');
+      expect(cronExpiryLabel(created, recurring: false), isNull);
+      expect(cronExpiryLabel(null, recurring: true), isNull);
+    });
+  });
 }

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
-import { importLocalSessions, reloadSessionTranscript } from './local-sessions.js';
+import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
+import { readOutputTail } from './backgrounds.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
 export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[] }): void {
@@ -10,12 +11,15 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   app.get('/api/models/grouped', async () => ({ groups: listModelGroups(loadRoutes(deps.routesPath)) }));
 
   // 附带 isRunning/awaitingApproval:手机列表标"运行中"/"待确认"徽章;排序本就是 置顶 → 最近更新
-  app.get('/api/sessions', async () =>
-    listSessions(deps.db).map((row) => ({
+  app.get('/api/sessions', async () => {
+    const counts = subagentCounts();
+    return listSessions(deps.db).map((row) => ({
       ...row,
+      subagentCount: counts.get(String(row.provider_session_id ?? '')) ?? 0,
       isRunning: deps.isRunning?.(row.id) ?? false,
       awaitingApproval: deps.isAwaiting?.(row.id) ?? false,
-    })));
+    }));
+  });
 
   app.post('/api/sessions/import-local', async (req) => {
     const body = (req.body ?? {}) as { projectsDir?: string };
@@ -121,9 +125,29 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     });
   });
 
-  // 后台任务列表(Bash run_in_background 登记的 shell)
-  app.get('/api/sessions/:id/backgrounds', async (req) => ({
-    backgrounds: deps.backgrounds?.((req.params as { id: string }).id) ?? [],
+  // 后台任务列表(Bash run_in_background + SDK task_* 登记的统一视图;
+  // 带落盘输出文件的任务现场读最新输出尾,不等模型调 BashOutput)
+  app.get('/api/sessions/:id/backgrounds', async (req) => {
+    const rows = (deps.backgrounds?.((req.params as { id: string }).id) ?? []) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      if (typeof row.outputFile === 'string' && row.outputFile) {
+        row.outputTail = await readOutputTail(row.outputFile);
+      }
+    }
+    return { backgrounds: rows };
+  });
+
+  // 子代理虚拟会话:列表(meta 元数据)+ 只读转录。不入 sessions 表,面板按此渲染。
+  app.get('/api/sessions/:id/subagents', async (req) => ({
+    subagents: listSubagents(deps.db, (req.params as { id: string }).id),
+  }));
+
+  app.get('/api/sessions/:id/subagents/:agentId/messages', async (req) => ({
+    messages: readSubagentTranscript(
+      deps.db,
+      (req.params as { id: string }).id,
+      (req.params as { agentId: string }).agentId,
+    ),
   }));
 
   // 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成(按字符量估算)

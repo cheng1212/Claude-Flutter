@@ -83,7 +83,11 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
-      builder: (ctx) => SubagentsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+      builder: (ctx) => SubagentsSheet(
+        app: app,
+        sessionId: widget.sessionId,
+        rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>()),
+      ),
     );
     if (mounted) setState(() {});
   }
@@ -97,7 +101,7 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
-      builder: (ctx) => BackgroundsSheet(rows: List<ToolRow>.from(chat.rows.whereType<ToolRow>())),
+      builder: (ctx) => BackgroundsSheet(app: app, sessionId: widget.sessionId),
     );
     if (mounted) setState(() {});
   }
@@ -620,6 +624,9 @@ class _ChatPageState extends State<ChatPage> {
     final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
     final subsOn = deriveSubagents(chat.rows).isNotEmpty;
     final bgOn = deriveBackgrounds(chat.rows).isNotEmpty;
+    app.crons(sessionId: widget.sessionId).then((list) {
+      if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
+    });
     return Scaffold(
       backgroundColor: ZT.bg,
       appBar: AppBar(
@@ -635,7 +642,7 @@ class _ChatPageState extends State<ChatPage> {
         ]),
         actions: [
           _PanelsMenu(
-            planOn: planOn,
+            cronsOn: _cronsOn,
             subsOn: subsOn,
             bgOn: bgOn,
             onOpen: _openPanel,
@@ -731,8 +738,8 @@ class _ChatPageState extends State<ChatPage> {
   /// 「更多」下拉的四个面板入口共用一条分发通道。
   void _openPanel(String which) {
     switch (which) {
-      case 'plan':
-        _openPlanSheet();
+      case 'crons':
+        _openCrons();
       case 'subs':
         _openSubagents();
       case 'bg':
@@ -742,18 +749,14 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 底部快捷条:模型 + 安全/思考/定时/刷新 共 5 个等宽磁贴。
-  /// 工具计划/子代理/后台/引用收进右上角「更多」下拉(_PanelsMenu),给磁贴留位。
+  /// 底部快捷条:模型 + 安全/思考/计划/刷新 共 5 个等宽磁贴。
+  /// 定时任务/子代理/后台/引用收进右上角「更多」下拉(_PanelsMenu),给磁贴留位。
   /// 模型贴直显当前模型名(超宽省略号,长按 Tooltip 看完整 id);有状态时点亮。
   Widget _quickBar(bool planOn) {
-    app.crons(sessionId: widget.sessionId).then((list) {
-      if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
-    });
     final tiles = <(IconData, String, String, Color?, bool, VoidCallback)>[
       (Icons.shield_rounded, '安全', '权限模式:${_modeLabel(_mode)}', _mode == 'default' ? null : ZT.lemon, false, _pickMode),
       (Icons.query_stats_rounded, '思考', '用量统计', chat.usage == null ? null : ZT.aqua, false, _openUsageSheet),
-      // 刷新历史:拉取中按钮原地转圈,不然列表底部看不见加载提示。
-      (Icons.alarm_rounded, '定时任务', '本会话的定时任务与倒计时', _cronsOn ? ZT.lemon : null, false, () { _openCrons(); }),
+      (Icons.account_tree_rounded, '计划', '执行计划', planOn ? ZT.primary : null, false, _openPlanSheet),
       (Icons.refresh_rounded, '刷新', '全量重载:从 CLI 转录补回丢失消息', null, app.historyLoading, () async {
         final merged = await app.fullReload(widget.sessionId);
         if (mounted) {
@@ -1165,17 +1168,17 @@ class _GroupRow extends StatelessWidget {
 
 /// 底部快捷磁贴:图标在上、短标签在下,外层 Expanded 等宽(按用户排版稿)。
 /// 长标签放进 Tooltip(如「权限模式:每次确认」),贴面上只留两字短词。
-/// 右上角「更多」下拉:工具计划/子代理/后台/引用 四个面板入口。
+/// 右上角「更多」下拉:定时任务/子代理/后台/引用 四个面板入口。
 /// 快捷条只留高频磁贴,低频面板收进来;有活动的面板在菜单里点亮主题色,
 /// 触发按钮上随之亮一颗小圆点,状态不因收纳而消失。
 class _PanelsMenu extends StatelessWidget {
-  final bool planOn;
+  final bool cronsOn;
   final bool subsOn;
   final bool bgOn;
   final void Function(String which) onOpen;
 
   const _PanelsMenu({
-    required this.planOn,
+    required this.cronsOn,
     required this.subsOn,
     required this.bgOn,
     required this.onOpen,
@@ -1202,15 +1205,15 @@ class _PanelsMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final anyOn = planOn || subsOn || bgOn;
+    final anyOn = cronsOn || subsOn || bgOn;
     return PopupMenuButton<String>(
-      tooltip: '工具 / 子代理 / 后台 / 引用',
+      tooltip: '定时 / 子代理 / 后台 / 引用',
       color: ZT.surface,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ZT.radius), side: ZT.inkSide()),
       onSelected: onOpen,
       itemBuilder: (ctx) => [
-        _item('plan', Icons.account_tree_rounded, '工具 · 执行计划', planOn ? ZT.primary : null),
+        _item('crons', Icons.alarm_rounded, '定时任务', cronsOn ? ZT.lemon : null),
         _item('subs', Icons.hub_rounded, '子代理', subsOn ? ZT.grape : null),
         _item('bg', Icons.memory_rounded, '后台任务', bgOn ? ZT.aqua : null),
         _item('ref', Icons.link_rounded, '引用会话', null),
@@ -1788,8 +1791,9 @@ class _CronsSheetState extends State<_CronsSheet> {
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, i) {
                     final c = list[i];
-                    final nf = DateTime.tryParse('${c['next_fire'] ?? ''}');
-                    final left = nf == null ? '' : formatCountdown(nf.difference(DateTime.now()));
+                    final recurring = (c['recurring'] ?? 1) == 1;
+                    final next = cronNextLabel(c['next_fire'] == null ? null : '${c['next_fire']}', DateTime.now());
+                    final expiry = cronExpiryLabel(c['created_at'] == null ? null : '${c['created_at']}', recurring: recurring);
                     return Container(
                       padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
                       decoration: ShapeDecoration(
@@ -1817,13 +1821,17 @@ class _CronsSheetState extends State<_CronsSheet> {
                         Row(children: [
                           _pillMono('${c['cron'] ?? ''}'),
                           const SizedBox(width: 8),
-                          if ((c['recurring'] ?? 1) == 0) _pillMono('单次'),
+                          _pillMono(recurring ? '循环' : '单次'),
                           if ((c['durable'] ?? 0) == 1) const SizedBox(width: 8),
                           if ((c['durable'] ?? 0) == 1) _pillMono('跨重启'),
-                          const Spacer(),
-                          Text('⏰ 下次 $left',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
                         ]),
+                        const SizedBox(height: 5),
+                        Text('⏰ 下次 $next',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                        if (expiry != null) ...[
+                          const SizedBox(height: 2),
+                          Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                        ],
                       ]),
                     );
                   },

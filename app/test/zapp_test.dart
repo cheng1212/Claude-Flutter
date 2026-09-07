@@ -117,6 +117,25 @@ void main() {
     expect(app.chat.rows.length, 1200, reason: '补齐换底后全量在列');
   });
 
+  test('backgrounds:server 统一任务列表透传;失败返回空', () async {
+    await openEmpty();
+    http.responder = (c) {
+      if (c.path == '/api/sessions/s1/backgrounds') {
+        return {
+          'backgrounds': [
+            {'id': 'tool9', 'command': 'npm run build', 'status': 'running', 'outputTail': 'l3'},
+          ],
+        };
+      }
+      return null;
+    };
+    final rows = await app.backgrounds('s1');
+    expect(rows.single['command'], 'npm run build');
+    expect(rows.single['outputTail'], 'l3');
+    http.responder = (c) => throw Exception('boom');
+    expect(await app.backgrounds('s1'), isEmpty);
+  });
+
   test('openSession 补齐窗口内到达的 WS 事件,换底不吞', () async {
     await openEmpty();
     http.responder = (c) {

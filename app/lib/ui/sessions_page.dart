@@ -1,5 +1,7 @@
 // 会话列表(参考稿重设计):搜索 + 筛选 chips + 富卡片(状态/来源/模型/项目/时间)+ 行内菜单。
 // 数据来源:server /api/sessions 增强字段(last_preview/last_status/project/tags/archived)。
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -33,6 +35,10 @@ class _SessionsPageState extends State<SessionsPage> {
   String _sort = _kSortUpdated;
   bool _reloadTick = false; // 刷新按钮转圈
 
+  /// session_id → 最早的下次触发时间(ISO):卡片 ⏰ 胶囊数据源,秒级 ticker 刷新。
+  Map<String, String> _cronNext = {};
+  Timer? _tick;
+
   ZApp get app => widget.app;
 
   @override
@@ -44,13 +50,33 @@ class _SessionsPageState extends State<SessionsPage> {
       _filter = SessionFilter.project;
     }
     app.refreshSessions();
+    _loadCrons();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _cronNext.isNotEmpty) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     app.removeListener(_onApp);
+    _tick?.cancel();
     _search.dispose();
     super.dispose();
+  }
+
+  /// 拉全部会话的定时任务,取每个会话最早的 next_fire。
+  Future<void> _loadCrons() async {
+    final list = await app.crons();
+    if (!mounted) return;
+    final map = <String, String>{};
+    for (final c in list) {
+      final sid = '${c['session_id']}';
+      final iso = '${c['next_fire'] ?? ''}';
+      if (iso.isEmpty) continue;
+      final cur = map[sid];
+      if (cur == null || iso.compareTo(cur) < 0) map[sid] = iso;
+    }
+    setState(() => _cronNext = map);
   }
 
   void _onApp() {
@@ -65,6 +91,7 @@ class _SessionsPageState extends State<SessionsPage> {
       builder: (_) => ChatPage(app: app, sessionId: id),
     ));
     app.refreshSessions();
+    _loadCrons();
   }
 
   Future<void> _newSession() async {
@@ -321,6 +348,7 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: () async {
               setState(() => _reloadTick = true);
               await app.refreshSessions();
+              await _loadCrons();
               if (mounted) setState(() => _reloadTick = false);
             },
           ),
@@ -361,7 +389,7 @@ class _SessionsPageState extends State<SessionsPage> {
                     side: BorderSide(color: ZT.edge),
                   ),
                   builder: (_) => AllCronsSheet(app: app),
-                );
+                ).then((_) => _loadCrons());
               },
             ),
             ListTile(
@@ -565,6 +593,8 @@ class _SessionsPageState extends State<SessionsPage> {
     final model = '${s['model'] ?? ''}';
     final project = '${s['project'] ?? ''}';
     final tags = tagsOf(s);
+    final cronIso = _cronNext['${s['id']}'];
+    final subagents = (s['subagentCount'] as num?)?.toInt() ?? 0;
 
     return HardCard(
       color: ZT.surface,
@@ -599,7 +629,13 @@ class _SessionsPageState extends State<SessionsPage> {
         Row(children: [
           if (badge != null) _pill(badge.label, badge.kind),
           const SizedBox(width: 6),
+          if (cronIso != null)
+            Tooltip(
+              message: cronNextLabel(cronIso, DateTime.now()),
+              child: _pill('⏰ ${_cronCountdown(cronIso)}', 'cron'),
+            ),
           if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
+          if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
           const SizedBox(width: 6),
           if (model.isNotEmpty) _pill(model, 'model'),
           const SizedBox(width: 6),
@@ -615,6 +651,14 @@ class _SessionsPageState extends State<SessionsPage> {
     );
   }
 
+  /// 卡片上的紧凑倒计时;完整「时刻 · 倒计时」放 Tooltip。
+  String _cronCountdown(String iso) {
+    final t = DateTime.tryParse(iso)?.toLocal();
+    if (t == null) return '定时';
+    final d = t.difference(DateTime.now());
+    return d.isNegative ? '待触发' : formatCountdown(d);
+  }
+
   Widget _pill(String label, String kind) {
     final colors = {
       'running': (ZT.primary, ZT.primary),
@@ -623,6 +667,8 @@ class _SessionsPageState extends State<SessionsPage> {
       'failed': (ZT.rose, ZT.rose),
       'ended': (ZT.inkSoft, ZT.inkFaint),
       'local': (ZT.lemon, ZT.lemon),
+      'cron': (ZT.lemon, ZT.lemon),
+      'subagent': (ZT.grape, ZT.grape),
       'model': (ZT.aqua, ZT.aqua),
       'project': (ZT.grape, ZT.grape),
       'tag': (ZT.inkSoft, ZT.inkFaint),

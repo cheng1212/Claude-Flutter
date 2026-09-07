@@ -1,25 +1,38 @@
-// 后台任务登记:Bash(run_in_background)→ shell;BashOutput 结果回写;KillShell → killed。
-// 内存态(后台任务本就随进程生死),按会话隔离,供面板与 GET /backgrounds 使用。
+// 后台任务登记(内存态,随进程生死):
+// - 旧行为:Bash(run_in_background)→ shell;BashOutput 结果回写;KillShell → killed。
+// - 新增:SDK task_*(task_started/updated/notification)事件 → 统一状态机,
+//   与旧行为按 tool_use_id 合并为同一条(同一物理任务),完成通知带 output_file。
+// 供面板与 GET /backgrounds 使用;输出尾可由 readOutputTail 从落盘文件现读。
+import fs from 'node:fs';
 
-type ShellStatus = 'running' | 'killed';
+type TaskStatus = 'running' | 'killed' | 'pending' | 'completed' | 'failed' | 'stopped' | 'paused';
 
-type Shell = {
+type TaskEntry = {
   id: string;
   command: string;
   startedAt: number;
-  status: ShellStatus;
+  status: TaskStatus;
   lastOutput: string;
+  /** SDK 任务系统的 id(task_started.task_id);旧行为合并时与本条互为别名 */
+  taskId?: string;
+  taskType?: string;
+  subagentType?: string;
+  description?: string;
+  /** 完成通知带的落盘输出文件:面板可用 readOutputTail 现读最新输出 */
+  outputFile?: string;
+  summary?: string;
+  endAt?: number;
 };
 
 const OUTPUT_INPUT_KEYS = ['bash_id', 'shell_id', 'background_task_id'];
 const TAIL = 2000;
 
 export class BackgroundRegistry {
-  private bySession = new Map<string, Map<string, Shell>>();
+  private bySession = new Map<string, Map<string, TaskEntry>>();
   /** BashOutput 调用 id → 目标 shell id */
   private outputCall = new Map<string, string>();
 
-  private sessionMap(sessionId: string): Map<string, Shell> {
+  private sessionMap(sessionId: string): Map<string, TaskEntry> {
     let m = this.bySession.get(sessionId);
     if (!m) {
       m = new Map();
@@ -70,11 +83,88 @@ export class BackgroundRegistry {
     shell.lastOutput = content.length > TAIL ? content.slice(-TAIL) : content;
   }
 
-  list(sessionId: string): Shell[] {
-    return [...this.sessionMap(sessionId).values()];
+  /** SDK task_* 协议事件 → 登记/打补丁。toolUseId 命中旧行为条目时合并为同一条(别名键)。 */
+  onTaskEvent(sessionId: string, ev: { kind: string; taskId?: string; toolUseId?: string; description?: string; taskType?: string; subagentType?: string; isBackgrounded?: boolean; status?: string; summary?: string; outputFile?: string }): void {
+    const taskId = ev.taskId;
+    if (!taskId) return;
+    const map = this.sessionMap(sessionId);
+
+    if (ev.kind === 'task_started') {
+      const existing = ev.toolUseId ? map.get(ev.toolUseId) : undefined;
+      if (existing) {
+        // 同一物理任务:Bash 工具行先登记,SDK 任务事件补齐元数据; taskId 作为别名键指向同一条
+        existing.taskId = taskId;
+        existing.description = ev.description || existing.description;
+        existing.taskType = ev.taskType ?? existing.taskType;
+        existing.subagentType = ev.subagentType ?? existing.subagentType;
+        map.set(taskId, existing);
+        return;
+      }
+      map.set(taskId, {
+        id: taskId,
+        command: '',
+        startedAt: Date.now(),
+        status: 'running',
+        lastOutput: '',
+        taskId,
+        taskType: ev.taskType,
+        subagentType: ev.subagentType,
+        description: ev.description,
+      });
+      return;
+    }
+
+    if (ev.kind === 'task_updated') {
+      const entry = map.get(taskId);
+      if (!entry) return;
+      if (ev.status) entry.status = ev.status as TaskStatus;
+      return;
+    }
+
+    if (ev.kind === 'task_complete') {
+      const entry = map.get(taskId);
+      if (!entry) return;
+      entry.status = (ev.status ?? 'failed') as TaskStatus;
+      entry.summary = ev.summary || entry.summary;
+      entry.outputFile = ev.outputFile ?? entry.outputFile;
+      entry.endAt = Date.now();
+      return;
+    }
+  }
+
+  /** 去重后的任务列表:合并过的条目有两个键指向同一对象,按对象身份去重。 */
+  list(sessionId: string): TaskEntry[] {
+    const map = this.sessionMap(sessionId);
+    const seen = new Set<TaskEntry>();
+    const out: TaskEntry[] = [];
+    for (const entry of map.values()) {
+      if (seen.has(entry)) continue;
+      seen.add(entry);
+      out.push(entry);
+    }
+    return out;
   }
 
   clear(sessionId: string): void {
     this.bySession.delete(sessionId);
+  }
+}
+
+/** 从落盘输出文件现读最新输出尾;文件不存在/不可读返回空串(GET 时调,别在事件回调里做 IO)。 */
+export async function readOutputTail(filePath: string, max = TAIL): Promise<string> {
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (!stat.isFile()) return '';
+    const size = Math.min(stat.size, max);
+    const buffer = Buffer.alloc(size);
+    const fh = await fs.promises.open(filePath, 'r');
+    try {
+      await fh.read(buffer, 0, size, stat.size - size);
+    } finally {
+      await fh.close();
+    }
+    return buffer.toString('utf8');
+  } catch {
+    return '';
   }
 }

@@ -96,3 +96,23 @@ String formatCountdown(Duration d) {
   if (d.inMinutes > 0) return '${d.inMinutes}分${(d.inSeconds % 60).toString().padLeft(2, '0')}秒';
   return '${d.inSeconds}秒';
 }
+
+String _clock(DateTime t) =>
+    '${t.month}月${t.day}日 ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+/// 定时任务下次触发文案:本地钟表时刻 + 剩余倒计时;
+/// 已过点只给时刻(CLI 活着才会补触发);空/坏值给「无排期」。
+String cronNextLabel(String? nextFireIso, DateTime now) {
+  final t = DateTime.tryParse(nextFireIso ?? '')?.toLocal();
+  if (t == null) return '无排期';
+  final d = t.difference(now);
+  return d.isNegative ? _clock(t) : '${_clock(t)} · ${formatCountdown(d)}后';
+}
+
+/// 循环任务的 7 天自动过期文案;一次性任务/无创建时间不显示(返回 null)。
+String? cronExpiryLabel(String? createdAtIso, {required bool recurring}) {
+  if (!recurring) return null;
+  final t = DateTime.tryParse(createdAtIso ?? '')?.toLocal();
+  if (t == null) return null;
+  return '${_clock(t.add(const Duration(days: 7)))} 自动过期';
+}

@@ -70,21 +70,36 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
     // 房间清理/自动监视等 CLI 内部任务不当成用户工作上报
     const ambient = msg.ambient === true || msg.skip_transcript === true;
     if (subtype === 'task_started' && !ambient && typeof msg.task_id === 'string') {
-      return [{
+      const ev: ProtocolEvent = {
         kind: 'task_started',
         taskId: msg.task_id,
         description: String(msg.description ?? ''),
         taskType: typeof msg.task_type === 'string' ? msg.task_type : undefined,
-      }];
+      };
+      // 富字段(后台面板/子代理面板用):字段缺省时不加键,保持落库 meta 紧凑
+      if (typeof msg.tool_use_id === 'string' && msg.tool_use_id) ev.toolUseId = msg.tool_use_id;
+      if (typeof msg.subagent_type === 'string' && msg.subagent_type) ev.subagentType = msg.subagent_type;
+      if (typeof msg.is_backgrounded === 'boolean') ev.isBackgrounded = msg.is_backgrounded;
+      if (typeof msg.spawn_depth === 'number') ev.spawnDepth = msg.spawn_depth;
+      return [ev];
+    }
+    if (subtype === 'task_updated' && !ambient && typeof msg.task_id === 'string') {
+      const patch = (msg.patch ?? {}) as AnyRecord;
+      const ev: ProtocolEvent = { kind: 'task_updated', taskId: msg.task_id };
+      if (typeof patch.status === 'string') ev.status = patch.status as 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused';
+      if (typeof patch.is_backgrounded === 'boolean') ev.isBackgrounded = patch.is_backgrounded;
+      return [ev];
     }
     if (subtype === 'task_notification' && !ambient && typeof msg.task_id === 'string') {
       const status = msg.status;
-      return [{
+      const ev: ProtocolEvent = {
         kind: 'task_complete',
         taskId: msg.task_id,
         status: status === 'completed' || status === 'failed' || status === 'stopped' ? status : 'failed',
         summary: String(msg.summary ?? ''),
-      }];
+      };
+      if (typeof msg.output_file === 'string' && msg.output_file) ev.outputFile = msg.output_file;
+      return [ev];
     }
     // task_progress 频率高且卡片走秒已表达活性,先不透传;init/compact 等其余 subtype 不消费
     return [];
