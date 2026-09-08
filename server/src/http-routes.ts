@@ -4,7 +4,7 @@ import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
 import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
-import { listProjects, createProject } from './projects.js';
+import { listProjects, createProject, renameProject, renameProjectSessions, deleteProjectDir, projectSessionIds } from './projects.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
 export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string }): void {
@@ -21,6 +21,38 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     const created = createProject(root, String(body.name ?? ''));
     if (!created.ok) return reply.code(400).send({ error: '项目名非法(禁空/禁路径符号/禁 .. 与 Windows 保留名)' });
     return { ok: true, name: created.name, cwd: path.join(root, created.name) };
+  });
+
+  // 重命名项目:文件夹改名 + 该项目下(cwd 恰为项目目录)会话 cwd 同步迁移;运行中 → 409
+  app.patch('/api/projects/:name', async (req, reply) => {
+    const root = deps.projectsRoot ?? '';
+    if (!root) return reply.code(400).send({ error: '未配置项目总目录' });
+    const oldName = String((req.params as Record<string, unknown>).name ?? '');
+    const body = (req.body ?? {}) as { name?: unknown };
+    const ids = projectSessionIds(deps.db, root, oldName);
+    const running = ids.filter((id) => deps.isRunning?.(id));
+    if (running.length) return reply.code(409).send({ error: `项目下有 ${running.length} 个会话正在运行,先停止再操作` });
+    const r = renameProject(root, oldName, String(body.name ?? ''));
+    if (!r.ok) return reply.code(400).send({ error: r.error ?? '重命名失败' });
+    const moved = renameProjectSessions(deps.db, root, oldName, r.name);
+    return { ok: true, name: r.name, moved };
+  });
+
+  // 删除项目:递归删文件夹(含其中文件) + 级联删该项目下全部会话;运行中 → 409
+  app.delete('/api/projects/:name', async (req, reply) => {
+    const root = deps.projectsRoot ?? '';
+    if (!root) return reply.code(400).send({ error: '未配置项目总目录' });
+    const name = String((req.params as Record<string, unknown>).name ?? '');
+    const ids = projectSessionIds(deps.db, root, name);
+    const running = ids.filter((id) => deps.isRunning?.(id));
+    if (running.length) return reply.code(409).send({ error: `项目下有 ${running.length} 个会话正在运行,先停止再操作` });
+    for (const id of ids) {
+      deps.onSessionDeleted?.(id); // 先中止 runtime/清 registry,防幽灵事件继续落库
+      deleteSession(deps.db, id);
+    }
+    const r = deleteProjectDir(root, name);
+    if (!r.ok) return reply.code(400).send({ error: r.error ?? '删除失败' });
+    return { ok: true, removed: ids.length };
   });
 
   app.get('/api/models', async () => listModels(loadRoutes(deps.routesPath)));

@@ -101,6 +101,16 @@ class ZApi {
     throw Exception('新建项目失败');
   }
 
+  /// 项目重命名:文件夹改名,其下会话 cwd 同步迁移;失败抛错。
+  Future<void> renameProject(String oldName, String newName) async {
+    await _call('PATCH', '/api/projects/${Uri.encodeComponent(oldName)}', {'name': newName});
+  }
+
+  /// 删除项目:递归删文件夹并级联删其下全部会话;失败抛错。
+  Future<void> deleteProject(String name) async {
+    await _call('DELETE', '/api/projects/${Uri.encodeComponent(name)}', null);
+  }
+
   /// 完整重载:server 从磁盘 CLI 转录补回丢失事件(幂等),返回 {ok, merged}。
   Future<int> reloadSession(String id) async {
     final res = await _call('POST', '/api/sessions/$id/reload', null);
