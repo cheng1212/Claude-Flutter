@@ -28,6 +28,7 @@ class SessionsPage extends StatefulWidget {
 class _SessionsPageState extends State<SessionsPage> {
   static const _kSortUpdated = 'updated';
   static const _kSortCreated = 'created';
+  static const _kAllProjects = '__all__'; // 顶栏项目切换「全部会话」哨兵
   static const _kNewProject = '__new__'; // 筛选弹窗「新建项目」按钮的哨兵返回值
 
   final _search = TextEditingController();
@@ -329,11 +330,21 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: () => Scaffold.of(ctx).openDrawer(),
           ),
         ),
-        title: Row(children: [
-          Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
-          SizedBox(width: 8),
-          Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
-        ]),
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _pickProject,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_project == null ? Icons.filter_alt_outlined : Icons.folder_open_rounded,
+                size: 18, color: _project == null ? ZT.inkSoft : ZT.primary),
+            const SizedBox(width: 7),
+            Text(_project ?? '全部会话',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _project == null ? ZT.ink : ZT.primary)),
+            Icon(Icons.arrow_drop_down_rounded, size: 24, color: ZT.inkSoft),
+          ]),
+        ),
         actions: [
           IconButton(
             tooltip: '刷新',
@@ -431,7 +442,6 @@ class _SessionsPageState extends State<SessionsPage> {
               _chip('全部', SessionFilter.all),
               _chip('置顶', SessionFilter.pinned),
               _chip('归档', SessionFilter.archived),
-              _chip(_project == null ? '项目' : '项目 · $_project', SessionFilter.project),
               const SizedBox(width: 4),
               PopupMenuButton<String>(
                 tooltip: '排序',
@@ -536,9 +546,16 @@ class _SessionsPageState extends State<SessionsPage> {
     final picked = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('按项目筛选'),
+        title: const Text('切换项目'),
         backgroundColor: ZT.surface,
         children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, _kAllProjects),
+            child: Text('全部会话',
+                style: TextStyle(
+                    fontSize: 13.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+          const Divider(height: 14),
           if (projects.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
@@ -563,7 +580,14 @@ class _SessionsPageState extends State<SessionsPage> {
         ],
       ),
     );
-    if (!mounted) return;
+    if (!mounted || picked == null) return; // 点外部关闭 = 维持现状
+    if (picked == _kAllProjects) {
+      setState(() {
+        _project = null;
+        _filter = SessionFilter.all;
+      });
+      return;
+    }
     if (picked == _kNewProject) {
       final name = await _promptNewProjectName();
       if (name == null || !mounted) return;
@@ -582,13 +606,8 @@ class _SessionsPageState extends State<SessionsPage> {
       return;
     }
     setState(() {
-      if (picked != null) {
-        _project = picked;
-        _filter = SessionFilter.project;
-      } else {
-        _project = null;
-        if (_filter == SessionFilter.project) _filter = SessionFilter.all;
-      }
+      _project = picked; // 剩余分支 picked 必为具体项目名
+      _filter = SessionFilter.project;
     });
   }
 
