@@ -61,8 +61,16 @@ void main() {
   group('buildUsageTrendChart', () {
     test('topN 之外的模型归「其他」;全 0 的日子剔除', () {
       final daily = [
-        UsageDailyView(date: '2026-09-07', models: [('a', 100), ('b', 50), ('c', 30), ('d', 20), ('e', 10)]),
-        UsageDailyView(date: '2026-09-08', models: [('a', 200)]),
+        UsageDailyView(date: '2026-09-07', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 100, inputTokens: 90, outputTokens: 10),
+          const UsageDailyModel(modelId: 'b', totalTokens: 50, inputTokens: 45, outputTokens: 5),
+          const UsageDailyModel(modelId: 'c', totalTokens: 30, inputTokens: 28, outputTokens: 2),
+          const UsageDailyModel(modelId: 'd', totalTokens: 20, inputTokens: 18, outputTokens: 2),
+          const UsageDailyModel(modelId: 'e', totalTokens: 10, inputTokens: 9, outputTokens: 1),
+        ]),
+        UsageDailyView(date: '2026-09-08', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 200, inputTokens: 180, outputTokens: 20),
+        ]),
         UsageDailyView(date: '2026-09-09', models: []), // 全 0 → 不占柱位
       ];
       final c = buildUsageTrendChart(daily, topN: 3);
@@ -72,18 +80,49 @@ void main() {
       // 9月7日:前三是 100/50/30,其他 = 20+10 = 30
       expect(c.stacks[0], [100, 50, 30, 30]);
       expect(c.stacks[1], [200, 0, 0, 0]);
+      expect(c.maxY, greaterThanOrEqualTo(200));
     });
   });
 
-  group('sliceDailyByChoice', () {
+  group('sliceDailyByChoice / 自定义窗口', () {
     test('today 只留今天;7d/30d/all 原样交给服务端口径', () {
       final daily = [
-        UsageDailyView(date: usageDayKey(DateTime.now()), models: [('a', 1)]),
-        UsageDailyView(date: '2000-01-01', models: [('a', 2)]),
+        UsageDailyView(date: usageDayKey(DateTime.now()), models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 1, inputTokens: 1, outputTokens: 0),
+        ]),
+        UsageDailyView(date: '2000-01-01', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 2, inputTokens: 2, outputTokens: 0),
+        ]),
       ];
       expect(sliceDailyByChoice(daily, UsageRangeChoice.today).length, 1);
-      expect(sliceDailyByChoice(daily, UsageRangeChoice.sevenDays).length, 2);
+      // 窗口语义:7d/30d 只含窗口内的日子,远古条目被切掉;all 全保留
+      expect(sliceDailyByChoice(daily, UsageRangeChoice.sevenDays).length, 1);
       expect(sliceDailyByChoice(daily, UsageRangeChoice.all).length, 2);
+    });
+
+    test('sliceDailyWindow + aggregateSlice:窗口精筛 + 输入输出重算', () {
+      final daily = [
+        UsageDailyView(date: '2026-09-07', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 100, inputTokens: 90, outputTokens: 10),
+        ]),
+        UsageDailyView(date: '2026-09-08', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 200, inputTokens: 180, outputTokens: 20),
+          const UsageDailyModel(modelId: 'b', totalTokens: 50, inputTokens: 40, outputTokens: 10),
+        ]),
+        UsageDailyView(date: '2026-09-09', models: [
+          const UsageDailyModel(modelId: 'a', totalTokens: 400, inputTokens: 350, outputTokens: 50),
+        ]),
+      ];
+      final s1 = aggregateSlice(sliceDailyWindow(daily, '2026-09-07', '2026-09-08'));
+      expect(s1.totalTokens, 350);
+      expect(s1.inputTokens, 310);
+      expect(s1.outputTokens, 40);
+      expect(s1.activeDays, 2);
+
+      final s2 = aggregateSlice(filterDailyModels(sliceDailyWindow(daily, '2026-09-07', '2026-09-09'), {'b'}));
+      expect(s2.totalTokens, 50);
+      expect(s2.inputTokens, 40);
+      expect(s2.activeDays, 1);
     });
   });
 
