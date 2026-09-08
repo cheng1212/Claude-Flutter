@@ -425,63 +425,95 @@ class _CodeBlockState extends State<_CodeBlock> {
 
 // -------------------------------------------------------------------- rows
 
-/// 用户消息:右侧亮绿气泡;pending 是还没被服务器确认的乐观行。
+/// 用户消息:右侧气泡。纯文字 = ink 深色气泡;
+/// 带图片 = 白卡即气泡(无深色底/描边,参考 zremote),文字另起 ink 小气泡。
 class UserBubble extends StatelessWidget {
   final UserRow row;
 
   const UserBubble({super.key, required this.row});
 
+  static ShapeDecoration _inkDeco() => ShapeDecoration(
+        color: ZT.ink,
+        shadows: ZT.hard(dx: 2.5, dy: 2.5, color: ZT.ink.withValues(alpha: 0.28)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(ZT.radius),
+            topRight: Radius.circular(4),
+            bottomLeft: Radius.circular(ZT.radius),
+            bottomRight: Radius.circular(ZT.radius),
+          ),
+          side: BorderSide(width: 1.4, color: ZT.primary),
+        ),
+      );
+
+  Widget _sending() => Row(mainAxisSize: MainAxisSize.min, children: [
+        SizedBox(
+          width: 9,
+          height: 9,
+          child: CircularProgressIndicator(strokeWidth: 1.6, color: ZT.onInk),
+        ),
+        const SizedBox(width: 5),
+        Text('发送中',
+            style: TextStyle(fontSize: 10, color: ZT.onInk.withValues(alpha: 0.8))),
+      ]);
+
+  Widget _inkChild() => Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (row.content.isNotEmpty)
+            SelectableText(
+              row.content,
+              style: TextStyle(
+                  fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
+            ),
+          if (row.pending) ...[
+            const SizedBox(height: 4),
+            _sending(),
+          ],
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
+    final hasImages = row.images.isNotEmpty;
+    if (!hasImages) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Opacity(
+          opacity: row.pending ? 0.72 : 1,
+          child: Container(
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.82),
+            margin: const EdgeInsets.only(top: 8, left: 44),
+            padding: const EdgeInsets.fromLTRB(13, 9, 13, 10),
+            decoration: _inkDeco(),
+            child: _inkChild(),
+          ),
+        ),
+      );
+    }
+    // 图片消息:白卡直接当气泡,外面不再套深色底
     return Align(
       alignment: Alignment.centerRight,
       child: Opacity(
         opacity: row.pending ? 0.72 : 1,
         child: Container(
-          constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.82),
           margin: const EdgeInsets.only(top: 8, left: 44),
-          padding: const EdgeInsets.fromLTRB(13, 9, 13, 10),
-          decoration: ShapeDecoration(
-            color: ZT.ink,
-            shadows: ZT.hard(dx: 2.5, dy: 2.5, color: ZT.ink.withValues(alpha: 0.28)),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(ZT.radius),
-                topRight: Radius.circular(4),
-                bottomLeft: Radius.circular(ZT.radius),
-                bottomRight: Radius.circular(ZT.radius),
-              ),
-              side: BorderSide(width: 1.4, color: ZT.primary),
-            ),
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              if (row.images.isNotEmpty) ...[
-                _UserImageCard(row.images),
+              _UserImageCard(row.images),
+              if (row.content.isNotEmpty || row.pending) ...[
                 const SizedBox(height: 6),
-              ],
-              if (row.content.isNotEmpty)
-                SelectableText(
-                  row.content,
-                  style: TextStyle(
-                      fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
+                Container(
+                  constraints: BoxConstraints(
+                      maxWidth: MediaQuery.of(context).size.width * 0.82),
+                  padding: const EdgeInsets.fromLTRB(13, 9, 13, 10),
+                  decoration: _inkDeco(),
+                  child: _inkChild(),
                 ),
-              if (row.pending) ...[
-                const SizedBox(height: 4),
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  SizedBox(
-                    width: 9,
-                    height: 9,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 1.6, color: ZT.onInk),
-                  ),
-                  const SizedBox(width: 5),
-                  Text('发送中',
-                      style: TextStyle(
-                          fontSize: 10, color: ZT.onInk.withValues(alpha: 0.8))),
-                ]),
               ],
             ],
           ),
