@@ -469,3 +469,109 @@ export function sessionUsageSummary(db: Db, sessionId: string): UsageSummary {
   ).all(sessionId) as { toolName: string; count: number }[];
   return { runs: runCount, totals, last, composition, tools };
 }
+
+export type UsageStatsAgg = {
+  summary: {
+    inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number;
+    totalTokens: number; cacheHitRate: number; totalSessions: number; totalTurns: number;
+    toolCallCount: number; activeDays: number; currentStreakDays: number; peakDayTokens: number;
+    favoriteModel: string;
+  };
+  models: { modelId: string; totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number; share: number }[];
+  daily: { date: string; models: { modelId: string; totalTokens: number }[] }[];
+};
+
+const _localDay = (iso: string): string => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+/**
+ * 全局用量聚合(runs 表每回合一条:模型/usage JSON/起止时间),供用量页用。
+ * [sinceIso] 为 null = 全部;输入侧含缓存(读+写),命中率 = 缓存读 / 输入。
+ * 连续天数从今天(或最近活跃日)往回数日历日。
+ */
+export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
+  const rows = (sinceIso
+    ? db.prepare('SELECT model, usage, started_at, session_id FROM runs WHERE started_at >= ?').all(sinceIso)
+    : db.prepare('SELECT model, usage, started_at, session_id FROM runs').all()) as
+    { model: string | null; usage: string | null; started_at: string; session_id: string }[];
+
+  const sessions = new Set<string>();
+  const perModel = new Map<string, { totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number }>();
+  const dailyMap = new Map<string, Map<string, number>>();
+  let inputRaw = 0, outputTokens = 0, cacheRead = 0, cacheCreation = 0, totalTurns = 0;
+
+  for (const r of rows) {
+    sessions.add(r.session_id);
+    if (!r.usage) continue;
+    let u: Record<string, number> | null = null;
+    try { u = JSON.parse(r.usage) as Record<string, number>; } catch { continue; }
+    const inTok = u.inputTokens ?? 0;
+    const outTok = u.outputTokens ?? 0;
+    const cr = u.cacheReadInputTokens ?? 0;
+    const cc = u.cacheCreationInputTokens ?? 0;
+    inputRaw += inTok; outputTokens += outTok; cacheRead += cr; cacheCreation += cc;
+    totalTurns += u.numTurns ?? 0;
+
+    const model = r.model ?? 'unknown';
+    const acc = perModel.get(model) ?? { totalTokens: 0, inputTokens: 0, outputTokens: 0, requestCount: 0 };
+    const dayTotal = inTok + cr + cc + outTok;
+    acc.totalTokens += dayTotal;
+    acc.inputTokens += inTok + cr + cc;
+    acc.outputTokens += outTok;
+    acc.requestCount += 1;
+    perModel.set(model, acc);
+
+    const day = _localDay(r.started_at);
+    const dm = dailyMap.get(day) ?? new Map<string, number>();
+    dm.set(model, (dm.get(model) ?? 0) + dayTotal);
+    dailyMap.set(day, dm);
+  }
+
+  const inputTokens = inputRaw + cacheRead + cacheCreation;
+  const totalTokens = inputTokens + outputTokens;
+  const models = [...perModel.entries()]
+    .map(([modelId, a]) => ({ modelId, ...a, share: totalTokens > 0 ? a.totalTokens / totalTokens : 0 }))
+    .sort((a, b) => b.totalTokens - a.totalTokens);
+  const daily = [...dailyMap.entries()]
+    .map(([date, m]) => ({
+      date,
+      models: [...m.entries()].map(([modelId, totalTokens]) => ({ modelId, totalTokens })).sort((a, b) => b.totalTokens - a.totalTokens),
+    }))
+    .filter((d) => d.models.some((m) => m.totalTokens > 0))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const dayTotals = new Map<string, number>();
+  for (const d of daily) dayTotals.set(d.date, d.models.reduce((s, m) => s + m.totalTokens, 0));
+  const activeDays = dayTotals.size;
+  const peakDayTokens = activeDays ? Math.max(...dayTotals.values()) : 0;
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let streak = 0;
+  const cursor = new Date();
+  if (!dayTotals.has(fmt(cursor))) cursor.setDate(cursor.getDate() - 1); // 今天还没用量 → 从昨天起数
+  while (dayTotals.has(fmt(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  const toolRow = (sinceIso
+    ? db.prepare("SELECT COUNT(*) AS n FROM messages WHERE kind='tool_use' AND created_at >= ?").get(sinceIso)
+    : db.prepare("SELECT COUNT(*) AS n FROM messages WHERE kind='tool_use'").get()) as { n: number };
+
+  return {
+    summary: {
+      inputTokens, outputTokens, cacheReadTokens: cacheRead, cacheCreationTokens: cacheCreation,
+      totalTokens, cacheHitRate: inputTokens > 0 ? cacheRead / inputTokens : 0,
+      totalSessions: sessions.size, totalTurns, toolCallCount: toolRow.n,
+      activeDays, currentStreakDays: streak, peakDayTokens,
+      favoriteModel: models[0]?.modelId ?? '',
+    },
+    models,
+    daily,
+  };
+}

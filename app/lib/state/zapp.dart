@@ -473,6 +473,25 @@ class ZApp extends ChangeNotifier {
   /// 新建项目文件夹,返回其 cwd;失败抛错(对话框提示)。
   Future<String> createProject(String name) => _api.createProject(name);
 
+  // ---- 用量总览(/api/usage) ----
+  Map<String, dynamic>? usageStats; // 原始快照,页面经 parseUsageStats 解析
+  bool usageStatsLoading = false;
+  String usageStatsRange = '7d';
+
+  /// 拉全局用量;失败置 null(页面空态),下次刷新再试。
+  Future<void> loadUsageStats({String range = '7d'}) async {
+    usageStatsLoading = true;
+    usageStatsRange = range;
+    notifyListeners();
+    try {
+      usageStats = await _api.usageStats(range);
+    } on Object {
+      usageStats = null;
+    }
+    usageStatsLoading = false;
+    notifyListeners();
+  }
+
   /// 项目重命名:文件夹改名 + 其下会话 cwd 迁移;失败抛错(对话框提示)。
   Future<void> renameProject(String oldName, String newName) => _api.renameProject(oldName, newName);
 
