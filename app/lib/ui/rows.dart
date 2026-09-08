@@ -123,65 +123,62 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
   }
 }
 
-/// 用户气泡里的图片卡:白底圆角卡(参考 zremote) — 内部左右滑动预览,
-/// 底栏「图片 · N ›」点开全屏可滑动查看器。
-class _UserImageCard extends StatefulWidget {
+/// 用户气泡里的图片卡:白底圆角卡(参考 zremote/QQ/微信) — 一张一张缩略图排:
+/// 1 张=单图(稍大),2 张=并排,3 张=一行三张,4 张=两行两列;
+/// 底栏「图片 · N ›」点开全屏可左右滑动查看器。
+class _UserImageCard extends StatelessWidget {
   final List<String> images;
 
   const _UserImageCard(this.images);
 
   @override
-  State<_UserImageCard> createState() => _UserImageCardState();
-}
-
-class _UserImageCardState extends State<_UserImageCard> {
-  int _index = 0;
-  late final PageController _ctrl = PageController(viewportFraction: 0.86);
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final n = widget.images.length;
+    final n = images.length;
     return LayoutBuilder(builder: (context, c) {
       final maxW = c.maxWidth.isFinite && c.maxWidth > 0 ? c.maxWidth : 320.0;
       final cardW = maxW.clamp(150.0, 340.0).toDouble();
-      final showPager = n > 1;
+      const pad = 8.0;
+      const gap = 4.0;
+      final innerW = cardW - pad * 2;
+      // 宫格列数:1 张单图,2 张两列,3 张三列一行,4 张两列两行
+      final cols = n == 1 ? 1 : (n == 2 ? 2 : (n == 3 ? 3 : 2));
+      final cell = n == 1
+          ? (innerW * 0.62).clamp(120.0, 220.0)
+          : (innerW - gap * (cols - 1)) / cols;
+      final cellSize = cell.toDouble();
+      final rows = (n / cols).ceil();
+      final grid = <Widget>[];
+      for (var r = 0; r < rows; r++) {
+        final start = r * cols;
+        final end = (start + cols).clamp(start, n);
+        grid.add(Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var j = start; j < end; j++) ...[
+            if (j != start) SizedBox(width: gap),
+            GestureDetector(
+              onTap: () => showChatImageViewer(context, images, initialIndex: j),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: chatImageBox(images[j], cellSize, cellSize),
+              ),
+            ),
+          ],
+        ]));
+        if (r < rows - 1) grid.add(SizedBox(height: gap));
+      }
       return Container(
         width: cardW,
-        padding: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(pad),
         decoration: ShapeDecoration(
           color: ZT.surface,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           shadows: ZT.hard(dx: 0, dy: 2),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          SizedBox(
-            height: cardW * 0.72,
-            child: PageView.builder(
-              controller: _ctrl,
-              itemCount: n,
-              onPageChanged: (i) => setState(() => _index = i),
-              itemBuilder: (context, i) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: GestureDetector(
-                  onTap: () => showChatImageViewer(context, widget.images, initialIndex: i),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: chatImageBox(widget.images[i], cardW - 28, cardW * 0.72),
-                  ),
-                ),
-              ),
-            ),
-          ),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: grid),
           Divider(height: 12, thickness: 1, color: ZT.line),
           InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => showChatImageViewer(context, widget.images, initialIndex: _index),
+            onTap: () => showChatImageViewer(context, images, initialIndex: 0),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: Row(children: [
@@ -189,11 +186,6 @@ class _UserImageCardState extends State<_UserImageCard> {
                 const SizedBox(width: 6),
                 Text('图片 · $n', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.ink)),
                 const Spacer(),
-                if (showPager)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 2),
-                    child: Text('${_index + 1}/$n', style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
-                  ),
                 Icon(Icons.chevron_right_rounded, size: 17, color: ZT.inkFaint),
               ]),
             ),
