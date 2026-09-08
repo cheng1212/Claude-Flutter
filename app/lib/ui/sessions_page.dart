@@ -336,17 +336,21 @@ class _SessionsPageState extends State<SessionsPage> {
         title: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _pickProject,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_project == null ? Icons.filter_alt_outlined : Icons.folder_open_rounded,
-                size: 18, color: _project == null ? ZT.inkSoft : ZT.primary),
-            const SizedBox(width: 7),
-            Text(_project ?? '全部会话',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: _project == null ? ZT.ink : ZT.primary)),
-            Icon(Icons.arrow_drop_down_rounded, size: 24, color: ZT.inkSoft),
-          ]),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: ShapeDecoration(
+              color: ZT.surface,
+              shape: StadiumBorder(side: ZT.inkSide(w: 1.2)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(_project == null ? Icons.chat_bubble_outline_rounded : Icons.folder_open_rounded,
+                  size: 15, color: ZT.primary),
+              const SizedBox(width: 6),
+              Text(_project ?? '全部会话',
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900, color: ZT.ink)),
+              Icon(Icons.arrow_drop_down_rounded, size: 20, color: ZT.inkSoft),
+            ]),
+          ),
         ),
         actions: [
           IconButton(
@@ -812,6 +816,7 @@ class _SessionsPageState extends State<SessionsPage> {
 
     return HardCard(
       color: ZT.surface,
+      borderWidth: ZT.cardBorderWidth, // cream 无框软卡 / citrus 墨线
       onTap: () => _openChat(s),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -891,17 +896,23 @@ class _SessionsPageState extends State<SessionsPage> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 10.5, color: c.$1, fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
+    final row = Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(width: 5, height: 5, decoration: BoxDecoration(color: c.$1, shape: BoxShape.circle)),
+      const SizedBox(width: 4),
+      Flexible(child: text),
+    ]);
+    final content = maxWidth == null
+        ? row
+        : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: row);
+    // PNG 参考稿:pills = 点 + 着色底,无边框;citrus 保留墨线细框
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
       decoration: ShapeDecoration(
         color: c.$1.withValues(alpha: 0.09),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(4),
-            side: BorderSide(width: 1, color: c.$2.withValues(alpha: 0.45))),
+        shape: StadiumBorder(
+            side: ZT.palette.neoShadow ? BorderSide(width: 1, color: c.$2.withValues(alpha: 0.45)) : BorderSide.none),
       ),
-      child: maxWidth == null
-          ? text
-          : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: text),
+      child: content,
     );
   }
 
