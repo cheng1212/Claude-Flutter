@@ -32,6 +32,7 @@ class ZPalette {
   final Color onInk; // 主色/墨色填充上的文字
   final double radius; // 全局圆角
   final bool neoShadow; // true = 墨线硬阴影(blur 0, neo-brutalist);false = 柔影
+  final double borderWidth; // 默认描边宽度(citrus 墨线更粗更"硬")
 
   const ZPalette({
     required this.bg,
@@ -51,6 +52,7 @@ class ZPalette {
     required this.onInk,
     required this.radius,
     required this.neoShadow,
+    required this.borderWidth,
   });
 }
 
@@ -73,11 +75,13 @@ const ZPalette kZCream = ZPalette(
   onInk: Color(0xFFFFFFFF),
   radius: 12,
   neoShadow: false,
+  borderWidth: 1.3,
 );
 
 /// 柑橘晨光 Citrus Morning v0.1.0(移植 zremote):奶油底 + 蜜橘主色 +
-/// 墨线硬阴影 neo-brutalist;状态色语义 running=橘 / done=青 / error=玫红 /
-/// queued=柠黄 / thinking=葡萄紫,色值与 zremote theme.dart 完全一致。
+/// 墨线硬阴影 neo-brutalist;edge 直接取墨色 — 所有描边都是墨线粗框,
+/// 状态色语义 running=橘 / done=青 / error=玫红 / queued=柠黄 / thinking=葡萄紫,
+/// 色值与 zremote theme.dart 完全一致。
 const ZPalette kZCitrus = ZPalette(
   bg: Color(0xFFFFF6E9),
   surface: Color(0xFFFFFCF5),
@@ -86,7 +90,7 @@ const ZPalette kZCitrus = ZPalette(
   inkSoft: Color(0xFF5C5044),
   inkFaint: Color(0xFF7A6853),
   line: Color(0xFFE8DCC8),
-  edge: Color(0xFFE3D5BC),
+  edge: Color(0xFF241C15),
   primary: Color(0xFFFF6B1A),
   primaryDeep: Color(0xFFE05500),
   aqua: Color(0xFF0FB5A3),
@@ -96,6 +100,7 @@ const ZPalette kZCitrus = ZPalette(
   onInk: Color(0xFFFFF6E9),
   radius: 14,
   neoShadow: true,
+  borderWidth: 1.6,
 );
 
 /// 主题切换开关:改 [ZT] 全局调色板 + 持久化。
@@ -151,6 +156,7 @@ abstract final class ZT {
   static Color get onInk => _palette.onInk; // 主色填充上的文字
 
   static double get radius => _palette.radius; // 全局圆角
+  static double get borderWidth => _palette.borderWidth; // 默认描边宽度
 
   static const String mono = 'monospace'; // 代码块保留等宽
   static const String sans = 'Roboto'; // 主 UI 干净无衬线
@@ -161,7 +167,7 @@ abstract final class ZT {
   /// citrus:neo-brutalist 墨线硬阴影(blur 0),dx/dy 保留 zremote 签名。
   static List<BoxShadow> hard({double dx = 2.5, double dy = 2.5, Color? color}) {
     if (_palette.neoShadow) {
-      final c = color ?? _palette.ink.withValues(alpha: 0.18);
+      final c = color ?? _palette.ink.withValues(alpha: 0.2);
       return [BoxShadow(color: c, offset: Offset(dx, dy), blurRadius: 0)];
     }
     final c = (color ?? primary).withValues(alpha: 0.16);
@@ -266,7 +272,7 @@ class HardCard extends StatelessWidget {
   final double shadowDx;
   final double shadowDy;
   final Color? borderColor;
-  final double borderWidth;
+  final double? borderWidth;
 
   const HardCard({
     super.key,
@@ -278,7 +284,7 @@ class HardCard extends StatelessWidget {
     this.shadowDx = 0,
     this.shadowDy = 0,
     this.borderColor,
-    this.borderWidth = 1.3,
+    this.borderWidth, // null = 用主题默认(cream 1.3 / citrus 1.6)
   });
 
   @override
@@ -292,7 +298,7 @@ class HardCard extends StatelessWidget {
           shadows: glow,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(ZT.radius),
-            side: ZT.inkSide(w: borderWidth, color: borderColor),
+            side: ZT.inkSide(w: borderWidth ?? ZT.borderWidth, color: borderColor),
           ),
         ),
         child: InkWell(

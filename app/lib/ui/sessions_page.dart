@@ -11,6 +11,8 @@ import '../theme.dart';
 import 'chat_page.dart';
 import 'crons_sheet.dart';
 import 'toast.dart';
+import 'usage_page.dart';
+
 
 class SessionsPage extends StatefulWidget {
   final ZApp app;
@@ -30,6 +32,7 @@ class _SessionsPageState extends State<SessionsPage> {
   static const _kSortCreated = 'created';
   static const _kAllProjects = '__all__'; // 顶栏项目切换「全部会话」哨兵
   static const _kNewProject = '__new__'; // 筛选弹窗「新建项目」按钮的哨兵返回值
+  static const _kMenuPrefix = '__menu:'; // 项目行 ⋮ 菜单哨兵,值 = '__menu:<项目名>'
 
   final _search = TextEditingController();
   String _query = '';
@@ -399,6 +402,14 @@ class _SessionsPageState extends State<SessionsPage> {
               },
             ),
             ListTile(
+              leading: Icon(Icons.donut_small_rounded, size: 20, color: ZT.aqua),
+              title: const Text('用量信息', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => UsagePage(app: app)));
+              },
+            ),
+            ListTile(
               leading: Icon(Icons.settings_outlined, size: 20, color: ZT.inkSoft),
               title: const Text('设置', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               onTap: () {
@@ -563,9 +574,23 @@ class _SessionsPageState extends State<SessionsPage> {
                   style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
             ),
           for (final p in projects.toList()..sort)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, p),
-              child: Text(p, style: const TextStyle(fontSize: 13.5)),
+            InkWell(
+              onTap: () => Navigator.pop(ctx, p),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
+                child: Row(children: [
+                  Expanded(child: Text(p, style: const TextStyle(fontSize: 13.5))),
+                  // ⋮ 只开菜单,不触发选中(内层 InkWell 吃掉点击)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(99),
+                    onTap: () => Navigator.pop(ctx, _kMenuPrefix + p),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.more_vert_rounded, size: 17, color: ZT.inkSoft),
+                    ),
+                  ),
+                ]),
+              ),
             ),
           const Divider(height: 16),
           Padding(
@@ -586,6 +611,10 @@ class _SessionsPageState extends State<SessionsPage> {
         _project = null;
         _filter = SessionFilter.all;
       });
+      return;
+    }
+    if (picked.startsWith(_kMenuPrefix)) {
+      await _projectMenu(picked.substring(_kMenuPrefix.length));
       return;
     }
     if (picked == _kNewProject) {
@@ -633,6 +662,120 @@ class _SessionsPageState extends State<SessionsPage> {
     );
     ctrl.dispose();
     return (name == null || name.isEmpty) ? null : name;
+  }
+
+  /// 项目行 ⋮ 菜单:重命名 / 删除(级联删会话)。
+  Future<void> _projectMenu(String name) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          sheetHandle(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 2),
+            child: Row(children: [
+              Icon(Icons.folder_open_rounded, size: 16, color: ZT.primary),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              ),
+            ]),
+          ),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, size: 19, color: ZT.inkSoft),
+            title: const Text('重命名', style: TextStyle(fontSize: 14)),
+            onTap: () => Navigator.pop(ctx, 'rename'),
+          ),
+          ListTile(
+            leading: Icon(Icons.delete_outline_rounded, size: 19, color: ZT.rose),
+            title: Text('删除项目(连同其下会话)', style: TextStyle(fontSize: 14, color: ZT.rose)),
+            onTap: () => Navigator.pop(ctx, 'delete'),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'rename') await _renameProjectFlow(name);
+    if (action == 'delete') await _deleteProjectFlow(name);
+  }
+
+  /// 重命名项目:文件夹改名 + 其下会话 cwd 迁移(server 完成);当前筛选跟随新名。
+  Future<void> _renameProjectFlow(String oldName) async {
+    final ctrl = TextEditingController(text: oldName);
+    ctrl.selection = TextSelection.fromPosition(TextPosition(offset: oldName.length));
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => zDialog(
+        title: '重命名项目',
+        icon: Icons.edit_outlined,
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '新的项目名'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          dialogAction('取消', onPressed: () => Navigator.pop(ctx)),
+          dialogAction('重命名', primary: true, onPressed: () => Navigator.pop(ctx, ctrl.text.trim())),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (newName == null || newName.isEmpty || newName == oldName || !mounted) return;
+    try {
+      await app.renameProject(oldName, newName);
+    } on Object catch (e) {
+      if (!mounted) return;
+      showToast(context, '重命名失败: $e');
+      return;
+    }
+    unawaited(app.refreshSessions());
+    if (!mounted) return;
+    showToast(context, '已重命名为「$newName」');
+    if (_project == oldName) setState(() => _project = newName);
+  }
+
+  /// 删除项目:递归删文件夹(含文件)+ 级联删其下会话;当前筛选若是它则回「全部」。
+  Future<void> _deleteProjectFlow(String name) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => zDialog(
+        title: '删除项目',
+        icon: Icons.delete_forever_outlined,
+        accent: ZT.rose,
+        content: Text('将删除项目「$name」的文件夹(含其中文件)及其下全部会话,不可恢复!',
+            style: TextStyle(fontSize: 13, height: 1.5, color: ZT.ink)),
+        actions: [
+          dialogAction('取消', onPressed: () => Navigator.pop(ctx, false)),
+          dialogAction('删除', color: ZT.rose, primary: true, onPressed: () => Navigator.pop(ctx, true)),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await app.deleteProject(name);
+    } on Object catch (e) {
+      if (!mounted) return;
+      showToast(context, '删除失败: $e');
+      return;
+    }
+    unawaited(app.refreshSessions());
+    if (!mounted) return;
+    showToast(context, '项目已删除');
+    if (_project == name) {
+      setState(() {
+        _project = null;
+        _filter = SessionFilter.all;
+      });
+    }
   }
 
   Widget _linkStrip() {
