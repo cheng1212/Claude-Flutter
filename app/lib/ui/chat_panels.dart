@@ -36,7 +36,7 @@ class SubagentsSheet extends StatelessWidget {
           children: [
             sheetHandle(),
             const SizedBox(height: 10),
-            const Row(
+            Row(
               children: [
                 Icon(Icons.hub_rounded, size: 18, color: ZT.grape),
                 SizedBox(width: 8),
@@ -94,7 +94,7 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
     }
     final hasAny = live.isNotEmpty || diskRows.isNotEmpty;
     if (!hasAny) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(vertical: 18),
         child: Text(
           '还没有子代理。对话里让它"派一个子代理去查 X"就会出现。',
@@ -126,8 +126,8 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
       child: Row(
         children: [
           sub.done
-              ? const Icon(Icons.check_circle_rounded, size: 16, color: ZT.aqua)
-              : const SizedBox(
+              ? Icon(Icons.check_circle_rounded, size: 16, color: ZT.aqua)
+              : SizedBox(
                   width: 13,
                   height: 13,
                   child: CircularProgressIndicator(strokeWidth: 2, color: ZT.grape),
@@ -153,7 +153,7 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
           const SizedBox(width: 8),
           Text(
             '${sub.activityCount} 次活动',
-            style: const TextStyle(fontSize: 11.5, color: ZT.inkFaint),
+            style: TextStyle(fontSize: 11.5, color: ZT.inkFaint),
           ),
         ],
       ),
@@ -193,7 +193,7 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(
             children: [
-              const Icon(Icons.visibility_outlined, size: 15, color: ZT.grape),
+              Icon(Icons.visibility_outlined, size: 15, color: ZT.grape),
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
@@ -205,21 +205,21 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
               ),
               const SizedBox(width: 8),
               if (bits.isNotEmpty)
-                Text(bits.join(' · '), style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
-              const Icon(Icons.chevron_right_rounded, size: 16, color: ZT.inkSoft),
+                Text(bits.join(' · '), style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+              Icon(Icons.chevron_right_rounded, size: 16, color: ZT.inkSoft),
             ],
           ),
           if (model.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Row(children: [
-                const Icon(Icons.memory_rounded, size: 12, color: ZT.inkSoft),
+                Icon(Icons.memory_rounded, size: 12, color: ZT.inkSoft),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text('模型:$model',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
+                      style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
                 ),
               ]),
             ),
@@ -250,7 +250,7 @@ class BackgroundsSheet extends StatelessWidget {
           children: [
             sheetHandle(),
             const SizedBox(height: 10),
-            const Row(
+            Row(
               children: [
                 Icon(Icons.memory_rounded, size: 18, color: ZT.aqua),
                 SizedBox(width: 8),
@@ -342,7 +342,7 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
       );
     }
     if (data.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(vertical: 18),
         child: Text(
           '没有后台任务。对话里让它"后台跑 flutter build"就会出现。',
@@ -389,7 +389,7 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         fontFamily: ZT.mono,
                         fontWeight: FontWeight.w600,
@@ -409,7 +409,7 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
                     const SizedBox(width: 8),
                     Text(
                       _durationOf(b),
-                      style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint),
+                      style: TextStyle(fontSize: 10.5, color: ZT.inkFaint),
                     ),
                   ],
                 ],
@@ -421,7 +421,7 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
                     summary,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11.5, color: ZT.inkSoft),
+                    style: TextStyle(fontSize: 11.5, color: ZT.inkSoft),
                   ),
                 ),
               if (outputTail.trim().isNotEmpty)
@@ -434,7 +434,7 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
                     child: SingleChildScrollView(
                       child: SelectableText(
                         outputTail,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10.5,
                           fontFamily: ZT.mono,
                           color: ZT.inkFaint,

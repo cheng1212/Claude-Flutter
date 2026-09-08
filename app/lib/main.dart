@@ -64,6 +64,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
     final p = await SharedPreferences.getInstance();
     final base = p.getString(_kBase);
     final token = p.getString(_kToken);
+    unawaited(ZThemeController.load()); // 主题独立加载,不阻塞连接配置
     if (base != null && base.isNotEmpty && token != null && token.isNotEmpty) {
       _wire(base, token);
     }
@@ -127,20 +128,23 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'zCode',
-      theme: ZT.theme(),
-      home: !_ready
-          ? const Scaffold(backgroundColor: ZT.bg, body: SizedBox.shrink())
-          : _app == null
-              ? LoginPage(
-                  initialBaseUrl: _baseUrl,
-                  initialToken: _token,
-                  onDone: _saveAndWire,
-                  error: _loginError,
-                  busy: _connecting,
-                )
-              : AppShell(app: _app!, onLogout: _logout),
+    return ValueListenableBuilder<ZTheme>(
+      valueListenable: ZThemeController.notifier,
+      builder: (context, _, _) => MaterialApp(
+        title: 'zCode',
+        theme: ZT.theme(),
+        home: !_ready
+            ? Scaffold(backgroundColor: ZT.bg, body: SizedBox.shrink())
+            : _app == null
+                ? LoginPage(
+                    initialBaseUrl: _baseUrl,
+                    initialToken: _token,
+                    onDone: _saveAndWire,
+                    error: _loginError,
+                    busy: _connecting,
+                  )
+                : AppShell(app: _app!, onLogout: _logout),
+      ),
     );
   }
 }

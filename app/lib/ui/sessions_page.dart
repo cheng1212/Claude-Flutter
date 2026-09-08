@@ -208,7 +208,7 @@ class _SessionsPageState extends State<SessionsPage> {
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -222,7 +222,7 @@ class _SessionsPageState extends State<SessionsPage> {
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
               child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  const Icon(Icons.ios_share_rounded, size: 17, color: ZT.aqua),
+                  Icon(Icons.ios_share_rounded, size: 17, color: ZT.aqua),
                   const SizedBox(width: 8),
                   Expanded(child: Text('导出 · $title', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
                   if (out != null)
@@ -242,7 +242,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       : SingleChildScrollView(
                           child: SelectableText(
                             out.markdown,
-                            style: const TextStyle(fontSize: 11.5, height: 1.5, fontFamily: ZT.mono, color: ZT.inkSoft),
+                            style: TextStyle(fontSize: 11.5, height: 1.5, fontFamily: ZT.mono, color: ZT.inkSoft),
                           ),
                         ),
                 ),
@@ -328,7 +328,7 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: () => Scaffold.of(ctx).openDrawer(),
           ),
         ),
-        title: const Row(children: [
+        title: Row(children: [
           Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
           SizedBox(width: 8),
           Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
@@ -356,7 +356,7 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
       drawer: Drawer(
         backgroundColor: ZT.surface,
-        shape: const RoundedRectangleBorder(
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.horizontal(right: Radius.circular(ZT.radius)),
         ),
         child: SafeArea(
@@ -364,13 +364,13 @@ class _SessionsPageState extends State<SessionsPage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
               child: Row(children: [
-                const Icon(Icons.menu_rounded, size: 18, color: ZT.primary),
+                Icon(Icons.menu_rounded, size: 18, color: ZT.primary),
                 const SizedBox(width: 8),
-                const Text('菜单', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: ZT.primary)),
+                Text('菜单', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: ZT.primary)),
               ]),
             ),
             ListTile(
-              leading: const Icon(Icons.alarm_rounded, size: 20, color: ZT.lemon),
+              leading: Icon(Icons.alarm_rounded, size: 20, color: ZT.lemon),
               title: const Text('定时任务(全部会话)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               onTap: () {
                 Navigator.pop(context);
@@ -378,7 +378,7 @@ class _SessionsPageState extends State<SessionsPage> {
                   context: context,
                   backgroundColor: ZT.surface,
                   isScrollControlled: true,
-                  shape: const RoundedRectangleBorder(
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
                     side: BorderSide(color: ZT.edge),
                   ),
@@ -387,7 +387,7 @@ class _SessionsPageState extends State<SessionsPage> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.settings_outlined, size: 20, color: ZT.inkSoft),
+              leading: Icon(Icons.settings_outlined, size: 20, color: ZT.inkSoft),
               title: const Text('设置', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               onTap: () {
                 Navigator.pop(context);
@@ -449,7 +449,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       side: ZT.inkSide(),
                     ),
                   ),
-                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.swap_vert_rounded, size: 15, color: ZT.inkSoft),
                     SizedBox(width: 4),
                     Text('排序', style: TextStyle(fontSize: 12.5, color: ZT.inkSoft)),
@@ -470,10 +470,10 @@ class _SessionsPageState extends State<SessionsPage> {
                       height: MediaQuery.of(context).size.height * 0.55,
                       child: Center(
                         child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.chat_bubble_outline_rounded, size: 40, color: ZT.inkFaint),
+                          Icon(Icons.chat_bubble_outline_rounded, size: 40, color: ZT.inkFaint),
                           const SizedBox(height: 12),
                           Text(app.linked ? '这里空空如也' : '等待连接…',
-                              style: const TextStyle(fontSize: 13, color: ZT.inkFaint)),
+                              style: TextStyle(fontSize: 13, color: ZT.inkFaint)),
                         ]),
                       ),
                     ),
@@ -567,13 +567,13 @@ class _SessionsPageState extends State<SessionsPage> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
           child: Row(children: [
-            const PulseDot(color: ZT.rose, animate: true, size: 7),
+            PulseDot(color: ZT.rose, animate: true, size: 7),
             const SizedBox(width: 8),
             Expanded(
               child: Text('未连接(${app.linkFailure ?? app.error ?? '连接中'})—— 点此重连',
-                  style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk)),
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk)),
             ),
-            const Icon(Icons.refresh_rounded, size: 16, color: ZT.onInk),
+            Icon(Icons.refresh_rounded, size: 16, color: ZT.onInk),
           ]),
         ),
       ),
@@ -596,7 +596,7 @@ class _SessionsPageState extends State<SessionsPage> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           if (pinned) ...[
-            const Icon(Icons.push_pin_rounded, size: 13, color: ZT.primary),
+            Icon(Icons.push_pin_rounded, size: 13, color: ZT.primary),
             const SizedBox(width: 6),
           ],
           Expanded(
@@ -607,7 +607,7 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
+            icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
             onPressed: () => _sessionMenu(s),
           ),
         ]),
@@ -639,7 +639,7 @@ class _SessionsPageState extends State<SessionsPage> {
             _pill(t, 'tag'),
           ],
           const Spacer(),
-          Text(_timeLabel(s), style: const TextStyle(fontSize: 11, color: ZT.inkFaint)),
+          Text(_timeLabel(s), style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
         ]),
       ]),
     );
@@ -687,7 +687,7 @@ class _SessionsPageState extends State<SessionsPage> {
     return showModalBottomSheet(
       context: context,
       backgroundColor: ZT.surface,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -729,40 +729,99 @@ class _SessionsPageState extends State<SessionsPage> {
     await showModalBottomSheet(
       context: context,
       backgroundColor: ZT.surface,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
-              Icon(Icons.settings_outlined, size: 18, color: ZT.primary),
-              SizedBox(width: 8),
-              Text('设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            ]),
-            const SizedBox(height: 14),
-            _settingsRow('连接状态', link),
-            _settingsRow('会话数', '${app.sessions.length}'),
-            _settingsRow('模型数', '${app.models.length}'),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: BigButton(
-                label: '切换服务器(登出)',
-                icon: Icons.swap_horiz_rounded,
-                color: ZT.rose,
-                textColor: Colors.white,
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  widget.onLogout();
-                },
+          child: ValueListenableBuilder<ZTheme>(
+            valueListenable: ZThemeController.notifier,
+            builder: (context, current, _) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.settings_outlined, size: 18, color: ZT.primary),
+                SizedBox(width: 8),
+                Text('设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              ]),
+              const SizedBox(height: 14),
+              _themeRow(current, (t) => ZThemeController.set(t)),
+              const SizedBox(height: 6),
+              _settingsRow('连接状态', link),
+              _settingsRow('会话数', '${app.sessions.length}'),
+              _settingsRow('模型数', '${app.models.length}'),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: BigButton(
+                  label: '切换服务器(登出)',
+                  icon: Icons.swap_horiz_rounded,
+                  color: ZT.rose,
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    widget.onLogout();
+                  },
+                ),
               ),
-            ),
-          ]),
+            ]),
+          ),
         ),
       ),
+    );
+  }
+
+  /// 主题切换行:两个签名色小卡(各画主题底色+主色描边),点选即换即存。
+  Widget _themeRow(ZTheme current, ValueChanged<ZTheme> onPick) {
+    Widget swatch(ZTheme t) {
+      final p = switch (t) {
+        ZTheme.cream => kZCream,
+        ZTheme.citrus => kZCitrus,
+      };
+      return Container(
+        width: 20,
+        height: 13,
+        decoration: ShapeDecoration(
+          color: p.bg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(3.5),
+            side: BorderSide(width: 1.4, color: p.primary),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        Text('主题', style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+        const Spacer(),
+        for (final t in ZTheme.values)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: () => onPick(t),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                decoration: ShapeDecoration(
+                  color: t == current ? ZT.primary.withValues(alpha: 0.13) : ZT.surface,
+                  shape: StadiumBorder(
+                      side: BorderSide(width: 1.2, color: t == current ? ZT.primary : ZT.edge)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  swatch(t),
+                  const SizedBox(width: 6),
+                  Text(t.label,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: t == current ? ZT.primaryDeep : ZT.inkSoft)),
+                ]),
+              ),
+            ),
+          ),
+      ]),
     );
   }
 
@@ -770,9 +829,9 @@ class _SessionsPageState extends State<SessionsPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
-        Text(label, style: const TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+        Text(label, style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
         const Spacer(),
-        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
       ]),
     );
   }
@@ -853,10 +912,10 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.folder_open_rounded, size: 19, color: ZT.grape),
+          leading: Icon(Icons.folder_open_rounded, size: 19, color: ZT.grape),
           title: Text('项目:$_projectLabel', style: const TextStyle(fontSize: 13.5)),
-          subtitle: _cwd == null ? null : Text(_cwd!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
-          trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkSoft),
+          subtitle: _cwd == null ? null : Text(_cwd!, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+          trailing: Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkSoft),
           onTap: _pickProject,
         ),
       ]),
@@ -914,7 +973,7 @@ class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Text('总目录:${widget.root}\n电脑上在这里建子文件夹,就会出现在下面',
-                  style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint, height: 1.45)),
+                  style: TextStyle(fontSize: 10.5, color: ZT.inkFaint, height: 1.45)),
             ),
           if (_custom)
             TextField(
@@ -932,7 +991,7 @@ class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 260),
               child: widget.names.isEmpty
-                  ? const Padding(
+                  ? Padding(
                       padding: EdgeInsets.symmetric(vertical: 14),
                       child: Text('总目录下还没有项目文件夹。点下面「新建项目」创建第一个。',
                           style: TextStyle(fontSize: 11.5, color: ZT.inkFaint, height: 1.5)),
@@ -943,7 +1002,7 @@ class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
                         for (final n in widget.names)
                           ListTile(
                             dense: true,
-                            leading: const Icon(Icons.folder_rounded, size: 19, color: ZT.lemon),
+                            leading: Icon(Icons.folder_rounded, size: 19, color: ZT.lemon),
                             title: Text(n, style: const TextStyle(fontSize: 13.5)),
                             onTap: () => Navigator.pop(context, joinProjectCwd(widget.root, n)),
                           ),
@@ -952,13 +1011,13 @@ class _ProjectPickerDialogState extends State<_ProjectPickerDialog> {
             ),
             ListTile(
               dense: true,
-              leading: const Icon(Icons.create_new_folder_rounded, size: 19, color: ZT.grape),
+              leading: Icon(Icons.create_new_folder_rounded, size: 19, color: ZT.grape),
               title: const Text('新建项目…', style: TextStyle(fontSize: 13.5)),
               onTap: () => setState(() => _creating = true),
             ),
             ListTile(
               dense: true,
-              leading: const Icon(Icons.edit_location_alt_outlined, size: 19, color: ZT.inkSoft),
+              leading: Icon(Icons.edit_location_alt_outlined, size: 19, color: ZT.inkSoft),
               title: const Text('自定义路径…', style: TextStyle(fontSize: 13.5)),
               onTap: () => setState(() => _custom = true),
             ),

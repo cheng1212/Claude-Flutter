@@ -99,14 +99,14 @@ class _CenterToastState extends State<_CenterToast> {
                   Flexible(
                     child: Text(
                       widget.msg,
-                      style: const TextStyle(fontSize: 12.5, color: ZT.surface, height: 1.4),
+                      style: TextStyle(fontSize: 12.5, color: ZT.surface, height: 1.4),
                     ),
                   ),
                   if (widget.actionLabel != null) ...[
                     const SizedBox(width: 12),
                     Text(
                       widget.actionLabel!,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12.5, fontWeight: FontWeight.w800, color: ZT.lemon),
                     ),
                   ],

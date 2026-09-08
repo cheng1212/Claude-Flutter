@@ -1,38 +1,169 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// 明快奶油 Framer 风:奶油底 + 焦糖橙主色 + 暖棕文字,干净无辉光。
-/// widget API 与 zremote theme.dart 同形(HardCard/StatusChip/PulseDot/BigButton),
-/// 页面代码可近乎照搬;仅把 token 换成浅色系。
+/// 主题名:cream = 明快奶油(原版默认)/ citrus = 柑橘晨光(移植 zremote)。
+enum ZTheme { cream, citrus }
+
+extension ZThemeLabel on ZTheme {
+  String get label => switch (this) {
+        ZTheme.cream => '原版奶油',
+        ZTheme.citrus => '柑橘晨光',
+      };
+}
+
+/// 一套主题的全部设计 token。换主题 = 换一个 const 调色板,
+/// UI 代码零改动(全部经 [ZT] 委托读取,详见文件尾说明)。
+class ZPalette {
+  final Color bg; // 页面底
+  final Color surface; // 卡片
+  final Color surfaceHi; // 高亮面板
+  final Color ink; // 主文字
+  final Color inkSoft; // 次级文字
+  final Color inkFaint; // 暗文字
+  final Color line; // 发丝线
+  final Color edge; // 默认描边
+  final Color primary; // 主色
+  final Color primaryDeep; // 深主色(浅底上可读)
+  final Color aqua; // 青(工具/信息/完成)
+  final Color lemon; // 黄(等待/警示)
+  final Color rose; // 红(错误)
+  final Color grape; // 紫(思考)
+  final Color onInk; // 主色/墨色填充上的文字
+  final double radius; // 全局圆角
+  final bool neoShadow; // true = 墨线硬阴影(blur 0, neo-brutalist);false = 柔影
+
+  const ZPalette({
+    required this.bg,
+    required this.surface,
+    required this.surfaceHi,
+    required this.ink,
+    required this.inkSoft,
+    required this.inkFaint,
+    required this.line,
+    required this.edge,
+    required this.primary,
+    required this.primaryDeep,
+    required this.aqua,
+    required this.lemon,
+    required this.rose,
+    required this.grape,
+    required this.onInk,
+    required this.radius,
+    required this.neoShadow,
+  });
+}
+
+/// 原版:明快奶油 Framer 风 — 奶油底 + 焦糖橙主色 + 暖棕文字,干净无辉光。
+const ZPalette kZCream = ZPalette(
+  bg: Color(0xFFFAF6EF),
+  surface: Color(0xFFFFFFFF),
+  surfaceHi: Color(0xFFFFF8F0),
+  ink: Color(0xFF2B2118),
+  inkSoft: Color(0xFF8A8275),
+  inkFaint: Color(0xFFB9B1A4),
+  line: Color(0xFFEDE5D8),
+  edge: Color(0xFFE2D7C6),
+  primary: Color(0xFFE8590C),
+  primaryDeep: Color(0xFFC74405),
+  aqua: Color(0xFF4C8A7E),
+  lemon: Color(0xFFE9A13B),
+  rose: Color(0xFFD65745),
+  grape: Color(0xFF9B6FC9),
+  onInk: Color(0xFFFFFFFF),
+  radius: 12,
+  neoShadow: false,
+);
+
+/// 柑橘晨光 Citrus Morning v0.1.0(移植 zremote):奶油底 + 蜜橘主色 +
+/// 墨线硬阴影 neo-brutalist;状态色语义 running=橘 / done=青 / error=玫红 /
+/// queued=柠黄 / thinking=葡萄紫,色值与 zremote theme.dart 完全一致。
+const ZPalette kZCitrus = ZPalette(
+  bg: Color(0xFFFFF6E9),
+  surface: Color(0xFFFFFCF5),
+  surfaceHi: Color(0xFFFFF3DE),
+  ink: Color(0xFF241C15),
+  inkSoft: Color(0xFF5C5044),
+  inkFaint: Color(0xFF7A6853),
+  line: Color(0xFFE8DCC8),
+  edge: Color(0xFFE3D5BC),
+  primary: Color(0xFFFF6B1A),
+  primaryDeep: Color(0xFFE05500),
+  aqua: Color(0xFF0FB5A3),
+  lemon: Color(0xFFFFC93C),
+  rose: Color(0xFFE5484D),
+  grape: Color(0xFF7C5CFF),
+  onInk: Color(0xFFFFF6E9),
+  radius: 14,
+  neoShadow: true,
+);
+
+/// 主题切换开关:改 [ZT] 全局调色板 + 持久化。
+/// notifier 挂在 MaterialApp 外层,切换时整树重建(所有色值都是 build 时读取)。
+class ZThemeController {
+  ZThemeController._();
+
+  static final ValueNotifier<ZTheme> notifier = ValueNotifier<ZTheme>(ZTheme.cream);
+  static const _kTheme = 'zcode.theme';
+
+  /// 启动时读回持久化主题;存档损坏/未知名回退 cream。
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    final t = ZTheme.values.asNameMap()[p.getString(_kTheme)] ?? ZTheme.cream;
+    use(t);
+    notifier.value = t;
+  }
+
+  static Future<void> set(ZTheme t) async {
+    use(t);
+    notifier.value = t;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kTheme, t.name);
+  }
+
+  static void use(ZTheme t) =>
+      ZT._palette = switch (t) { ZTheme.cream => kZCream, ZTheme.citrus => kZCitrus };
+}
+
+/// 主题 token 门面:全部委托给当前 [ZPalette]。
+/// 历史上是 static const(明快奶油单主题),为支持双主题改成 getter——
+/// 调用点写法不变,但 const 上下文里引用 ZT.* 的地方要摘掉 const。
 abstract final class ZT {
+  static ZPalette _palette = kZCream;
+  static ZPalette get palette => _palette;
+
   // ---- palette -----------------------------------------------------------
-  static const Color bg = Color(0xFFFAF6EF); // 奶油底
-  static const Color surface = Color(0xFFFFFFFF); // 卡片
-  static const Color surfaceHi = Color(0xFFFFF8F0); // 高亮面板
-  static const Color ink = Color(0xFF2B2118); // 主文字(暖深棕)
-  static const Color inkSoft = Color(0xFF8A8275); // 次级文字
-  static const Color inkFaint = Color(0xFFB9B1A4); // 暗文字
-  static const Color line = Color(0xFFEDE5D8); // 发丝线
-  static const Color edge = Color(0xFFE2D7C6); // 默认描边(浅暖)
+  static Color get bg => _palette.bg; // 页面底
+  static Color get surface => _palette.surface; // 卡片
+  static Color get surfaceHi => _palette.surfaceHi; // 高亮面板
+  static Color get ink => _palette.ink; // 主文字
+  static Color get inkSoft => _palette.inkSoft; // 次级文字
+  static Color get inkFaint => _palette.inkFaint; // 暗文字
+  static Color get line => _palette.line; // 发丝线
+  static Color get edge => _palette.edge; // 默认描边(浅暖)
 
-  static const Color primary = Color(0xFFE8590C); // 焦糖橙
-  static const Color primaryDeep = Color(0xFFC74405); // 深橙(浅底上可读)
-  static const Color aqua = Color(0xFF4C8A7E); // 哑光青(工具/信息)
-  static const Color lemon = Color(0xFFE9A13B); // 琥珀(等待/警示)
-  static const Color rose = Color(0xFFD65745); // 珊瑚红(错误)
-  static const Color grape = Color(0xFF9B6FC9); // 柔紫(思考)
-  static const Color onInk = Color(0xFFFFFFFF); // 主色填充上的文字
+  static Color get primary => _palette.primary; // 主色
+  static Color get primaryDeep => _palette.primaryDeep; // 深主色(浅底上可读)
+  static Color get aqua => _palette.aqua; // 青(工具/信息)
+  static Color get lemon => _palette.lemon; // 黄(等待/警示)
+  static Color get rose => _palette.rose; // 红(错误)
+  static Color get grape => _palette.grape; // 紫(思考)
+  static Color get onInk => _palette.onInk; // 主色填充上的文字
 
-  static const double radius = 12; // Framer 柔和圆角
+  static double get radius => _palette.radius; // 全局圆角
 
   static const String mono = 'monospace'; // 代码块保留等宽
   static const String sans = 'Roboto'; // 主 UI 干净无衬线
 
   // ---- shadows / borders -------------------------------------------------
 
-  /// 柔和暖阴影(取代原辉光)。dx/dy 保留 zremote 签名(按压位移仍有效),
-  /// 但渲染为低透明度的双层柔影,符合浅色界面。
+  /// cream:柔和暖阴影(低透明双层柔影,符合浅色界面);
+  /// citrus:neo-brutalist 墨线硬阴影(blur 0),dx/dy 保留 zremote 签名。
   static List<BoxShadow> hard({double dx = 2.5, double dy = 2.5, Color? color}) {
+    if (_palette.neoShadow) {
+      final c = color ?? _palette.ink.withValues(alpha: 0.18);
+      return [BoxShadow(color: c, offset: Offset(dx, dy), blurRadius: 0)];
+    }
     final c = (color ?? primary).withValues(alpha: 0.16);
     return [
       BoxShadow(color: c, offset: Offset(0, dy * 1.4), blurRadius: 16, spreadRadius: -6),
@@ -50,7 +181,7 @@ abstract final class ZT {
       useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: bg,
-      colorScheme: const ColorScheme.light(
+      colorScheme: ColorScheme.light(
         primary: primary,
         onPrimary: onInk,
         secondary: aqua,
@@ -70,7 +201,7 @@ abstract final class ZT {
         titleMedium: sansStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w700),
         titleSmall: sansStyle.copyWith(fontSize: 13, fontWeight: FontWeight.w700),
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: bg,
         foregroundColor: ink,
         elevation: 0,
@@ -80,11 +211,11 @@ abstract final class ZT {
           statusBarIconBrightness: Brightness.dark,
         ),
       ),
-      dividerTheme: const DividerThemeData(color: line, thickness: 1, space: 1),
+      dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: surface,
-        hintStyle: const TextStyle(color: inkFaint, fontSize: 13, fontFamily: sans),
+        hintStyle: TextStyle(color: inkFaint, fontSize: 13, fontFamily: sans),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
           borderSide: inkSide(),
@@ -119,7 +250,7 @@ abstract final class ZT {
         trackColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.selected) ? primary.withValues(alpha: 0.25) : line),
       ),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(color: primary),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: primary),
       splashFactory: InkSparkle.splashFactory,
     );
   }
@@ -355,28 +486,29 @@ class _PressSinkState extends State<_PressSink> {
 AlertDialog zDialog({
   required String title,
   IconData icon = Icons.tune_rounded,
-  Color accent = ZT.primary,
+  Color? accent,
   required Widget content,
   List<Widget> actions = const [],
 }) {
+  final acc = accent ?? ZT.primary;
   return AlertDialog(
     backgroundColor: ZT.surface,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(ZT.radius),
-      side: ZT.inkSide(w: 1.4, color: accent.withValues(alpha: 0.55)),
+      side: ZT.inkSide(w: 1.4, color: acc.withValues(alpha: 0.55)),
     ),
     titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
     contentPadding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
     actionsPadding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
     title: Row(children: [
-      Icon(icon, size: 18, color: accent),
+      Icon(icon, size: 18, color: acc),
       const SizedBox(width: 8),
       Expanded(
         child: Text(title,
             style: TextStyle(
                 fontSize: 15.5,
                 fontWeight: FontWeight.w900,
-                color: accent.withValues(alpha: 0.92))),
+                color: acc.withValues(alpha: 0.92))),
       ),
     ]),
     content: content,
@@ -385,9 +517,9 @@ AlertDialog zDialog({
 }
 
 /// 对话框统一按钮:primary 走焦糖实心,否则描边幽灵款。
-Widget dialogAction(String label, {required VoidCallback? onPressed, bool primary = false, Color color = ZT.primary}) {
+Widget dialogAction(String label, {required VoidCallback? onPressed, bool primary = false, Color? color}) {
   if (primary) {
-    return BigButton(label: label, onPressed: onPressed, color: color);
+    return BigButton(label: label, onPressed: onPressed, color: color ?? ZT.primary);
   }
   return OutlinedButton(
     onPressed: onPressed,
@@ -410,6 +542,6 @@ Widget sheetHandle() {
       margin: const EdgeInsets.only(top: 10, bottom: 4),
       decoration: BoxDecoration(color: ZT.edge, borderRadius: BorderRadius.circular(99)),
     ),
-    const Divider(height: 1, thickness: 1.2, color: Color(0x33E8590C)),
+    Divider(height: 1, thickness: 1.2, color: ZT.primary.withValues(alpha: 0.2)),
   ]);
 }

@@ -31,7 +31,7 @@ Widget chatImageThumb(String uri, {double size = 64}) {
       height: size,
       color: ZT.line,
       alignment: Alignment.center,
-      child: const Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
+      child: Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
     );
   }
   return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover, gaplessPlayback: true);
@@ -49,12 +49,47 @@ Uint8List? _tryDecodeDataUri(String uri) {
 
 // ------------------------------------------------------------- memoized md
 
+/// 流式预览用:未闭合的代码围栏自动补上闭合行,只作用于渲染文本、不改动原文本。
+/// 没有这步,流式中途 ``` 刚输出还没等到闭合行的几十秒里,后续正文会被
+/// markdown 包整体当成代码块渲染,视觉上像整条回复"糊"了。
+/// 规则:逐行识别 ```/~~~ 围栏标记(同字符、不少于开栏长度才闭合),
+/// 结束时若仍在栏内,补一行与开栏同字符的闭合标记。
+String balanceFences(String src) {
+  final lines = src.split('\n');
+  String? open; // 开栏字符(``` 或 ~~~)
+  int openLen = 0;
+  for (final line in lines) {
+    final m = RegExp(r'^\s{0,3}(`{3,}|~{3,})').firstMatch(line);
+    if (m == null) continue;
+    final marker = m.group(1)!;
+    final ch = marker[0];
+    if (open == null) {
+      open = ch;
+      openLen = marker.length;
+    } else if (ch == open && marker.length >= openLen) {
+      open = null; // 同字符且够长 → 闭合
+    }
+  }
+  if (open == null) return src;
+  return '$src\n${open * 3}';
+}
+
 /// MarkdownBody 的记忆化包装:文本没变就不重排(流式 append 只重排本行)。
+/// [streaming] 为 true 时(回复还在吐字)重排节流到 200ms 一帧——长回复尾部
+/// 全量 parse 是 O(n),每个 delta 都重排会打满 UI 线程;流式结束翻 false 时
+/// 绕过节流立即终渲染,不丢尾字。
 class MemoMarkdown extends StatefulWidget {
   final String text;
   final TextStyle? baseStyle;
+  final bool streaming;
 
-  const MemoMarkdown({super.key, required this.text, this.baseStyle});
+  const MemoMarkdown({super.key, required this.text, this.baseStyle, this.streaming = false});
+
+  /// 测试 seam:可注入假时钟(ws.dart clock 同款手法),单测里推动节流窗口。
+  static int Function() nowMs = () => DateTime.now().millisecondsSinceEpoch;
+
+  /// 测试观察点:真实发生 Markdown parse 的次数(缓存命中不计数)。
+  static int parseCount = 0;
 
   @override
   State<MemoMarkdown> createState() => _MemoMarkdownState();
@@ -63,11 +98,18 @@ class MemoMarkdown extends StatefulWidget {
 class _MemoMarkdownState extends State<MemoMarkdown> {
   String? _built;
   Widget? _cached;
+  int _lastBuildAtMs = 0;
+  static const _throttleMs = 200;
 
   @override
   void didUpdateWidget(covariant MemoMarkdown old) {
     super.didUpdateWidget(old);
-    if (_built != null && _built == widget.text) return;
+    if (_built != null && _built == widget.text && old.streaming == widget.streaming) return;
+    if (widget.streaming &&
+        _built != null &&
+        MemoMarkdown.nowMs() - _lastBuildAtMs < _throttleMs) {
+      return; // 节流窗口内沿用旧缓存,下一批 delta 到达时再重排
+    }
     _built = null;
     _cached = null;
   }
@@ -76,21 +118,23 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
   Widget build(BuildContext context) {
     if (_cached != null) return _cached!;
     _built = widget.text;
+    _lastBuildAtMs = MemoMarkdown.nowMs();
+    MemoMarkdown.parseCount++;
     _cached = MarkdownBody(
-      data: widget.text,
+      data: widget.streaming ? balanceFences(widget.text) : widget.text,
       selectable: true,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
       styleSheet: MarkdownStyleSheet(
         p: widget.baseStyle ??
-            const TextStyle(fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
-        h1: const TextStyle(
+            TextStyle(fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
+        h1: TextStyle(
             fontSize: 19, fontWeight: FontWeight.w800, color: ZT.ink, fontFamily: ZT.mono),
-        h2: const TextStyle(
+        h2: TextStyle(
             fontSize: 17, fontWeight: FontWeight.w800, color: ZT.ink, fontFamily: ZT.mono),
-        h3: const TextStyle(
+        h3: TextStyle(
             fontSize: 15.5, fontWeight: FontWeight.w700, color: ZT.ink, fontFamily: ZT.mono),
-        code: const TextStyle(
+        code: TextStyle(
           fontSize: 12.5,
           fontFamily: ZT.mono,
           backgroundColor: ZT.bg,
@@ -102,15 +146,15 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
           border: Border.all(width: 1.2, color: ZT.edge),
         ),
         codeblockPadding: const EdgeInsets.all(10),
-        blockquoteDecoration: const BoxDecoration(
+        blockquoteDecoration: BoxDecoration(
           border: Border(left: BorderSide(width: 3, color: ZT.primary)),
           color: ZT.surface,
         ),
         blockquotePadding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
-        listBullet: const TextStyle(
+        listBullet: TextStyle(
             fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
         tableBorder: TableBorder.all(width: 1, color: ZT.line),
-        a: const TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w700),
+        a: TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w700),
       ),
     );
     return _cached!;
@@ -172,7 +216,7 @@ class _CodeBlockState extends State<_CodeBlock> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             border: Border(bottom: BorderSide(width: 1, color: ZT.line)),
           ),
           padding: const EdgeInsets.fromLTRB(4, 0, 2, 0),
@@ -182,7 +226,7 @@ class _CodeBlockState extends State<_CodeBlock> {
               child: Text(
                 widget.language.isEmpty ? '代码' : widget.language,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0.8,
@@ -210,7 +254,7 @@ class _CodeBlockState extends State<_CodeBlock> {
             scrollDirection: Axis.horizontal,
             child: SelectableText(
               widget.code,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12, height: 1.55, fontFamily: ZT.mono, color: ZT.ink),
             ),
           ),
@@ -242,7 +286,7 @@ class UserBubble extends StatelessWidget {
           decoration: ShapeDecoration(
             color: ZT.ink,
             shadows: ZT.hard(dx: 2.5, dy: 2.5, color: ZT.ink.withValues(alpha: 0.28)),
-            shape: const RoundedRectangleBorder(
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(ZT.radius),
                 topRight: Radius.circular(4),
@@ -273,13 +317,13 @@ class UserBubble extends StatelessWidget {
               if (row.content.isNotEmpty)
                 SelectableText(
                   row.content,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
                 ),
               if (row.pending) ...[
                 const SizedBox(height: 4),
                 Row(mainAxisSize: MainAxisSize.min, children: [
-                  const SizedBox(
+                  SizedBox(
                     width: 9,
                     height: 9,
                     child: CircularProgressIndicator(
@@ -350,9 +394,9 @@ class _ReasoningCardState extends State<ReasoningCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  const PulseDot(color: ZT.grape, size: 5),
+                  PulseDot(color: ZT.grape, size: 5),
                   const SizedBox(width: 6),
-                  const Text('思考过程',
+                  Text('思考过程',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -368,7 +412,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
                     padding: const EdgeInsets.only(top: 6),
                     child: SelectableText(
                       text,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12,
                           height: 1.5,
                           color: ZT.inkSoft,
@@ -383,7 +427,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
                       text,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 11.5,
                           color: ZT.inkFaint,
                           fontStyle: FontStyle.italic,
@@ -443,7 +487,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
               children: [
                 Row(children: [
                   if (streaming)
-                    const SizedBox(
+                    SizedBox(
                       width: 11,
                       height: 11,
                       child: CircularProgressIndicator(
@@ -484,7 +528,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
                       input.trim().split('\n').first,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 11,
                           fontFamily: ZT.mono,
                           color: ZT.inkFaint),
@@ -552,7 +596,7 @@ class _ElapsedTickerState extends State<_ElapsedTicker> {
         ? '${d.inHours}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}'
         : '${two(d.inMinutes)}:${two(d.inSeconds.remainder(60))}';
     return Text('已运行 $text',
-        style: const TextStyle(
+        style: TextStyle(
             fontSize: 10.5, fontFamily: ZT.mono, color: ZT.primary));
   }
 }
@@ -571,7 +615,7 @@ class _MonoSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 1.2,
@@ -582,7 +626,7 @@ class _MonoSection extends StatelessWidget {
             child: SingleChildScrollView(
               child: SelectableText(
                 body,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 11,
                     height: 1.45,
                     fontFamily: ZT.mono,
@@ -826,10 +870,10 @@ class _PlanPanelState extends State<PlanPanel> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  const Icon(Icons.account_tree_rounded, size: 16, color: ZT.primary),
+                  Icon(Icons.account_tree_rounded, size: 16, color: ZT.primary),
                   const SizedBox(width: 7),
                   Text('执行计划 · $completed/${widget.steps.length}',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w800,
                           fontFamily: ZT.mono)),
@@ -853,7 +897,7 @@ class _PlanPanelState extends State<PlanPanel> {
                     child: Text('▶ ${current.first.content}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             color: ZT.primary)),
@@ -872,10 +916,10 @@ class _PlanPanelState extends State<PlanPanel> {
                                 SizedBox(
                                   width: 18,
                                   child: step.completed
-                                      ? const Icon(Icons.check_box_rounded,
+                                      ? Icon(Icons.check_box_rounded,
                                           size: 15, color: ZT.primary)
                                       : step.inProgress
-                                          ? const Icon(
+                                          ? Icon(
                                               Icons.indeterminate_check_box_rounded,
                                               size: 15,
                                               color: ZT.lemon)
