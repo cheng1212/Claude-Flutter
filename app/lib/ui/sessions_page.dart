@@ -11,6 +11,8 @@ import '../theme.dart';
 import 'chat_page.dart';
 import 'crons_sheet.dart';
 import 'toast.dart';
+import 'usage_page.dart';
+
 
 class SessionsPage extends StatefulWidget {
   final ZApp app;
@@ -397,6 +399,14 @@ class _SessionsPageState extends State<SessionsPage> {
                   ),
                   builder: (_) => AllCronsSheet(app: app),
                 ).then((_) => _loadCrons());
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.donut_small_rounded, size: 20, color: ZT.aqua),
+              title: const Text('用量信息', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => UsagePage(app: app)));
               },
             ),
             ListTile(

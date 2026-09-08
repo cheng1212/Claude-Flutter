@@ -1,0 +1,96 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:zcode_app/usage_stats.dart';
+
+UsageStatsView fixture() => UsageStatsView.fromMap({
+      'range': '7d',
+      'generatedAt': '2026-09-08T10:00:00.000Z',
+      'summary': {
+        'totalTokens': 795,
+        'inputTokens': 710,
+        'outputTokens': 85,
+        'cacheReadTokens': 500,
+        'cacheCreationTokens': 20,
+        'cacheHitRate': 0.7,
+        'totalSessions': 2,
+        'totalTurns': 4,
+        'toolCallCount': 9,
+        'activeDays': 2,
+        'currentStreakDays': 1,
+        'peakDayTokens': 500,
+        'favoriteModel': 'glm-5.3-flash',
+      },
+      'models': [
+        {'modelId': 'glm-5.3-flash', 'totalTokens': 780, 'inputTokens': 700, 'outputTokens': 80, 'requestCount': 2, 'share': 0.98},
+        {'modelId': 'kimi-k3', 'totalTokens': 15, 'inputTokens': 10, 'outputTokens': 5, 'requestCount': 1, 'share': 0.02},
+      ],
+      'daily': [
+        {'date': '2026-09-07', 'models': [{'modelId': 'glm-5.3-flash', 'totalTokens': 300}]},
+        {'date': '2026-09-08', 'models': [
+          {'modelId': 'glm-5.3-flash', 'totalTokens': 480},
+          {'modelId': 'kimi-k3', 'totalTokens': 15},
+        ]},
+      ],
+    });
+
+void main() {
+  group('parseUsageStats', () {
+    test('合法快照解析;models/daily 排序正确', () {
+      final v = fixture();
+      expect(v.summary.totalTokens, 795);
+      expect(v.summary.cacheHitRate, closeTo(0.7, 1e-9));
+      expect(v.models.first.modelId, 'glm-5.3-flash'); // 总量降序
+      expect(v.daily.map((d) => d.date).toList(), ['2026-09-07', '2026-09-08']); // 日期升序
+    });
+
+    test('非 Map / 缺 summary 给 null(页面空态)', () {
+      expect(parseUsageStats('nope'), isNull);
+      expect(parseUsageStats({'range': '7d'}), isNull);
+      expect(parseUsageStats(null), isNull);
+    });
+  });
+
+  group('formatTokens', () {
+    test('亿/万/原样三档', () {
+      expect(formatTokens(1560000000), '15.6亿');
+      expect(formatTokens(5046000), '504.6万');
+      expect(formatTokens(9479), '9479');
+    });
+  });
+
+  group('buildUsageTrendChart', () {
+    test('topN 之外的模型归「其他」;全 0 的日子剔除', () {
+      final daily = [
+        UsageDailyView(date: '2026-09-07', models: [('a', 100), ('b', 50), ('c', 30), ('d', 20), ('e', 10)]),
+        UsageDailyView(date: '2026-09-08', models: [('a', 200)]),
+        UsageDailyView(date: '2026-09-09', models: []), // 全 0 → 不占柱位
+      ];
+      final c = buildUsageTrendChart(daily, topN: 3);
+      expect(c.modelIds, ['a', 'b', 'c', '__other__']);
+      expect(c.dayLabels, ['9月7日', '9月8日']);
+      expect(c.stacks.length, 2);
+      // 9月7日:前三是 100/50/30,其他 = 20+10 = 30
+      expect(c.stacks[0], [100, 50, 30, 30]);
+      expect(c.stacks[1], [200, 0, 0, 0]);
+    });
+  });
+
+  group('sliceDailyByChoice', () {
+    test('today 只留今天;7d/30d/all 原样交给服务端口径', () {
+      final daily = [
+        UsageDailyView(date: usageDayKey(DateTime.now()), models: [('a', 1)]),
+        UsageDailyView(date: '2000-01-01', models: [('a', 2)]),
+      ];
+      expect(sliceDailyByChoice(daily, UsageRangeChoice.today).length, 1);
+      expect(sliceDailyByChoice(daily, UsageRangeChoice.sevenDays).length, 2);
+      expect(sliceDailyByChoice(daily, UsageRangeChoice.all).length, 2);
+    });
+  });
+
+  group('usageDayLabel', () {
+    test('yyyy-MM-dd → M月d日', () {
+      expect(usageDayLabel('2026-09-08'), '9月8日');
+      expect(usageDayLabel('bad'), 'bad');
+    });
+  });
+}

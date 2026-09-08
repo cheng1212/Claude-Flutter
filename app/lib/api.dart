@@ -111,6 +111,12 @@ class ZApi {
     await _call('DELETE', '/api/projects/${Uri.encodeComponent(name)}', null);
   }
 
+  /// 全局用量聚合:?range=7d|30d|all;形状认不出返回 null。
+  Future<Map<String, dynamic>?> usageStats(String range) async {
+    final res = await _call('GET', '/api/usage?range=$range', null);
+    return res is Map ? res.cast<String, dynamic>() : null;
+  }
+
   /// 完整重载:server 从磁盘 CLI 转录补回丢失事件(幂等),返回 {ok, merged}。
   Future<int> reloadSession(String id) async {
     final res = await _call('POST', '/api/sessions/$id/reload', null);
