@@ -23,18 +23,99 @@ Widget buildChatRow(ChatRow row) {
 
 /// data URI 缩略图:data: scheme 移动端 Image.network 拉不到,解 base64 走内存。
 /// 解不开(坏图)给占位图标,不让气泡崩。聊天页预览条与用户气泡共用。
-Widget chatImageThumb(String uri, {double size = 64}) {
+Widget chatImageThumb(String uri, {double size = 64}) => chatImageBox(uri, size, size);
+
+/// 指定尺寸的图片盒子(data URI 解码,坏图给占位图标)。
+Widget chatImageBox(String uri, double width, double height) {
   final Uint8List? bytes = _tryDecodeDataUri(uri);
   if (bytes == null) {
     return Container(
-      width: size,
-      height: size,
+      width: width,
+      height: height,
       color: ZT.line,
       alignment: Alignment.center,
       child: Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
     );
   }
-  return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover, gaplessPlayback: true);
+  return Image.memory(bytes,
+      width: width,
+      height: height,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.low);
+}
+
+/// 全屏图片查看器:双指缩放,点关闭退出。
+void showChatImageViewer(BuildContext context, String uri) {
+  final Uint8List? bytes = _tryDecodeDataUri(uri);
+  Navigator.of(context).push(MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) => Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(children: [
+        Center(
+          child: InteractiveViewer(
+            maxScale: 4,
+            child: bytes == null
+                ? const Icon(Icons.broken_image_rounded, size: 48, color: Colors.white38)
+                : Image.memory(bytes, fit: BoxFit.contain),
+          ),
+        ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 8,
+          right: 12,
+          child: IconButton(
+            icon: const Icon(Icons.close_rounded, size: 26, color: Colors.white70),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+      ]),
+    ),
+  ));
+}
+
+/// 用户气泡里的图片网格:参考 web 端编排 — 1 张=大图,≥2 张=两列,圆角 12,点按全屏。
+class _UserImagesGrid extends StatelessWidget {
+  final List<String> images;
+
+  const _UserImagesGrid(this.images);
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      final maxW = c.maxWidth.isFinite && c.maxWidth > 0 ? c.maxWidth : 320.0;
+      const gap = 6.0;
+      final cols = images.length == 1 ? 1 : 2;
+      final gridW = (images.length == 1 ? maxW * 0.66 : (maxW * 0.92).clamp(140.0, 340.0)).toDouble();
+      final cellW = cols == 1 ? gridW : (gridW - gap) / 2;
+      final cellH = cellW * 3 / 4;
+      final cells = [
+        for (final uri in images)
+          GestureDetector(
+            onTap: () => showChatImageViewer(context, uri),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: chatImageBox(uri, cellW, cellH),
+            ),
+          ),
+      ];
+      final lines = <Widget>[];
+      for (var i = 0; i < cells.length; i += cols) {
+        final end = (i + cols).clamp(i, cells.length);
+        lines.add(Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var j = i; j < end; j++) ...[
+            if (j != i) const SizedBox(width: gap),
+            cells[j],
+          ],
+        ]));
+        if (end < cells.length) lines.add(const SizedBox(height: gap));
+      }
+      return SizedBox(
+        width: cols == 1 ? cellW : gridW,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: lines),
+      );
+    });
+  }
 }
 
 Uint8List? _tryDecodeDataUri(String uri) {
@@ -300,18 +381,7 @@ class UserBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (row.images.isNotEmpty) ...[
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  alignment: WrapAlignment.end,
-                  children: [
-                    for (final uri in row.images)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: chatImageThumb(uri),
-                      ),
-                  ],
-                ),
+                _UserImagesGrid(row.images),
                 const SizedBox(height: 6),
               ],
               if (row.content.isNotEmpty)

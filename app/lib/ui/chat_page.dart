@@ -175,28 +175,37 @@ class _ChatPageState extends State<ChatPage> {
     FocusScope.of(context).unfocus(); // 发完收起键盘,别压着半屏看回复
   }
 
-  /// 相册选图 → 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
+  /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
   Future<void> _pickImage() async {
+    const maxImages = 4;
+    const maxBytes = 5 * 1024 * 1024;
+    final remaining = maxImages - _pendingImages.value.length;
+    if (remaining <= 0) {
+      if (mounted) showToast(context, '一次最多 $maxImages 张');
+      return;
+    }
     try {
-      final picked = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 2048,
-        imageQuality: 85,
-      );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
-      if (bytes.lengthInBytes > 5 * 1024 * 1024) {
-        if (mounted) showToast(context, '图片超过 5MB,换个小的');
+      final picked = await _picker.pickMultiImage(maxWidth: 2048, imageQuality: 85);
+      if (picked.isEmpty) return;
+      final uris = <String>[];
+      for (final p in picked) {
+        final bytes = await p.readAsBytes();
+        if (bytes.lengthInBytes > maxBytes) continue; // 超限的单张跳过
+        final mime = lookupMimeType(p.path) ?? 'image/jpeg';
+        uris.add('data:$mime;base64,${base64Encode(bytes)}');
+      }
+      if (uris.isEmpty) {
+        if (mounted) showToast(context, '图片超过 ${maxBytes ~/ (1024 * 1024)}MB,换个小的');
         return;
       }
-      final mime = lookupMimeType(picked.path) ?? 'image/jpeg';
-      final uri = 'data:$mime;base64,${base64Encode(bytes)}';
-      final next = [..._pendingImages.value, uri];
-      if (next.length > 4) {
-        if (mounted) showToast(context, '一次最多 4 张');
-        return;
+      final next = [..._pendingImages.value, ...uris];
+      var dropped = 0;
+      if (next.length > maxImages) {
+        dropped = next.length - maxImages;
+        next.removeRange(maxImages, next.length);
       }
       _pendingImages.value = next;
+      if (dropped > 0 && mounted) showToast(context, '最多 $maxImages 张,超出 $dropped 张未添加');
     } on Object catch (e) {
       if (mounted) showToast(context, '选图失败: $e');
     }
@@ -923,7 +932,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // 已选图片预览条
+        // 已选图片预览条(88px 缩略图,点 X 移除)
         ValueListenableBuilder<List<String>>(
           valueListenable: _pendingImages,
           builder: (context, images, _) {
@@ -931,31 +940,31 @@ class _ChatPageState extends State<ChatPage> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: SizedBox(
-                height: 64,
+                height: 88,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: images.length,
                   separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (context, i) => Stack(children: [
                     ClipRRect(
-                      borderRadius: BorderRadius.circular(ZT.radius),
-                      child: chatImageThumb(images[i]),
+                      borderRadius: BorderRadius.circular(10),
+                      child: chatImageThumb(images[i], size: 88),
                     ),
                     Positioned(
-                      top: 0,
-                      right: 0,
+                      top: 2,
+                      right: 2,
                       child: GestureDetector(
                         onTap: () {
                           final next = [...images]..removeAt(i);
                           _pendingImages.value = next;
                         },
                         child: Container(
-                          padding: const EdgeInsets.all(2),
+                          padding: const EdgeInsets.all(3),
                           decoration: BoxDecoration(
                             color: ZT.ink.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.close_rounded, size: 12, color: Colors.white),
+                          child: const Icon(Icons.close_rounded, size: 13, color: Colors.white),
                         ),
                       ),
                     ),
