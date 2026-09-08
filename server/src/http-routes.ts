@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import path from 'node:path';
 import type { Db } from './db.js';
-import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted } from './db.js';
+import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted, usageStats } from './db.js';
 import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
 import { listProjects, createProject, renameProject, renameProjectSessions, deleteProjectDir, projectSessionIds } from './projects.js';
@@ -204,5 +204,13 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   // 会话用量聚合:累计 token/缓存/费用 + 最近一轮上下文占用 + 消息构成(按字符量估算)
   app.get('/api/sessions/:id/usage', async (req) => {
     return sessionUsageSummary(deps.db, (req.params as { id: string }).id);
+  });
+
+  // 全局用量聚合(runs 表):?range=7d|30d|all(默认 7d)→ 总览/按模型/按日×模型
+  app.get('/api/usage', async (req) => {
+    const range = String((req.query as Record<string, unknown>).range ?? '7d');
+    const days = range === 'all' ? 0 : range === '30d' ? 30 : 7;
+    const since = days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : null;
+    return { range, generatedAt: new Date().toISOString(), ...usageStats(deps.db, since) };
   });
 }
