@@ -31,6 +31,7 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
+  final _composerCtrl = PageController(viewportFraction: 0.55); // 已选图片滑动翻看
   final ImagePicker _picker = ImagePicker();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
@@ -111,6 +112,7 @@ class _ChatPageState extends State<ChatPage> {
     app.removeListener(_onApp);
     _input.dispose();
     _pendingImages.dispose();
+    _composerCtrl.dispose();
     super.dispose();
   }
 
@@ -922,7 +924,7 @@ class _ChatPageState extends State<ChatPage> {
 
   // ---------------------------------------------------------------- composer
 
-  /// data URI 预览:统一走 rows.dart 的 chatImageThumb(解 base64 走内存,坏图占位)。
+  /// data URI 预览:左右滑动翻看(一屏一张中图),走 rows.dart 的 chatImageBox。
 
   Widget _composer() {
     return Container(
@@ -932,7 +934,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // 已选图片预览条(88px 缩略图,点 X 移除)
+        // 已选图片预览:左右滑动翻看,右上角 X 移除,右下角页码
         ValueListenableBuilder<List<String>>(
           valueListenable: _pendingImages,
           builder: (context, images, _) {
@@ -940,35 +942,54 @@ class _ChatPageState extends State<ChatPage> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: SizedBox(
-                height: 88,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
+                height: 150,
+                child: PageView.builder(
+                  controller: _composerCtrl,
                   itemCount: images.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) => Stack(children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: chatImageThumb(images[i], size: 88),
-                    ),
-                    Positioned(
-                      top: 2,
-                      right: 2,
-                      child: GestureDetector(
-                        onTap: () {
-                          final next = [...images]..removeAt(i);
-                          _pendingImages.value = next;
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: BoxDecoration(
-                            color: ZT.ink.withValues(alpha: 0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.close_rounded, size: 13, color: Colors.white),
+                  itemBuilder: (context, i) => Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: LayoutBuilder(builder: (context, c) {
+                      final w = c.maxWidth;
+                      return Stack(children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: chatImageBox(images[i], w, 150),
                         ),
-                      ),
-                    ),
-                  ]),
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: GestureDetector(
+                            onTap: () {
+                              final next = [...images]..removeAt(i);
+                              _pendingImages.value = next;
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: ZT.ink.withValues(alpha: 0.6),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.close_rounded, size: 15, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                        if (images.length > 1)
+                          Positioned(
+                            bottom: 4,
+                            right: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: ZT.ink.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text('${i + 1}/${images.length}',
+                                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Colors.white)),
+                            ),
+                          ),
+                      ]);
+                    }),
+                  ),
                 ),
               ),
             );
