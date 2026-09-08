@@ -1,6 +1,5 @@
-// 用量信息页:时间范围 + 模型筛选 + 总览 + 每日堆叠柱 + 模型明细。
+// 用量信息页:时间范围(可折叠/日历自定义) + 模型筛选 + 总览 + 每日堆叠柱 + 模型明细。
 // 数据源 /api/usage(server runs 表聚合);视图解析/切片在 ../usage_stats.dart(纯函数)。
-// 版式对照 zremote usage_page:neubrutalist 卡片(citrus 下墨线+硬阴影),奶油主题下自动柔和。
 import 'package:flutter/material.dart';
 
 import '../state/zapp.dart';
@@ -18,6 +17,8 @@ class UsagePage extends StatefulWidget {
 
 class _UsagePageState extends State<UsagePage> {
   UsageRangeChoice _choice = UsageRangeChoice.sevenDays;
+  DateTimeRange? _custom; // 日历自定义窗口;非空时优先于 _choice
+  bool _rangeExpanded = false;
   String? _modelFilter; // null = 全部模型
 
   ZApp get app => widget.app;
@@ -89,19 +90,60 @@ class _UsagePageState extends State<UsagePage> {
 
   // -------------------------------------------------------------- 时间范围
 
+  /// 当前生效窗口(闭区间 yyyy-MM-dd);自定义优先。
+  (String, String) get _window {
+    if (_custom != null) {
+      return (usageDayKey(_custom!.start), usageDayKey(_custom!.end));
+    }
+    return usageWindowFor(_choice);
+  }
+
+  String get _rangeTitle {
+    if (_custom != null) {
+      return '自定义 ${usageDayLabel(usageDayKey(_custom!.start))}-${usageDayLabel(usageDayKey(_custom!.end))}';
+    }
+    return _choice.label;
+  }
+
   Widget _rangeCard() {
     return HardCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.calendar_month_rounded, size: 16, color: ZT.primary),
-          const SizedBox(width: 7),
-          const Text('时间范围', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-        ]),
-        const SizedBox(height: 10),
-        for (final c in UsageRangeChoice.values) ...[
-          _rangePill(c),
-          const SizedBox(height: 8),
-        ],
+        // 折叠头:点开展开/收起五档预设 + 日历自定义
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _rangeExpanded = !_rangeExpanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(children: [
+              Icon(Icons.calendar_month_rounded, size: 16, color: ZT.primary),
+              const SizedBox(width: 7),
+              const Text('时间范围', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              const Spacer(),
+              Text(_rangeTitle, style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+              AnimatedRotation(
+                turns: _rangeExpanded ? 0 : -0.25,
+                duration: const Duration(milliseconds: 150),
+                child: Icon(Icons.expand_more_rounded, size: 20, color: ZT.inkSoft),
+              ),
+            ]),
+          ),
+        ),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 160),
+          sizeCurve: Curves.easeOut,
+          crossFadeState: _rangeExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(children: [
+              for (final c in UsageRangeChoice.values) ...[
+                _rangePill(c),
+                const SizedBox(height: 8),
+              ],
+              _customPill(),
+            ]),
+          ),
+        ),
         Divider(height: 18, thickness: 1, color: ZT.line),
         _modelFilterRow(),
       ]),
@@ -109,12 +151,14 @@ class _UsagePageState extends State<UsagePage> {
   }
 
   Widget _rangePill(UsageRangeChoice c) {
-    final selected = c == _choice;
+    final selected = _custom == null && c == _choice;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: () {
-        if (selected) return;
-        setState(() => _choice = c);
+        setState(() {
+          _choice = c;
+          _custom = null;
+        });
         _load();
       },
       child: Container(
@@ -134,49 +178,128 @@ class _UsagePageState extends State<UsagePage> {
     );
   }
 
+  Widget _customPill() {
+    final selected = _custom != null;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () async {
+        final now = DateTime.now();
+        final picked = await showDateRangePicker(
+          context: context,
+          firstDate: now.subtract(const Duration(days: 365)),
+          lastDate: now,
+          initialDateRange: _custom ??
+              DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now),
+        );
+        if (picked == null || !mounted) return;
+        setState(() => _custom = picked);
+        _load(); // 自定义窗口拉全量,客户端按窗口精筛
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        alignment: Alignment.center,
+        decoration: ShapeDecoration(
+          color: selected ? ZT.lemon : ZT.surface,
+          shape: StadiumBorder(side: BorderSide(width: selected ? 1.6 : 1.2, color: selected ? ZT.ink : ZT.edge)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.date_range_rounded, size: 15, color: selected ? ZT.ink : ZT.inkSoft),
+          const SizedBox(width: 6),
+          Text(selected ? _rangeTitle : '自定义',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
+                  color: selected ? ZT.ink : ZT.inkSoft)),
+        ]),
+      ),
+    );
+  }
+
   Widget _modelFilterRow() {
     final view = app.usageStats == null ? null : parseUsageStats(app.usageStats);
     final count = view?.models.length ?? 0;
-    return Row(children: [
-      Icon(Icons.category_rounded, size: 15, color: ZT.aqua),
-      const SizedBox(width: 7),
-      const Text('模型类型', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-      const Spacer(),
-      PopupMenuButton<String?>(
-        tooltip: '筛选模型',
-        onSelected: (v) => setState(() => _modelFilter = v),
-        itemBuilder: (ctx) => [
-          const PopupMenuItem<String?>(value: null, child: Text('全部模型', style: TextStyle(fontSize: 13))),
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _pickModel(view), // 整行可点,下拉不再"点不了"
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Icon(Icons.category_rounded, size: 15, color: ZT.aqua),
+          const SizedBox(width: 7),
+          const Text('模型类型', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: ShapeDecoration(
+              color: ZT.surfaceHi,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: ZT.inkSide()),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(_modelFilter ?? '全部模型($count个)',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.ink)),
+              Icon(Icons.arrow_drop_down_rounded, size: 20, color: ZT.inkSoft),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _pickModel(UsageStatsView? view) async {
+    final picked = await showModalBottomSheet<String?>(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 12, 18, 4),
+            child: Text('模型类型', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+          ),
+          ListTile(
+            dense: true,
+            title: const Text('全部模型', style: TextStyle(fontSize: 13.5)),
+            trailing: _modelFilter == null ? Icon(Icons.check_rounded, size: 18, color: ZT.primary) : null,
+            onTap: () => Navigator.pop(ctx, '__all__'),
+          ),
           if (view != null)
             for (final m in view.models)
-              PopupMenuItem<String?>(value: m.modelId, child: Text(m.modelId, style: const TextStyle(fontSize: 12.5))),
-        ],
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: ShapeDecoration(
-            color: ZT.surfaceHi,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: ZT.inkSide()),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(_modelFilter ?? '全部模型($count个)',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: ZT.ink)),
-            Icon(Icons.arrow_drop_down_rounded, size: 18, color: ZT.inkSoft),
-          ]),
-        ),
+              ListTile(
+                dense: true,
+                title: Text(m.modelId, style: const TextStyle(fontSize: 13, fontFamily: ZT.mono)),
+                trailing: _modelFilter == m.modelId ? Icon(Icons.check_rounded, size: 18, color: ZT.primary) : null,
+                onTap: () => Navigator.pop(ctx, m.modelId),
+              ),
+          const SizedBox(height: 6),
+        ]),
       ),
-    ]);
+    );
+    if (picked == null || !mounted) return; // 点外部关闭 = 维持
+    setState(() => _modelFilter = picked == '__all__' ? null : picked);
+  }
+
+  // ------------------------------------------------------------------ 切片
+
+  /// 窗口切片 + 模型过滤后的 daily。
+  List<UsageDailyView> _sliceDaily(UsageStatsView view) {
+    final (start, end) = _window;
+    final sliced = sliceDailyWindow(view.daily, start, end);
+    return filterDailyModels(sliced, _modelFilter == null ? const {} : {_modelFilter!});
   }
 
   // ------------------------------------------------------------------ 总览
 
   Widget _overviewCard(UsageStatsView view) {
     final s = view.summary;
-    // 模型筛选时:总量/输入/输出按明细重算;命中率沿用全局口径
-    final filtered = _modelFilter != null;
-    final models = _filteredModels(view);
-    final total = filtered ? models.fold(0, (n, m) => n + m.totalTokens) : s.totalTokens;
-    final input = filtered ? models.fold(0, (n, m) => n + m.inputTokens) : s.inputTokens;
-    final output = filtered ? models.fold(0, (n, m) => n + m.outputTokens) : s.outputTokens;
+    final slice = aggregateSlice(_sliceDaily(view));
+    final unfiltered = _modelFilter == null && _custom == null; // 全量口径:总览沿用服务端 summary
+    final total = unfiltered ? s.totalTokens : slice.totalTokens;
+    final input = unfiltered ? s.inputTokens : slice.inputTokens;
+    final output = unfiltered ? s.outputTokens : slice.outputTokens;
     final updated = _shortTime(view.generatedAt);
     return HardCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -185,8 +308,7 @@ class _UsagePageState extends State<UsagePage> {
           const SizedBox(width: 7),
           const Text('总览', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
           const Spacer(),
-          Text('${usageRangeLabel(view.range)} · 更新于 $updated',
-              style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+          Text('$_rangeTitle · 更新于 $updated', style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
         ]),
         const SizedBox(height: 10),
         Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
@@ -207,15 +329,17 @@ class _UsagePageState extends State<UsagePage> {
             style: TextStyle(fontSize: 11, color: ZT.inkSoft)),
         const SizedBox(height: 9),
         Wrap(spacing: 6, runSpacing: 4, children: [
-          _metaPill('${s.totalSessions} 会话'),
-          _metaPill('${s.totalTurns} 回合'),
+          if (unfiltered) ...[
+            _metaPill('${s.totalSessions} 会话'),
+            _metaPill('${s.totalTurns} 回合'),
+          ],
           _metaPill('${formatTokens(s.toolCallCount.toDouble())} 次工具调用'),
-          _metaPill('活跃 ${s.activeDays} 天'),
-          if (s.currentStreakDays > 0) _metaPill('连续 ${s.currentStreakDays} 天'),
-          if (filtered) _metaPill('模型:$_modelFilter'),
+          _metaPill('活跃 ${slice.activeDays} 天'),
+          if (unfiltered && s.currentStreakDays > 0) _metaPill('连续 ${s.currentStreakDays} 天'),
+          if (!unfiltered) _metaPill('模型:$_modelFilter'),
         ]),
         const SizedBox(height: 8),
-        if (s.favoriteModel.isNotEmpty)
+        if (s.favoriteModel.isNotEmpty && unfiltered)
           Row(children: [
             Text('常用模型 ', style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
             Expanded(
@@ -261,7 +385,7 @@ class _UsagePageState extends State<UsagePage> {
   // -------------------------------------------------------------- 每日用量
 
   Widget _dailyCard(UsageStatsView view) {
-    final chart = buildUsageTrendChart(_filteredDaily(view));
+    final chart = buildUsageTrendChart(_sliceDaily(view));
     if (chart.stacks.isEmpty) {
       return HardCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -314,7 +438,8 @@ class _UsagePageState extends State<UsagePage> {
   // -------------------------------------------------------------- 模型明细
 
   Widget _modelsCard(UsageStatsView view) {
-    final models = _filteredModels(view);
+    final slice = aggregateSlice(_sliceDaily(view));
+    final models = _filteredModels(view, slice);
     return HardCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -334,6 +459,45 @@ class _UsagePageState extends State<UsagePage> {
           ],
       ]),
     );
+  }
+
+  /// 明细:优先用服务端 models(过滤模型);窗口/模型切片时按 daily 重算。
+  List<UsageModelView> _filteredModels(UsageStatsView view, UsageSlice slice) {
+    if (_modelFilter == null && _custom == null && _choice == UsageRangeChoice.all) {
+      return view.models;
+    }
+    if (_modelFilter == null && _custom == null) {
+      // 预设窗口 = 服务端口径,模型明细直接取;总量按窗口重算 share 没意义,保持原 share
+      return [
+        for (final m in view.models)
+          if (m.totalTokens > 0) m,
+      ];
+    }
+    final perModel = <String, ({int total, int input, int output, int requests})>{};
+    for (final d in slice.daily) {
+      for (final m in d.models) {
+        if (_modelFilter != null && m.modelId != _modelFilter) continue;
+        final p = perModel.putIfAbsent(m.modelId, () => (total: 0, input: 0, output: 0, requests: 0));
+        perModel[m.modelId] = (
+          total: p.total + m.totalTokens,
+          input: p.input + m.inputTokens,
+          output: p.output + m.outputTokens,
+          requests: p.requests + 1, // 粗略:出现天数近似请求数
+        );
+      }
+    }
+    final list = [
+      for (final e in perModel.entries)
+        UsageModelView(
+          modelId: e.key,
+          totalTokens: e.value.total,
+          inputTokens: e.value.input,
+          outputTokens: e.value.output,
+          requestCount: e.value.requests,
+          share: slice.totalTokens > 0 ? e.value.total / slice.totalTokens : 0,
+        ),
+    ]..sort((a, b) => b.totalTokens.compareTo(a.totalTokens));
+    return list;
   }
 
   Widget _modelRow(UsageModelView m, Color color) {
@@ -372,23 +536,6 @@ class _UsagePageState extends State<UsagePage> {
     ]);
   }
 
-  // ------------------------------------------------------------------ 工具
-
-  List<UsageModelView> _filteredModels(UsageStatsView view) =>
-      _modelFilter == null ? view.models : view.models.where((m) => m.modelId == _modelFilter).toList();
-
-  List<UsageDailyView> _filteredDaily(UsageStatsView view) {
-    final sliced = sliceDailyByChoice(view.daily, _choice);
-    if (_modelFilter == null) return sliced;
-    return [
-      for (final d in sliced)
-        UsageDailyView(date: d.date, models: [
-          for (final (id, n) in d.models)
-            if (id == _modelFilter) (id, n),
-        ]),
-    ];
-  }
-
   String _shortTime(String iso) {
     final d = DateTime.tryParse(iso)?.toLocal();
     if (d == null) return '';
@@ -398,7 +545,7 @@ class _UsagePageState extends State<UsagePage> {
   }
 }
 
-/// 每日堆叠柱:自绘,不引第三方图表库。
+/// 每日堆叠柱:自绘,不引第三方图表库。柱宽封顶、分段圆角、分段间留 1px 缝。
 class _StackedBarsPainter extends CustomPainter {
   final UsageTrendChart chart;
   final List<Color> colors;
@@ -433,21 +580,31 @@ class _StackedBarsPainter extends CustomPainter {
 
     final n = chart.stacks.length;
     final slot = plotW / n;
-    final barW = slot * 0.52;
+    final barW = slot * 0.52 > 26 ? 26.0 : slot * 0.52; // 柱宽封顶,天数少时不至于糊成一坨
     final unit = chart.maxY <= 0 ? 0.0 : plotH / chart.maxY;
+    const segGap = 1.2; // 分段之间的细缝,两模型堆叠时不糊成一块
 
     for (var d = 0; d < n; d++) {
       final cx = padLeft + slot * (d + 0.5);
       var y = padTop + plotH;
-      for (var s = 0; s < chart.stacks[d].length; s++) {
-        final v = chart.stacks[d][s];
-        if (v <= 0) continue;
+      final segs = [for (var s = 0; s < chart.stacks[d].length; s++) (s, chart.stacks[d][s])]
+          .where((e) => e.$2 > 0)
+          .toList();
+      for (var i = 0; i < segs.length; i++) {
+        final (s, v) = segs[i];
         final h = v * unit;
-        canvas.drawRRect(
-          BorderRadius.circular(3).toRRect(Rect.fromLTWH(cx - barW / 2, y - h, barW, h)),
-          Paint()..color = colors[s],
+        final top = y - h;
+        final isTop = i == segs.length - 1;
+        final isBottom = i == 0;
+        final r = BorderRadius.only(
+          topLeft: Radius.circular(isTop ? 3 : 0),
+          topRight: Radius.circular(isTop ? 3 : 0),
+          bottomLeft: Radius.circular(isBottom ? 3 : 0),
+          bottomRight: Radius.circular(isBottom ? 3 : 0),
         );
-        y -= h;
+        final hDraw = (h - (isBottom ? 0 : segGap)).clamp(1.0, h);
+        canvas.drawRRect(r.toRRect(Rect.fromLTWH(cx - barW / 2, y - hDraw, barW, hDraw)), Paint()..color = colors[s]);
+        y = top;
       }
       final step = (n / 7).ceil();
       if (d % step == 0 || d == n - 1) {

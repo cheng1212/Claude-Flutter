@@ -33,6 +33,7 @@ class ZPalette {
   final double radius; // 全局圆角
   final bool neoShadow; // true = 墨线硬阴影(blur 0, neo-brutalist);false = 柔影
   final double borderWidth; // 默认描边宽度(citrus 墨线更粗更"硬")
+  final double cardBorderWidth; // 会话卡等列表卡描边(cream 无框软卡 / citrus 墨线)
 
   const ZPalette({
     required this.bg,
@@ -53,6 +54,7 @@ class ZPalette {
     required this.radius,
     required this.neoShadow,
     required this.borderWidth,
+    required this.cardBorderWidth,
   });
 }
 
@@ -76,6 +78,7 @@ const ZPalette kZCream = ZPalette(
   radius: 12,
   neoShadow: false,
   borderWidth: 1.3,
+  cardBorderWidth: 0,
 );
 
 /// 柑橘晨光 Citrus Morning v0.1.0(移植 zremote):奶油底 + 蜜橘主色 +
@@ -101,6 +104,7 @@ const ZPalette kZCitrus = ZPalette(
   radius: 14,
   neoShadow: true,
   borderWidth: 1.6,
+  cardBorderWidth: 1.6,
 );
 
 /// 主题切换开关:改 [ZT] 全局调色板 + 持久化。
@@ -157,6 +161,7 @@ abstract final class ZT {
 
   static double get radius => _palette.radius; // 全局圆角
   static double get borderWidth => _palette.borderWidth; // 默认描边宽度
+  static double get cardBorderWidth => _palette.cardBorderWidth; // 列表卡描边(cream 无框)
 
   static const String mono = 'monospace'; // 代码块保留等宽
   static const String sans = 'Roboto'; // 主 UI 干净无衬线

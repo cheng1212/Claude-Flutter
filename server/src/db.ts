@@ -478,7 +478,7 @@ export type UsageStatsAgg = {
     favoriteModel: string;
   };
   models: { modelId: string; totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number; share: number }[];
-  daily: { date: string; models: { modelId: string; totalTokens: number }[] }[];
+  daily: { date: string; models: { modelId: string; totalTokens: number; inputTokens: number; outputTokens: number }[] }[];
 };
 
 const _localDay = (iso: string): string => {
@@ -501,7 +501,7 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
 
   const sessions = new Set<string>();
   const perModel = new Map<string, { totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number }>();
-  const dailyMap = new Map<string, Map<string, number>>();
+  const dailyMap = new Map<string, Map<string, { totalTokens: number; inputTokens: number; outputTokens: number }>>();
   let inputRaw = 0, outputTokens = 0, cacheRead = 0, cacheCreation = 0, totalTurns = 0;
 
   for (const r of rows) {
@@ -526,8 +526,13 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
     perModel.set(model, acc);
 
     const day = _localDay(r.started_at);
-    const dm = dailyMap.get(day) ?? new Map<string, number>();
-    dm.set(model, (dm.get(model) ?? 0) + dayTotal);
+    const dm = dailyMap.get(day) ?? new Map<string, { totalTokens: number; inputTokens: number; outputTokens: number }>();
+    const prev = dm.get(model) ?? { totalTokens: 0, inputTokens: 0, outputTokens: 0 };
+    dm.set(model, {
+      totalTokens: prev.totalTokens + dayTotal,
+      inputTokens: prev.inputTokens + inTok + cr + cc,
+      outputTokens: prev.outputTokens + outTok,
+    });
     dailyMap.set(day, dm);
   }
 
@@ -539,7 +544,9 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
   const daily = [...dailyMap.entries()]
     .map(([date, m]) => ({
       date,
-      models: [...m.entries()].map(([modelId, totalTokens]) => ({ modelId, totalTokens })).sort((a, b) => b.totalTokens - a.totalTokens),
+      models: [...m.entries()]
+        .map(([modelId, v]) => ({ modelId, ...v }))
+        .sort((a, b) => b.totalTokens - a.totalTokens),
     }))
     .filter((d) => d.models.some((m) => m.totalTokens > 0))
     .sort((a, b) => a.date.localeCompare(b.date));
