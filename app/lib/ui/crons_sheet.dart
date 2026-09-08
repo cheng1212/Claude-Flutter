@@ -56,7 +56,7 @@ class _CronsPanelState extends State<CronsPanel> {
           child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
     }
     if (list.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(vertical: 18),
         child: Text('本会话还没有定时任务。对话里说"每 5 分钟检查一次构建"即可创建。',
             style: TextStyle(fontSize: 12.5, color: ZT.inkFaint, height: 1.6)),
@@ -90,7 +90,7 @@ class _CronsPanelState extends State<CronsPanel> {
               IconButton(
                 visualDensity: VisualDensity.compact,
                 tooltip: '删除',
-                icon: const Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
+                icon: Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
                 onPressed: () => _remove('${c['id']}'),
               ),
             ]),
@@ -102,10 +102,10 @@ class _CronsPanelState extends State<CronsPanel> {
             ]),
             const SizedBox(height: 5),
             Text('⏰ 下次 $next',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
             if (expiry != null) ...[
               const SizedBox(height: 2),
-              Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+              Text(expiry, style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
             ],
           ]),
         );
@@ -122,7 +122,7 @@ class _CronsPanelState extends State<CronsPanel> {
             borderRadius: BorderRadius.circular(4),
             side: BorderSide(width: 1, color: ZT.edge)),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
+      child: Text(label, style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
     );
   }
 }
@@ -168,7 +168,7 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
         color: ZT.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4), side: BorderSide(width: 1, color: ZT.edge)),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
+      child: Text(label, style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
     );
   }
 
@@ -181,7 +181,7 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           sheetHandle(),
           const SizedBox(height: 10),
-          const Row(children: [
+          Row(children: [
             Icon(Icons.alarm_rounded, size: 18, color: ZT.lemon),
             SizedBox(width: 8),
             Text('定时任务 · 全部会话', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
@@ -232,14 +232,14 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             tooltip: '删除',
-                            icon: const Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
+                            icon: Icon(Icons.delete_outline_rounded, size: 17, color: ZT.rose),
                             onPressed: () => _remove('${c['id']}'),
                           ),
                         ]),
                         Text('${c['prompt'] ?? ''}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: ZT.inkSoft)),
+                            style: TextStyle(fontSize: 12, color: ZT.inkSoft)),
                         const SizedBox(height: 5),
                         Row(children: [
                           _pill('${c['cron'] ?? ''}'),
@@ -252,10 +252,10 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                         ]),
                         const SizedBox(height: 5),
                         Text('⏰ 下次 $next',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.lemon)),
                         if (expiry != null) ...[
                           const SizedBox(height: 2),
-                          Text(expiry, style: const TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                          Text(expiry, style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
                         ],
                       ]),
                     );

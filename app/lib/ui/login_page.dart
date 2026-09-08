@@ -85,7 +85,7 @@ class _LoginPageState extends State<LoginPage> {
                       side: ZT.inkSide(w: 1.6, color: ZT.primary),
                     ),
                   ),
-                  child: const Icon(Icons.terminal_rounded,
+                  child: Icon(Icons.terminal_rounded,
                       size: 30, color: ZT.primary),
                 ),
                 const SizedBox(height: 18),
@@ -108,7 +108,7 @@ class _LoginPageState extends State<LoginPage> {
                     hintText: 'http://192.168.1.5:5190',
                     prefixIcon: Icon(Icons.dns_rounded, size: 19),
                   ),
-                  style: const TextStyle(fontFamily: ZT.mono, fontSize: 13.5),
+                  style: TextStyle(fontFamily: ZT.mono, fontSize: 13.5),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -129,7 +129,7 @@ class _LoginPageState extends State<LoginPage> {
                       onPressed: () => setState(() => _hideToken = !_hideToken),
                     ),
                   ),
-                  style: const TextStyle(fontFamily: ZT.mono, fontSize: 13.5),
+                  style: TextStyle(fontFamily: ZT.mono, fontSize: 13.5),
                 ),
                 const SizedBox(height: 22),
                 BigButton(
@@ -150,7 +150,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     child: Text('${_localError ?? widget.error}',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12, color: ZT.rose, fontFamily: ZT.mono)),
                   ),
                 ],
