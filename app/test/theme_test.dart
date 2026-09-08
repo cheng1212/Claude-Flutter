@@ -25,6 +25,8 @@ void main() {
       expect(kZCitrus.onInk, const Color(0xFFFFF6E9)); // 墨底上的奶油字
       expect(kZCitrus.radius, 14);
       expect(kZCitrus.neoShadow, isTrue); // neo-brutalist 硬阴影
+      expect(kZCitrus.edge, kZCitrus.ink); // 描边 = 墨线(zremote 骨架的关键)
+      expect(kZCitrus.borderWidth, 1.6); // 墨线更粗
     });
 
     test('原版奶油调色板保持原值不变', () {
@@ -33,6 +35,7 @@ void main() {
       expect(kZCream.primaryDeep, const Color(0xFFC74405));
       expect(kZCream.radius, 12);
       expect(kZCream.neoShadow, isFalse);
+      expect(kZCream.borderWidth, 1.3);
     });
   });
 
@@ -60,7 +63,7 @@ void main() {
       expect(hard.length, 1);
       expect(hard.first.blurRadius, 0);
       expect(hard.first.offset, const Offset(3, 3));
-      expect(hard.first.color, kZCitrus.ink.withValues(alpha: 0.18));
+      expect(hard.first.color, kZCitrus.ink.withValues(alpha: 0.2));
     });
 
     test('两套主题都产出亮色 ThemeData', () {
