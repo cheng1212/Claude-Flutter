@@ -28,6 +28,7 @@ class SessionsPage extends StatefulWidget {
 class _SessionsPageState extends State<SessionsPage> {
   static const _kSortUpdated = 'updated';
   static const _kSortCreated = 'created';
+  static const _kAllProjects = '__all__'; // 顶栏项目切换「全部会话」哨兵
   static const _kNewProject = '__new__'; // 筛选弹窗「新建项目」按钮的哨兵返回值
 
   final _search = TextEditingController();
@@ -329,11 +330,21 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: () => Scaffold.of(ctx).openDrawer(),
           ),
         ),
-        title: Row(children: [
-          Icon(Icons.terminal_rounded, size: 20, color: ZT.primary),
-          SizedBox(width: 8),
-          Text('会话', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
-        ]),
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _pickProject,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_project == null ? Icons.filter_alt_outlined : Icons.folder_open_rounded,
+                size: 18, color: _project == null ? ZT.inkSoft : ZT.primary),
+            const SizedBox(width: 7),
+            Text(_project ?? '全部会话',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _project == null ? ZT.ink : ZT.primary)),
+            Icon(Icons.arrow_drop_down_rounded, size: 24, color: ZT.inkSoft),
+          ]),
+        ),
         actions: [
           IconButton(
             tooltip: '刷新',
@@ -431,7 +442,6 @@ class _SessionsPageState extends State<SessionsPage> {
               _chip('全部', SessionFilter.all),
               _chip('置顶', SessionFilter.pinned),
               _chip('归档', SessionFilter.archived),
-              _chip(_project == null ? '项目' : '项目 · $_project', SessionFilter.project),
               const SizedBox(width: 4),
               PopupMenuButton<String>(
                 tooltip: '排序',
@@ -536,9 +546,16 @@ class _SessionsPageState extends State<SessionsPage> {
     final picked = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('按项目筛选'),
+        title: const Text('切换项目'),
         backgroundColor: ZT.surface,
         children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, _kAllProjects),
+            child: Text('全部会话',
+                style: TextStyle(
+                    fontSize: 13.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+          const Divider(height: 14),
           if (projects.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
@@ -563,7 +580,14 @@ class _SessionsPageState extends State<SessionsPage> {
         ],
       ),
     );
-    if (!mounted) return;
+    if (!mounted || picked == null) return; // 点外部关闭 = 维持现状
+    if (picked == _kAllProjects) {
+      setState(() {
+        _project = null;
+        _filter = SessionFilter.all;
+      });
+      return;
+    }
     if (picked == _kNewProject) {
       final name = await _promptNewProjectName();
       if (name == null || !mounted) return;
@@ -582,13 +606,8 @@ class _SessionsPageState extends State<SessionsPage> {
       return;
     }
     setState(() {
-      if (picked != null) {
-        _project = picked;
-        _filter = SessionFilter.project;
-      } else {
-        _project = null;
-        if (_filter == SessionFilter.project) _filter = SessionFilter.all;
-      }
+      _project = picked; // 剩余分支 picked 必为具体项目名
+      _filter = SessionFilter.project;
     });
   }
 
@@ -678,25 +697,24 @@ class _SessionsPageState extends State<SessionsPage> {
                 style: TextStyle(fontSize: 12.5, height: 1.45, color: ZT.inkSoft)),
           ),
         const SizedBox(height: 7),
-        Row(children: [
-          if (badge != null) _pill(badge.label, badge.kind),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // 标签区用 Wrap:装不下换行,不再把尾部标签/时间挤出卡片
+          Expanded(
+            child: Wrap(spacing: 6, runSpacing: 4, children: [
+              if (badge != null) _pill(badge.label, badge.kind),
+              if (cronIso != null)
+                Tooltip(
+                  message: cronNextLabel(cronIso, DateTime.now()),
+                  child: _pill('⏰ ${_cronCountdown(cronIso)}', 'cron'),
+                ),
+              if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
+              if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
+              if (model.isNotEmpty) _pill(model, 'model', maxWidth: 120),
+              if (project.isNotEmpty) _pill(project, 'project', maxWidth: 96),
+              for (final t in tags.take(2)) _pill(t, 'tag', maxWidth: 88),
+            ]),
+          ),
           const SizedBox(width: 6),
-          if (cronIso != null)
-            Tooltip(
-              message: cronNextLabel(cronIso, DateTime.now()),
-              child: _pill('⏰ ${_cronCountdown(cronIso)}', 'cron'),
-            ),
-          if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
-          if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
-          const SizedBox(width: 6),
-          if (model.isNotEmpty) _pill(model, 'model'),
-          const SizedBox(width: 6),
-          if (project.isNotEmpty) _pill(project, 'project'),
-          for (final t in tags.take(2)) ...[
-            const SizedBox(width: 6),
-            _pill(t, 'tag'),
-          ],
-          const Spacer(),
           Text(_timeLabel(s), style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
         ]),
       ]),
@@ -711,7 +729,7 @@ class _SessionsPageState extends State<SessionsPage> {
     return d.isNegative ? '待触发' : formatCountdown(d);
   }
 
-  Widget _pill(String label, String kind) {
+  Widget _pill(String label, String kind, {double? maxWidth}) {
     final colors = {
       'running': (ZT.primary, ZT.primary),
       'done': (ZT.aqua, ZT.aqua),
@@ -726,6 +744,10 @@ class _SessionsPageState extends State<SessionsPage> {
       'tag': (ZT.inkSoft, ZT.inkFaint),
     };
     final c = colors[kind] ?? (ZT.inkSoft, ZT.inkFaint);
+    final text = Text(label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 10.5, color: c.$1, fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: ShapeDecoration(
@@ -734,8 +756,9 @@ class _SessionsPageState extends State<SessionsPage> {
             borderRadius: BorderRadius.circular(4),
             side: BorderSide(width: 1, color: c.$2.withValues(alpha: 0.45))),
       ),
-      child: Text(label,
-          style: TextStyle(fontSize: 10.5, color: c.$1, fontFamily: kind == 'model' ? ZT.mono : ZT.sans)),
+      child: maxWidth == null
+          ? text
+          : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: text),
     );
   }
 
