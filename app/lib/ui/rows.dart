@@ -45,21 +45,56 @@ Widget chatImageBox(String uri, double width, double height) {
       filterQuality: FilterQuality.low);
 }
 
-/// 全屏图片查看器:双指缩放,点关闭退出。
-void showChatImageViewer(BuildContext context, String uri) {
-  final Uint8List? bytes = _tryDecodeDataUri(uri);
+/// 全屏图片查看器:左右滑动翻看该消息的全部图片,双指缩放,页码角标,点关闭退出。
+void showChatImageViewer(BuildContext context, List<String> images, {int initialIndex = 0}) {
   Navigator.of(context).push(MaterialPageRoute(
     fullscreenDialog: true,
-    builder: (_) => Scaffold(
+    builder: (_) => _ImageViewerPage(images: images, initialIndex: initialIndex),
+  ));
+}
+
+class _ImageViewerPage extends StatefulWidget {
+  final List<String> images;
+  final int initialIndex;
+
+  const _ImageViewerPage({required this.images, this.initialIndex = 0});
+
+  @override
+  State<_ImageViewerPage> createState() => _ImageViewerPageState();
+}
+
+class _ImageViewerPageState extends State<_ImageViewerPage> {
+  late final PageController _page;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex.clamp(0, widget.images.length - 1).toInt();
+    _page = PageController(initialPage: _index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(children: [
-        Center(
-          child: InteractiveViewer(
-            maxScale: 4,
-            child: bytes == null
-                ? const Icon(Icons.broken_image_rounded, size: 48, color: Colors.white38)
-                : Image.memory(bytes, fit: BoxFit.contain),
-          ),
+        PageView.builder(
+          controller: _page,
+          itemCount: widget.images.length,
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (context, i) {
+            final bytes = _tryDecodeDataUri(widget.images[i]);
+            return Center(
+              child: InteractiveViewer(
+                maxScale: 4,
+                panEnabled: false, // 单指横滑留给翻页,双指缩放
+                child: bytes == null
+                    ? const Icon(Icons.broken_image_rounded, size: 48, color: Colors.white38)
+                    : Image.memory(bytes, fit: BoxFit.contain),
+              ),
+            );
+          },
         ),
         Positioned(
           top: MediaQuery.of(context).padding.top + 8,
@@ -69,50 +104,101 @@ void showChatImageViewer(BuildContext context, String uri) {
             onPressed: () => Navigator.of(context).pop(),
           ),
         ),
+        if (widget.images.length > 1)
+          Positioned(
+            bottom: MediaQuery.of(context).padding.bottom + 18,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.55), borderRadius: BorderRadius.circular(999)),
+                child: Text('${_index + 1} / ${widget.images.length}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white70)),
+              ),
+            ),
+          ),
       ]),
-    ),
-  ));
+    );
+  }
 }
 
-/// 用户气泡里的图片网格:参考 web 端编排 — 1 张=大图,≥2 张=两列,圆角 12,点按全屏。
-class _UserImagesGrid extends StatelessWidget {
+/// 用户气泡里的图片卡:白底圆角卡(参考 zremote) — 内部左右滑动预览,
+/// 底栏「图片 · N ›」点开全屏可滑动查看器。
+class _UserImageCard extends StatefulWidget {
   final List<String> images;
 
-  const _UserImagesGrid(this.images);
+  const _UserImageCard(this.images);
+
+  @override
+  State<_UserImageCard> createState() => _UserImageCardState();
+}
+
+class _UserImageCardState extends State<_UserImageCard> {
+  int _index = 0;
+  late final PageController _ctrl = PageController(viewportFraction: 0.86);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final n = widget.images.length;
     return LayoutBuilder(builder: (context, c) {
       final maxW = c.maxWidth.isFinite && c.maxWidth > 0 ? c.maxWidth : 320.0;
-      const gap = 6.0;
-      final cols = images.length == 1 ? 1 : 2;
-      final gridW = (images.length == 1 ? maxW * 0.66 : (maxW * 0.92).clamp(140.0, 340.0)).toDouble();
-      final cellW = cols == 1 ? gridW : (gridW - gap) / 2;
-      final cellH = cellW * 3 / 4;
-      final cells = [
-        for (final uri in images)
-          GestureDetector(
-            onTap: () => showChatImageViewer(context, uri),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: chatImageBox(uri, cellW, cellH),
+      final cardW = maxW.clamp(150.0, 340.0).toDouble();
+      final showPager = n > 1;
+      return Container(
+        width: cardW,
+        padding: const EdgeInsets.all(6),
+        decoration: ShapeDecoration(
+          color: ZT.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shadows: ZT.hard(dx: 0, dy: 2),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(
+            height: cardW * 0.72,
+            child: PageView.builder(
+              controller: _ctrl,
+              itemCount: n,
+              onPageChanged: (i) => setState(() => _index = i),
+              itemBuilder: (context, i) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: GestureDetector(
+                  onTap: () => showChatImageViewer(context, widget.images, initialIndex: i),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: chatImageBox(widget.images[i], cardW - 28, cardW * 0.72),
+                  ),
+                ),
+              ),
             ),
           ),
-      ];
-      final lines = <Widget>[];
-      for (var i = 0; i < cells.length; i += cols) {
-        final end = (i + cols).clamp(i, cells.length);
-        lines.add(Row(mainAxisSize: MainAxisSize.min, children: [
-          for (var j = i; j < end; j++) ...[
-            if (j != i) const SizedBox(width: gap),
-            cells[j],
-          ],
-        ]));
-        if (end < cells.length) lines.add(const SizedBox(height: gap));
-      }
-      return SizedBox(
-        width: cols == 1 ? cellW : gridW,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: lines),
+          Divider(height: 12, thickness: 1, color: ZT.line),
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => showChatImageViewer(context, widget.images, initialIndex: _index),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(children: [
+                Icon(Icons.image_outlined, size: 15, color: ZT.inkSoft),
+                const SizedBox(width: 6),
+                Text('图片 · $n', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.ink)),
+                const Spacer(),
+                if (showPager)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Text('${_index + 1}/$n', style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                  ),
+                Icon(Icons.chevron_right_rounded, size: 17, color: ZT.inkFaint),
+              ]),
+            ),
+          ),
+        ]),
       );
     });
   }
@@ -381,7 +467,7 @@ class UserBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (row.images.isNotEmpty) ...[
-                _UserImagesGrid(row.images),
+                _UserImageCard(row.images),
                 const SizedBox(height: 6),
               ],
               if (row.content.isNotEmpty)
