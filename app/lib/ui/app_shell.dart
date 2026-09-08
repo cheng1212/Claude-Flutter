@@ -50,7 +50,7 @@ class _AppShellState extends State<AppShell> {
         onDestinationSelected: (i) => setState(() => _tab = i),
         backgroundColor: ZT.surface,
         indicatorColor: ZT.primary.withValues(alpha: 0.14),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline_rounded, size: 21),
             selectedIcon: Icon(Icons.chat_bubble_rounded, size: 21, color: ZT.primary),
@@ -95,12 +95,12 @@ class _AppShellState extends State<AppShell> {
                 _tab = 0;
               }),
               child: Row(children: [
-                const Icon(Icons.folder_rounded, size: 20, color: ZT.primary),
+                Icon(Icons.folder_rounded, size: 20, color: ZT.primary),
                 const SizedBox(width: 10),
                 Expanded(child: Text(p, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700))),
-                Text('${counts[p]} 个会话', style: const TextStyle(fontSize: 12, color: ZT.inkFaint)),
+                Text('${counts[p]} 个会话', style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
                 const SizedBox(width: 6),
-                const Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkFaint),
+                Icon(Icons.chevron_right_rounded, size: 18, color: ZT.inkFaint),
               ]),
             ),
           ),
@@ -113,7 +113,7 @@ class _AppShellState extends State<AppShell> {
                 _tab = 0;
               }),
               child: Row(children: [
-                const Icon(Icons.folder_off_rounded, size: 20, color: ZT.inkFaint),
+                Icon(Icons.folder_off_rounded, size: 20, color: ZT.inkFaint),
                 const SizedBox(width: 10),
                 const Expanded(child: Text('未分类', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700))),
                 Text('$uncategorized 个会话', style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
@@ -143,7 +143,7 @@ class _AppShellState extends State<AppShell> {
       body: ListView(padding: const EdgeInsets.all(14), children: [
         HardCard(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
+            Row(children: [
               Icon(Icons.terminal_rounded, size: 18, color: ZT.primary),
               SizedBox(width: 8),
               Text('连接', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
@@ -173,9 +173,9 @@ class _AppShellState extends State<AppShell> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
-        Text(label, style: const TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+        Text(label, style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
         const Spacer(),
-        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
       ]),
     );
   }

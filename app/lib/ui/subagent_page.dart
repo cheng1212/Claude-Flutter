@@ -33,7 +33,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
       backgroundColor: ZT.bg,
       appBar: AppBar(
         title: Row(children: [
-          const Icon(Icons.hub_rounded, size: 17, color: ZT.grape),
+          Icon(Icons.hub_rounded, size: 17, color: ZT.grape),
           const SizedBox(width: 8),
           Expanded(
             child: Text(widget.title,
@@ -42,7 +42,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
                 style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
           ),
           const SizedBox(width: 8),
-          const Tooltip(
+          Tooltip(
             message: '子代理视图只读:消息由父会话派发,不能在这里输入',
             child: Icon(Icons.visibility_outlined, size: 16, color: ZT.inkSoft),
           ),
@@ -57,7 +57,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
             }
             final events = snap.data ?? const <Map<String, dynamic>>[];
             if (events.isEmpty) {
-              return const Padding(
+              return Padding(
                 padding: EdgeInsets.all(24),
                 child: Text('转录为空(子代理尚未产出内容,或转录已被清理)。',
                     style: TextStyle(fontSize: 12.5, color: ZT.inkFaint, height: 1.6)),
@@ -88,7 +88,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
           child: Text('${ev['content'] ?? ''}',
-              style: const TextStyle(fontSize: 11.5, fontStyle: FontStyle.italic, color: ZT.grape, height: 1.5)),
+              style: TextStyle(fontSize: 11.5, fontStyle: FontStyle.italic, color: ZT.grape, height: 1.5)),
         ),
       );
     }
@@ -104,7 +104,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
                 borderRadius: BorderRadius.circular(8), side: ZT.inkSide(w: 1, color: ZT.edge)),
           ),
           child: Text('⚙ ${ev['toolName'] ?? ''}',
-              style: const TextStyle(fontSize: 11, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              style: TextStyle(fontSize: 11, fontFamily: ZT.mono, color: ZT.inkSoft)),
         ),
       );
     }
@@ -123,7 +123,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
                 side: ZT.inkSide(w: isUser ? 1.2 : 1, color: isUser ? ZT.primary.withValues(alpha: 0.5) : ZT.edge)),
           ),
           child: SelectableText('${ev['content'] ?? ''}',
-              style: const TextStyle(fontSize: 13, height: 1.55, color: ZT.ink)),
+              style: TextStyle(fontSize: 13, height: 1.55, color: ZT.ink)),
         ),
       );
     }

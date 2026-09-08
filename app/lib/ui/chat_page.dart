@@ -83,7 +83,7 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -219,7 +219,7 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -255,7 +255,7 @@ class _ChatPageState extends State<ChatPage> {
     final picked = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: ZT.surface,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -263,7 +263,7 @@ class _ChatPageState extends State<ChatPage> {
         child: Container(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
+            Row(children: [
               Icon(Icons.shield_rounded, size: 18, color: ZT.lemon),
               SizedBox(width: 8),
               Text('权限模式',
@@ -295,7 +295,7 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -312,14 +312,14 @@ class _ChatPageState extends State<ChatPage> {
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
               child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  const Icon(Icons.account_tree_rounded, size: 18, color: ZT.primary),
+                  Icon(Icons.account_tree_rounded, size: 18, color: ZT.primary),
                   const SizedBox(width: 8),
                   const Text('执行计划',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
                   const Spacer(),
                   if (steps != null)
                     Text('${steps.where((s) => s.completed).length}/${steps.length}',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w800,
                             color: ZT.primary)),
@@ -387,7 +387,7 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       backgroundColor: ZT.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
         side: BorderSide(color: ZT.edge),
       ),
@@ -424,7 +424,7 @@ class _ChatPageState extends State<ChatPage> {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      const Row(children: [
+                      Row(children: [
                         Icon(Icons.query_stats_rounded, size: 18, color: ZT.aqua),
                         SizedBox(width: 8),
                         Text('用量',
@@ -548,10 +548,10 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: ZT.inkFaint)),
+          Text(label, style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
           const Spacer(),
           Text(value,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
         ]),
         if (fraction != null) ...[
@@ -575,12 +575,12 @@ class _ChatPageState extends State<ChatPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: ZT.inkFaint)),
+        Text(label, style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
         const Spacer(),
         Flexible(
           child: Text(value,
               textAlign: TextAlign.right,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
         ),
       ]),
@@ -626,7 +626,7 @@ class _ChatPageState extends State<ChatPage> {
                   side: ZT.inkSide(w: 1.2),
                 ),
               ),
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.link_rounded, size: 15, color: ZT.inkSoft),
                 SizedBox(width: 4),
                 Text('引用', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
@@ -675,10 +675,10 @@ class _ChatPageState extends State<ChatPage> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         child: Row(children: [
-          const PulseDot(color: ZT.rose, animate: true, size: 7),
+          PulseDot(color: ZT.rose, animate: true, size: 7),
           const SizedBox(width: 8),
           Text('连接不稳(${app.linkFailure ?? '重连中'})……事件会自动补齐',
-              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk)),
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.onInk)),
         ]),
       ),
     );
@@ -693,16 +693,16 @@ class _ChatPageState extends State<ChatPage> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           child: Row(children: [
-            const Icon(Icons.error_outline_rounded, size: 14, color: ZT.rose),
+            Icon(Icons.error_outline_rounded, size: 14, color: ZT.rose),
             const SizedBox(width: 8),
             Expanded(
               child: Text('${app.error}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.rose)),
             ),
-            const Icon(Icons.close_rounded, size: 14, color: ZT.rose),
+            Icon(Icons.close_rounded, size: 14, color: ZT.rose),
           ]),
         ),
       ),
@@ -802,7 +802,7 @@ class _ChatPageState extends State<ChatPage> {
         }
         if (i == headIdx) {
           return app.historyLoading
-              ? const Padding(
+              ? Padding(
                   padding: EdgeInsets.all(14),
                   child: Center(
                       child: SizedBox(
@@ -842,7 +842,7 @@ class _ChatPageState extends State<ChatPage> {
             padding: const EdgeInsets.only(top: 8, right: 10),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                const PulseDot(color: ZT.primary, animate: true, size: 6),
+                PulseDot(color: ZT.primary, animate: true, size: 6),
                 const SizedBox(width: 6),
                 Text('正在回复',
                     style: TextStyle(
@@ -852,9 +852,14 @@ class _ChatPageState extends State<ChatPage> {
                         letterSpacing: 0.5)),
               ]),
               const SizedBox(height: 3),
-              SelectableText(text,
-                  style: const TextStyle(
-                      fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono)),
+              // 边吐字边渲染 Markdown(200ms 节流 + 未闭合围栏补闭合),
+              // 与落定后的 AssistantBlock 同一渲染管线,落定瞬间不再跳变。
+              MemoMarkdown(
+                text: text,
+                streaming: true,
+                baseStyle: TextStyle(
+                    fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
+              ),
             ]),
           ),
         if (thinking != null && thinking.isNotEmpty)
@@ -867,9 +872,9 @@ class _ChatPageState extends State<ChatPage> {
               border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: 0.5)),
             ),
             child: Row(children: [
-              const PulseDot(color: ZT.grape, animate: true, size: 6),
+              PulseDot(color: ZT.grape, animate: true, size: 6),
               const SizedBox(width: 6),
-              const Text('深度思考中',
+              Text('深度思考中',
                   style: TextStyle(
                       fontSize: 11, fontWeight: FontWeight.w800, color: ZT.grape)),
               const Spacer(),
@@ -898,7 +903,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           child: Text(
             '${_modelLabel()} · ${_modeLabel(_mode)}',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 10.5, fontWeight: FontWeight.w700, color: ZT.inkFaint),
           ),
         ),
@@ -912,7 +917,7 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _composer() {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: ZT.bg,
         border: Border(top: BorderSide(width: 1.2, color: ZT.edge)),
       ),
@@ -965,7 +970,7 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
             tooltip: '添加图片',
             onPressed: _pickImage,
-            icon: const Icon(Icons.image_outlined, size: 22, color: ZT.inkSoft),
+            icon: Icon(Icons.image_outlined, size: 22, color: ZT.inkSoft),
           ),
           Expanded(
             child: TextField(
@@ -973,7 +978,7 @@ class _ChatPageState extends State<ChatPage> {
               minLines: 1,
               maxLines: 5,
               textInputAction: TextInputAction.newline,
-              style: const TextStyle(fontSize: 14, fontFamily: ZT.mono, color: ZT.ink),
+              style: TextStyle(fontSize: 14, fontFamily: ZT.mono, color: ZT.ink),
               decoration: const InputDecoration(
                 hintText: '让它干活…',
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -1059,12 +1064,12 @@ class _ModelThinkingSheetState extends State<_ModelThinkingSheet> {
         ),
         const SizedBox(height: 10),
         Row(children: [
-          const Icon(Icons.psychology_alt_rounded, size: 15, color: ZT.grape),
+          Icon(Icons.psychology_alt_rounded, size: 15, color: ZT.grape),
           const SizedBox(width: 6),
           const Text('思考等级', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
           const SizedBox(width: 6),
           Text(selected == null ? '· 默认' : '',
-              style: const TextStyle(fontSize: 11, color: ZT.inkFaint)),
+              style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
         ]),
         const SizedBox(height: 6),
         Wrap(
@@ -1138,12 +1143,12 @@ class _ModelGroupPickerState extends State<_ModelGroupPicker> {
         if (onBack != null)
           GestureDetector(
             onTap: onBack,
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.only(right: 8),
               child: Icon(Icons.arrow_back_rounded, size: 20, color: ZT.inkSoft),
             ),
           ),
-        const Icon(Icons.dns_rounded, size: 18, color: ZT.primary),
+        Icon(Icons.dns_rounded, size: 18, color: ZT.primary),
         const SizedBox(width: 8),
         Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
       ]),
@@ -1369,7 +1374,7 @@ class _OptionRow extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(desc!,
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 11, color: ZT.inkFaint)),
                     ),
                 ]),
@@ -1493,14 +1498,14 @@ class _PermissionCardState extends State<_PermissionCard> {
   Widget build(BuildContext context) {
     final questions = _questions;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: ZT.surface,
         border: Border(top: BorderSide(width: 1.4, color: ZT.lemon)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
-          const Icon(Icons.verified_user_rounded, size: 15, color: ZT.lemon),
+          Icon(Icons.verified_user_rounded, size: 15, color: ZT.lemon),
           const SizedBox(width: 7),
           Expanded(
             child: Text('权限请求 · ${widget.req.toolName}',
@@ -1517,7 +1522,7 @@ class _PermissionCardState extends State<_PermissionCard> {
                 constraints: const BoxConstraints(maxHeight: 130),
                 child: SingleChildScrollView(
                   child: SelectableText(_prettyInput,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
                 ),
               ),
@@ -1635,11 +1640,11 @@ class _SilenceHintState extends State<_SilenceHint> {
             ? '· 冷启动或慢路由会慢一些'
             : '';
     return Row(children: [
-      const PulseDot(color: ZT.primary, animate: true, size: 6),
+      PulseDot(color: ZT.primary, animate: true, size: 6),
       const SizedBox(width: 6),
       Expanded(
         child: Text('$label $hint',
-            style: const TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
+            style: TextStyle(fontSize: 11, color: ZT.inkSoft, fontFamily: ZT.sans)),
       ),
     ]);
   }
