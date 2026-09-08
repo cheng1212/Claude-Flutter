@@ -28,6 +28,7 @@ class SessionsPage extends StatefulWidget {
 class _SessionsPageState extends State<SessionsPage> {
   static const _kSortUpdated = 'updated';
   static const _kSortCreated = 'created';
+  static const _kNewProject = '__new__'; // 筛选弹窗「新建项目」按钮的哨兵返回值
 
   final _search = TextEditingController();
   String _query = '';
@@ -538,15 +539,48 @@ class _SessionsPageState extends State<SessionsPage> {
         title: const Text('按项目筛选'),
         backgroundColor: ZT.surface,
         children: [
+          if (projects.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
+              child: Text('还没有项目,在下面新建一个',
+                  style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+            ),
           for (final p in projects.toList()..sort)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(ctx, p),
               child: Text(p, style: const TextStyle(fontSize: 13.5)),
             ),
+          const Divider(height: 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: BigButton(
+              label: '＋ 新建项目',
+              icon: Icons.create_new_folder_outlined,
+              expand: true,
+              onPressed: () => Navigator.pop(ctx, _kNewProject),
+            ),
+          ),
         ],
       ),
     );
     if (!mounted) return;
+    if (picked == _kNewProject) {
+      final name = await _promptNewProjectName();
+      if (name == null || !mounted) return;
+      try {
+        await app.createProject(name);
+      } on Object catch (e) {
+        if (!mounted) return;
+        showToast(context, '新建失败: $e');
+        return;
+      }
+      // 新项目还没有会话,筛选选中它 = 空列表占位,建会话即入列
+      setState(() {
+        _project = name;
+        _filter = SessionFilter.project;
+      });
+      return;
+    }
     setState(() {
       if (picked != null) {
         _project = picked;
@@ -556,6 +590,30 @@ class _SessionsPageState extends State<SessionsPage> {
         if (_filter == SessionFilter.project) _filter = SessionFilter.all;
       }
     });
+  }
+
+  /// 新建项目名输入框;zDialog 统一风格。返回 null = 取消/空名。
+  Future<String?> _promptNewProjectName() async {
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => zDialog(
+        title: '新建项目',
+        icon: Icons.create_new_folder_outlined,
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '项目名,如 商城后端'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          dialogAction('取消', onPressed: () => Navigator.pop(ctx)),
+          dialogAction('创建', primary: true, onPressed: () => Navigator.pop(ctx, ctrl.text.trim())),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return (name == null || name.isEmpty) ? null : name;
   }
 
   Widget _linkStrip() {
