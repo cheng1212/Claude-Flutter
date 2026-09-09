@@ -460,15 +460,21 @@ class _SessionsPageState extends State<SessionsPage> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _chip('全部', SessionFilter.all),
-              _chip('置顶', SessionFilter.pinned),
-              _chip('归档', SessionFilter.archived),
-              PopupMenuButton<String>(
+          child: Row(children: [
+            // zremote 同款结构:Expanded(Wrap) 强制筛选钮靠左,排序钮独行居右
+            Expanded(
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _chip('全部', SessionFilter.all),
+                  _chip('置顶', SessionFilter.pinned),
+                  _chip('归档', SessionFilter.archived),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            PopupMenuButton<String>(
                 tooltip: '排序',
                 initialValue: _sort,
                 onSelected: (v) => setState(() => _sort = v),
@@ -490,10 +496,10 @@ class _SessionsPageState extends State<SessionsPage> {
                             fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
                   ]),
                 ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
         Expanded(
           child: RefreshIndicator(
             color: ZT.primary,
@@ -926,11 +932,15 @@ class _SessionsPageState extends State<SessionsPage> {
             fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
     final Widget row;
     if (isStatus) {
+      // 状态族:圆点带墨圈(zremote PulseDot 同款),文字全彩 w700
       row = Row(mainAxisSize: MainAxisSize.min, children: [
         Container(
-            width: citrus ? 6 : 5,
-            height: citrus ? 6 : 5,
-            decoration: BoxDecoration(color: c.$1, shape: BoxShape.circle)),
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+                color: c.$1,
+                shape: BoxShape.circle,
+                border: citrus ? Border.all(width: 1, color: ZT.ink.withValues(alpha: 0.55)) : null)),
         SizedBox(width: citrus ? 5 : 4),
         Flexible(child: text),
       ]);
@@ -942,7 +952,7 @@ class _SessionsPageState extends State<SessionsPage> {
         ? row
         : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: row);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isStatus ? 7 : 8, vertical: isStatus ? 2 : 2.5),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: ShapeDecoration(
         color: isStatus && citrus ? ZT.surface : c.$1.withValues(alpha: citrus ? 0.08 : 0.09),
         shape: StadiumBorder(
