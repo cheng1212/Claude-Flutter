@@ -434,7 +434,7 @@ class UserBubble extends StatelessWidget {
 
   static ShapeDecoration _inkDeco() => ShapeDecoration(
         color: ZT.ink,
-        shadows: ZT.hard(dx: 2.5, dy: 2.5, color: ZT.ink.withValues(alpha: 0.28)),
+        shadows: ZT.hard(dx: 2.5, dy: 2.5),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.only(
             topLeft: Radius.circular(ZT.radius),
@@ -649,7 +649,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
       margin: const EdgeInsets.only(top: 8, right: 20),
       decoration: ShapeDecoration(
         color: ZT.surface,
-        shadows: ZT.hard(dx: 2, dy: 2, color: ZT.ink.withValues(alpha: 0.16)),
+        shadows: ZT.hard(dx: 2, dy: 2),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ZT.radius),
           side: ZT.inkSide(w: 1.3, color: accent),
@@ -1033,7 +1033,7 @@ class _PlanPanelState extends State<PlanPanel> {
       margin: const EdgeInsets.only(top: 12),
       decoration: ShapeDecoration(
         color: ZT.surface,
-        shadows: ZT.hard(dx: 3, dy: 3, color: ZT.ink.withValues(alpha: 0.2)),
+        shadows: ZT.hard(dx: 3, dy: 3),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ZT.radius),
           side: ZT.inkSide(w: 1.6),

@@ -1709,7 +1709,7 @@ class _SendOrStopState extends State<_SendOrStop> {
               borderRadius: BorderRadius.circular(ZT.radius),
               side: ZT.inkSide(w: 1.8, color: ZT.rose),
             ),
-            shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose.withValues(alpha: 0.5)),
+            shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose),
           ),
           child: stopping
               ? const SizedBox(
