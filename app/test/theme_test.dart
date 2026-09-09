@@ -63,7 +63,7 @@ void main() {
       expect(hard.length, 1);
       expect(hard.first.blurRadius, 0);
       expect(hard.first.offset, const Offset(3, 3));
-      expect(hard.first.color, kZCitrus.ink.withValues(alpha: 0.2));
+      expect(hard.first.color, kZCitrus.ink); // zremote 签名:纯墨不透明
     });
 
     test('两套主题都产出亮色 ThemeData', () {

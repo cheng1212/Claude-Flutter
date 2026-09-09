@@ -169,10 +169,10 @@ abstract final class ZT {
   // ---- shadows / borders -------------------------------------------------
 
   /// cream:柔和暖阴影(低透明双层柔影,符合浅色界面);
-  /// citrus:neo-brutalist 墨线硬阴影(blur 0),dx/dy 保留 zremote 签名。
+  /// citrus:neo-brutalist 纯墨不透明硬阴影(blur 0,与 zremote 一致),dx/dy 保留签名。
   static List<BoxShadow> hard({double dx = 2.5, double dy = 2.5, Color? color}) {
     if (_palette.neoShadow) {
-      final c = color ?? _palette.ink.withValues(alpha: 0.2);
+      final c = color ?? _palette.ink; // zremote 签名:纯墨,不带透明度
       return [BoxShadow(color: c, offset: Offset(dx, dy), blurRadius: 0)];
     }
     final c = (color ?? primary).withValues(alpha: 0.16);
@@ -237,13 +237,19 @@ abstract final class ZT {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
-          borderSide: BorderSide(width: 1.6, color: primary),
+          // citrus=zremote:聚焦墨绿深主色粗框;cream=主色细框
+          borderSide: _palette.neoShadow
+              ? BorderSide(width: 2.2, color: primaryDeep)
+              : BorderSide(width: 1.6, color: primary),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: surface,
-        contentTextStyle: sansStyle.copyWith(fontSize: 12.5),
+        // citrus=zremote:墨底白字;cream:白底墨字
+        backgroundColor: _palette.neoShadow ? ZT.ink : surface,
+        contentTextStyle: _palette.neoShadow
+            ? TextStyle(color: ZT.onInk, fontSize: 13)
+            : sansStyle.copyWith(fontSize: 12.5),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
@@ -262,7 +268,9 @@ abstract final class ZT {
             (s) => s.contains(WidgetState.selected) ? primary.withValues(alpha: 0.25) : line),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: primary),
-      splashFactory: InkSparkle.splashFactory,
+      // citrus=zremote:InkRipple 经典涟漪;cream:InkSparkle 细闪
+      splashFactory:
+          _palette.neoShadow ? InkRipple.splashFactory : InkSparkle.splashFactory,
     );
   }
 }
@@ -294,7 +302,10 @@ class HardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final glow = (shadowDx != 0 || shadowDy != 0) ? ZT.hard(dx: shadowDx, dy: shadowDy) : null;
+    final glow = (shadowDx != 0 || shadowDy != 0)
+        ? ZT.hard(dx: shadowDx, dy: shadowDy)
+        // citrus=zremote:卡片默认 dx3dy3 纯墨硬影;cream:默认无影
+        : (ZT.palette.neoShadow ? ZT.hard(dx: 3, dy: 3) : null);
     return Material(
       color: Colors.transparent,
       child: Ink(
@@ -327,6 +338,7 @@ class StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = phase.toLowerCase();
+    final citrus = ZT.palette.neoShadow;
     final (Color color, String label) = switch (p) {
       'running' || 'working' || 'processing' => (ZT.primary, '运行中'),
       'waiting' || 'permission' => (ZT.lemon, '待确认'),
@@ -336,22 +348,27 @@ class StatusChip extends StatelessWidget {
       _ => (ZT.aqua, phase),
     };
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 9, vertical: compact ? 2.5 : 4),
+      padding: EdgeInsets.symmetric(
+          horizontal: compact ? 7 : 9, vertical: compact ? (citrus ? 2.0 : 2.5) : (citrus ? 3.5 : 4)),
       decoration: ShapeDecoration(
-        color: color.withValues(alpha: 0.12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-          side: BorderSide(width: 1, color: color.withValues(alpha: 0.7)),
-        ),
+        // citrus=zremote:白底药丸 + 彩色墨线;cream:彩底圆角矩形
+        color: citrus ? ZT.surface : color.withValues(alpha: 0.12),
+        shape: citrus
+            ? StadiumBorder(side: ZT.inkSide(w: 1.2, color: color))
+            : RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+                side: BorderSide(width: 1, color: color.withValues(alpha: 0.7)),
+              ),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        PulseDot(color: color, animate: p == 'running' || p == 'waiting' || p == 'permission', size: 5),
-        const SizedBox(width: 4),
+        PulseDot(color: color, animate: p == 'running' || p == 'waiting' || p == 'permission', size: citrus ? (compact ? 6 : 7) : 5),
+        SizedBox(width: citrus ? 5 : 4),
         Text(label,
             style: TextStyle(
-                fontSize: compact ? 10 : 11,
+                fontSize: citrus ? (compact ? 10.5 : 11.5) : (compact ? 10 : 11),
                 fontWeight: FontWeight.w700,
                 color: color,
+                height: citrus ? 1 : null,
                 fontFamily: ZT.sans)),
       ]),
     );
@@ -377,8 +394,14 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
+    // citrus(zremote 呼吸)=白色高光层 0..1 渐隐渐显,圆点本体不动;
+    // cream=整点 0.35..1 淡入淡出。控制器区间按主题分流。
+    final citrus = ZT.palette.neoShadow;
     _c = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900), lowerBound: 0.35, upperBound: 1);
+        vsync: this,
+        duration: const Duration(milliseconds: 900),
+        lowerBound: citrus ? 0 : 0.35,
+        upperBound: 1);
     if (widget.animate) _c.repeat(reverse: true);
   }
 
@@ -396,14 +419,26 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _c,
-      child: Container(
-        width: widget.size,
-        height: widget.size,
-        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+    final citrus = ZT.palette.neoShadow;
+    final dot = Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        color: widget.color,
+        shape: BoxShape.circle,
+        // citrus=zremote:圆点带墨圈,呼吸靠白色高光层
+        border: citrus ? Border.all(width: 1, color: ZT.ink.withValues(alpha: 0.55)) : null,
       ),
+      child: (!widget.animate || !citrus)
+          ? null
+          : FadeTransition(
+              opacity: Tween(begin: 0.35, end: 1.0).animate(_c),
+              child: const DecoratedBox(
+                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+              ),
+            ),
     );
+    return citrus ? dot : FadeTransition(opacity: _c, child: dot);
   }
 }
 
@@ -431,19 +466,29 @@ class BigButton extends StatelessWidget {
     final enabled = onPressed != null;
     final fill = color ?? ZT.primary;
     final fg = textColor ?? ZT.onInk;
+    final citrus = ZT.palette.neoShadow;
+    final sink = citrus ? 2.5 : 2.0; // citrus=zremote 下沉量
     final button = _PressSink(
       pressed: enabled,
       onTap: onPressed,
       builder: (pressed) => Container(
         height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        transform: Matrix4.translationValues(enabled && pressed ? 2 : 0, enabled && pressed ? 2 : 0, 0),
+        padding: EdgeInsets.symmetric(horizontal: citrus ? 18 : 16),
+        transform: Matrix4.translationValues(
+            enabled && pressed ? sink : 0, enabled && pressed ? sink : 0, 0),
         decoration: ShapeDecoration(
           color: enabled ? fill : ZT.line,
-          shadows: enabled ? ZT.hard(dx: 2.5, dy: 2.5, color: fill.withValues(alpha: 0.5)) : null,
+          shadows: enabled
+              ? (citrus
+                  ? ZT.hard(dx: 2.5, dy: 2.5) // 纯墨硬影
+                  : ZT.hard(dx: 2.5, dy: 2.5, color: fill.withValues(alpha: 0.5)))
+              : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(ZT.radius),
-            side: BorderSide(width: 1.4, color: enabled ? fill : ZT.edge),
+            side: citrus
+                // citrus=zremote:墨线描边,禁用态转淡
+                ? BorderSide(width: 1.8, color: enabled ? ZT.ink : ZT.inkFaint)
+                : BorderSide(width: 1.4, color: enabled ? fill : ZT.edge),
           ),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -453,7 +498,11 @@ class BigButton extends StatelessWidget {
           ],
           Text(label,
               style: TextStyle(
-                  fontSize: 13.5, fontWeight: FontWeight.w700, color: enabled ? fg : ZT.inkFaint, fontFamily: ZT.sans)),
+                  fontSize: citrus ? 14.5 : 13.5,
+                  fontWeight: citrus ? FontWeight.w800 : FontWeight.w700,
+                  letterSpacing: citrus ? 0.2 : null,
+                  color: enabled ? fg : ZT.inkFaint,
+                  fontFamily: ZT.sans)),
         ]),
       ),
     );
