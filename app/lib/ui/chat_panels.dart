@@ -120,7 +120,7 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
         color: ZT.bg,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ZT.radius),
-          side: ZT.inkSide(w: 1.2, color: ZT.grape.withValues(alpha: 0.5)),
+          side: ZT.inkSide(w: 1.2, color: ZT.grape.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5)),
         ),
       ),
       child: Row(

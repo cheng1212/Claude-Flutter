@@ -77,7 +77,7 @@ class _CronsPanelState extends State<CronsPanel> {
             color: ZT.bg,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(ZT.radius),
-                side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: 0.5))),
+                side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5))),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
@@ -219,7 +219,7 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                         color: ZT.bg,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(ZT.radius),
-                            side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: 0.5))),
+                            side: ZT.inkSide(w: 1.2, color: ZT.lemon.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5))),
                       ),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Row(children: [

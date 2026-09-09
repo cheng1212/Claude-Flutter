@@ -561,7 +561,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
       decoration: BoxDecoration(
         color: ZT.surface,
         borderRadius: BorderRadius.circular(ZT.radius),
-        border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: 0.5)),
+        border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5)),
       ),
       child: Material(
         color: Colors.transparent,

@@ -878,7 +878,7 @@ class _ChatPageState extends State<ChatPage> {
             decoration: BoxDecoration(
               color: ZT.surface,
               borderRadius: BorderRadius.circular(ZT.radius),
-              border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: 0.5)),
+              border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5)),
             ),
             child: Row(children: [
               PulseDot(color: ZT.grape, animate: true, size: 6),

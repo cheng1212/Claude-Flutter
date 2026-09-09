@@ -535,17 +535,26 @@ class _SessionsPageState extends State<SessionsPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
           decoration: ShapeDecoration(
-            color: selected ? ZT.primary.withValues(alpha: 0.12) : ZT.surface,
+            // citrus=zremote:选中柠黄 55% 实底+墨线 1.6+全墨粗字;cream:橙描边淡底
+            color: ZT.palette.neoShadow
+                ? (selected ? ZT.lemon.withValues(alpha: 0.55) : ZT.surface)
+                : (selected ? ZT.primary.withValues(alpha: 0.12) : ZT.surface),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(999),
-              side: ZT.inkSide(w: selected ? 1.5 : 1.2, color: selected ? ZT.primary : ZT.edge),
+              side: ZT.palette.neoShadow
+                  ? ZT.inkSide(w: selected ? 1.6 : 1.2)
+                  : ZT.inkSide(w: selected ? 1.5 : 1.2, color: selected ? ZT.primary : ZT.edge),
             ),
           ),
           child: Text(label,
               style: TextStyle(
                   fontSize: 12.5,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-                  color: selected ? ZT.primary : ZT.inkSoft)),
+                  fontWeight: ZT.palette.neoShadow
+                      ? FontWeight.w800
+                      : (selected ? FontWeight.w800 : FontWeight.w500),
+                  color: ZT.palette.neoShadow
+                      ? (selected ? ZT.ink : ZT.inkSoft)
+                      : (selected ? ZT.primary : ZT.inkSoft))),
         ),
       ),
     );
@@ -892,10 +901,15 @@ class _SessionsPageState extends State<SessionsPage> {
       'tag': (ZT.inkSoft, ZT.inkFaint),
     };
     final c = colors[kind] ?? (ZT.inkSoft, ZT.inkFaint);
+    // citrus=zremote:8% 彩底 + 线色细框 + 全饱和 w700 粗字;cream:9% 彩底无边框
     final text = Text(label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 10.5, color: c.$1, fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
+        style: TextStyle(
+            fontSize: 10.5,
+            fontWeight: ZT.palette.neoShadow ? FontWeight.w700 : null,
+            color: c.$1,
+            fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
     final row = Row(mainAxisSize: MainAxisSize.min, children: [
       Container(width: 5, height: 5, decoration: BoxDecoration(color: c.$1, shape: BoxShape.circle)),
       const SizedBox(width: 4),
@@ -904,13 +918,12 @@ class _SessionsPageState extends State<SessionsPage> {
     final content = maxWidth == null
         ? row
         : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: row);
-    // PNG 参考稿:pills = 点 + 着色底,无边框;citrus 保留墨线细框
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
       decoration: ShapeDecoration(
-        color: c.$1.withValues(alpha: 0.09),
+        color: c.$1.withValues(alpha: ZT.palette.neoShadow ? 0.08 : 0.09),
         shape: StadiumBorder(
-            side: ZT.palette.neoShadow ? BorderSide(width: 1, color: c.$2.withValues(alpha: 0.45)) : BorderSide.none),
+            side: ZT.palette.neoShadow ? ZT.inkSide(w: 1, color: ZT.line) : BorderSide.none),
       ),
       child: content,
     );
