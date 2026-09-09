@@ -425,60 +425,69 @@ class _SessionsPageState extends State<SessionsPage> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
+        mini: true,
         backgroundColor: ZT.primary,
-        foregroundColor: ZT.onInk,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ZT.radius),
-          side: ZT.inkSide(w: 1.5, color: ZT.ink),
-        ),
+        foregroundColor: Colors.white,
+        shape: CircleBorder(side: BorderSide(width: 1.8, color: ZT.ink)),
+        elevation: 0,
+        highlightElevation: 0,
         onPressed: _newSession,
-        child: const Icon(Icons.add_rounded, size: 28),
+        child: const Icon(Icons.add_rounded, size: 26),
       ),
       body: Column(children: [
         if (!app.linked) _linkStrip(),
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
           child: TextField(
             controller: _search,
             onChanged: (v) => setState(() => _query = v),
+            style: const TextStyle(fontSize: 13.5),
             decoration: InputDecoration(
               hintText: '搜索会话…',
               prefixIcon: const Icon(Icons.search_rounded, size: 20),
-              isDense: true,
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () {
+                        _search.clear();
+                        setState(() => _query = '');
+                      },
+                    ),
             ),
           ),
         ),
-        SizedBox(
-          height: 46,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _chip('全部', SessionFilter.all),
               _chip('置顶', SessionFilter.pinned),
               _chip('归档', SessionFilter.archived),
-              const SizedBox(width: 4),
               PopupMenuButton<String>(
                 tooltip: '排序',
                 initialValue: _sort,
                 onSelected: (v) => setState(() => _sort = v),
                 itemBuilder: (ctx) => const [
-                  PopupMenuItem(value: _kSortUpdated, child: Text('↓ 最近更新')),
-                  PopupMenuItem(value: _kSortCreated, child: Text('↓ 最近创建')),
+                  PopupMenuItem(value: _kSortUpdated, child: Text('最近更新', style: TextStyle(fontSize: 13))),
+                  PopupMenuItem(value: _kSortCreated, child: Text('最近创建', style: TextStyle(fontSize: 13))),
                 ],
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: ShapeDecoration(
                     color: ZT.surface,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(999),
-                      side: ZT.inkSide(),
-                    ),
+                    shape: StadiumBorder(side: ZT.inkSide(w: 1.2)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.swap_vert_rounded, size: 15, color: ZT.inkSoft),
-                    SizedBox(width: 4),
-                    Text('排序', style: TextStyle(fontSize: 12.5, color: ZT.inkSoft)),
+                    Icon(Icons.swap_vert_rounded, size: 14, color: ZT.inkSoft),
+                    const SizedBox(width: 4),
+                    Text('排序',
+                        style: TextStyle(
+                            fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
                   ]),
                 ),
               ),
@@ -505,9 +514,9 @@ class _SessionsPageState extends State<SessionsPage> {
                     ),
                   ])
                 : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 90),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
                     itemCount: sessions.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) => _sessionCard(sessions[i]),
                   ),
           ),
@@ -518,9 +527,7 @@ class _SessionsPageState extends State<SessionsPage> {
 
   Widget _chip(String label, SessionFilter f) {
     final selected = _filter == f && (f != SessionFilter.project || _project != null);
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
+    return InkWell(
         borderRadius: BorderRadius.circular(999),
         onTap: () {
           if (f == SessionFilter.project) {
@@ -556,8 +563,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       ? (selected ? ZT.ink : ZT.inkSoft)
                       : (selected ? ZT.primary : ZT.inkSoft))),
         ),
-      ),
-    );
+      );
   }
 
   Future<void> _pickProject() async {
@@ -825,34 +831,34 @@ class _SessionsPageState extends State<SessionsPage> {
 
     return HardCard(
       color: ZT.surface,
+      padding: const EdgeInsets.all(12),
       borderWidth: ZT.cardBorderWidth, // cream 无框软卡 / citrus 墨线
       onTap: () => _openChat(s),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          if (pinned) ...[
-            Icon(Icons.push_pin_rounded, size: 13, color: ZT.primary),
-            const SizedBox(width: 6),
-          ],
           Expanded(
             child: Text('${s['title'] ?? '未命名会话'}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
           ),
+          if (pinned) ...[
+            const SizedBox(width: 6),
+            Icon(Icons.push_pin, size: 13, color: ZT.primary),
+          ],
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
             onPressed: () => _sessionMenu(s),
           ),
         ]),
-        if (preview.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(preview,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12.5, height: 1.45, color: ZT.inkSoft)),
-          ),
+        if (preview.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, height: 1.35, color: ZT.inkSoft)),
+        ],
         const SizedBox(height: 7),
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // 标签区用 Wrap:装不下换行,不再把尾部标签/时间挤出卡片
@@ -872,7 +878,9 @@ class _SessionsPageState extends State<SessionsPage> {
             ]),
           ),
           const SizedBox(width: 6),
-          Text(_timeLabel(s), style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+          Text(_timeLabel(s),
+              style: TextStyle(
+                  fontSize: 10.5, fontWeight: FontWeight.w700, color: ZT.inkFaint)),
         ]),
       ]),
     );
@@ -896,34 +904,51 @@ class _SessionsPageState extends State<SessionsPage> {
       'local': (ZT.lemon, ZT.lemon),
       'cron': (ZT.lemon, ZT.lemon),
       'subagent': (ZT.grape, ZT.grape),
-      'model': (ZT.aqua, ZT.aqua),
+      'model': (ZT.primaryDeep, ZT.primaryDeep), // zremote:模型 chip 用深主色
       'project': (ZT.grape, ZT.grape),
       'tag': (ZT.inkSoft, ZT.inkFaint),
     };
     final c = colors[kind] ?? (ZT.inkSoft, ZT.inkFaint);
-    // citrus=zremote:8% 彩底 + 线色细框 + 全饱和 w700 粗字;cream:9% 彩底无边框
+    const statusKinds = {'running', 'done', 'paused', 'failed', 'ended', 'local', 'cron'};
+    final isStatus = statusKinds.contains(kind);
+    final citrus = ZT.palette.neoShadow;
+    // citrus=zremote 分两族:
+    //   状态(白底+全彩墨线框+w700,同 zremote StatusChip)
+    //   信息(8% 彩底+线色细框+w700,同 zremote _CardChip)
+    // cream:点 + 着色底,无边框(PNG 参考稿)
     final text = Text(label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
             fontSize: 10.5,
-            fontWeight: ZT.palette.neoShadow ? FontWeight.w700 : null,
+            fontWeight: citrus ? FontWeight.w700 : null,
             color: c.$1,
             fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
-    final row = Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(width: 5, height: 5, decoration: BoxDecoration(color: c.$1, shape: BoxShape.circle)),
-      const SizedBox(width: 4),
-      Flexible(child: text),
-    ]);
+    final Widget row;
+    if (isStatus) {
+      row = Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+            width: citrus ? 6 : 5,
+            height: citrus ? 6 : 5,
+            decoration: BoxDecoration(color: c.$1, shape: BoxShape.circle)),
+        SizedBox(width: citrus ? 5 : 4),
+        Flexible(child: text),
+      ]);
+    } else {
+      // 信息族(model/project/tag/subagent)=zremote _CardChip:药丸内只有文字,无圆点
+      row = text;
+    }
     final content = maxWidth == null
         ? row
         : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: row);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+      padding: EdgeInsets.symmetric(horizontal: isStatus ? 7 : 8, vertical: isStatus ? 2 : 2.5),
       decoration: ShapeDecoration(
-        color: c.$1.withValues(alpha: ZT.palette.neoShadow ? 0.08 : 0.09),
+        color: isStatus && citrus ? ZT.surface : c.$1.withValues(alpha: citrus ? 0.08 : 0.09),
         shape: StadiumBorder(
-            side: ZT.palette.neoShadow ? ZT.inkSide(w: 1, color: ZT.line) : BorderSide.none),
+            side: citrus
+                ? (isStatus ? ZT.inkSide(w: 1.2, color: c.$2) : ZT.inkSide(w: 1, color: ZT.line))
+                : BorderSide.none),
       ),
       child: content,
     );
