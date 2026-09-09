@@ -470,32 +470,29 @@ class _SessionsPageState extends State<SessionsPage> {
                   _chip('全部', SessionFilter.all),
                   _chip('置顶', SessionFilter.pinned),
                   _chip('归档', SessionFilter.archived),
+                  // 排序与筛选同排同行(zremote 排序菜单风格不符,改走底部弹层)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: _showSortSheet,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                      decoration: ShapeDecoration(
+                        color: ZT.surface,
+                        shape: StadiumBorder(side: ZT.inkSide(w: _sort != _kSortUpdated ? 1.2 : 1.6)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.swap_vert_rounded, size: 14, color: ZT.inkSoft),
+                        const SizedBox(width: 4),
+                        Text('排序',
+                            style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w800,
+                                color: ZT.inkSoft)),
+                      ]),
+                    ),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
-            PopupMenuButton<String>(
-                tooltip: '排序',
-                initialValue: _sort,
-                onSelected: (v) => setState(() => _sort = v),
-                itemBuilder: (ctx) => const [
-                  PopupMenuItem(value: _kSortUpdated, child: Text('最近更新', style: TextStyle(fontSize: 13))),
-                  PopupMenuItem(value: _kSortCreated, child: Text('最近创建', style: TextStyle(fontSize: 13))),
-                ],
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: ShapeDecoration(
-                    color: ZT.surface,
-                    shape: StadiumBorder(side: ZT.inkSide(w: 1.2)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.swap_vert_rounded, size: 14, color: ZT.inkSoft),
-                    const SizedBox(width: 4),
-                    Text('排序',
-                        style: TextStyle(
-                            fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
-                  ]),
-                ),
             ),
           ],
         ),
@@ -570,6 +567,61 @@ class _SessionsPageState extends State<SessionsPage> {
                       : (selected ? ZT.primary : ZT.inkSoft))),
         ),
       );
+  }
+
+  /// 排序方式选择:自家风格底部弹层(把手+墨线圆角+柠黄选中),替代 Material 灰底菜单。
+  Future<void> _showSortSheet() async {
+    final v = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: ZT.inkSide(w: 1.2),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          sheetHandle(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+            child: Column(children: [
+              for (final (value, label, icon) in [
+                (_kSortUpdated, '最近更新', Icons.schedule_rounded),
+                (_kSortCreated, '最近创建', Icons.event_rounded),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => Navigator.pop(ctx, value),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                      decoration: ShapeDecoration(
+                        color: _sort == value ? ZT.lemon.withValues(alpha: 0.55) : ZT.bg,
+                        shape: StadiumBorder(
+                            side: ZT.inkSide(w: _sort == value ? 1.6 : 1.2)),
+                      ),
+                      child: Row(children: [
+                        Icon(icon, size: 16, color: _sort == value ? ZT.ink : ZT.inkSoft),
+                        const SizedBox(width: 8),
+                        Text(label,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: _sort == value ? ZT.ink : ZT.inkSoft)),
+                        const Spacer(),
+                        if (_sort == value)
+                          Icon(Icons.check_rounded, size: 17, color: ZT.primaryDeep),
+                      ]),
+                    ),
+                  ),
+                ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+    if (v != null && v != _sort) setState(() => _sort = v);
   }
 
   Future<void> _pickProject() async {
