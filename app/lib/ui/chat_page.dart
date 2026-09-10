@@ -846,7 +846,12 @@ class _ChatPageState extends State<ChatPage> {
       _scrollFixQueued = false;
       final ctx = _streamKey.currentContext;
       final box = ctx?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize) return;
+      if (box is! RenderBox || !box.hasSize) {
+        // 流式区被列表惰性回收(滚出缓存)时量不到:基准作废,重入树那帧只重记
+        // 基准不补偿,否则累积的流式增量会在用户回滚时误触发一次大额下拉
+        _lastStreamH = null;
+        return;
+      }
       final h = box.size.height;
       final prev = _lastStreamH;
       _lastStreamH = h;
