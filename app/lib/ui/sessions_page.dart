@@ -631,6 +631,14 @@ class _SessionsPageState extends State<SessionsPage> {
       final arch = s['archived'];
       if (p.isNotEmpty && !(arch == 1 || arch == true)) projects.add(p);
     }
+    // 总目录来自 server /api/projects;拿不到就不显示路径副标题,弹层照常可用
+    String root = '';
+    try {
+      root = (await app.projects()).root;
+    } on Object {
+      root = '';
+    }
+    if (!mounted) return;
     final picked = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
@@ -656,7 +664,23 @@ class _SessionsPageState extends State<SessionsPage> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
                 child: Row(children: [
-                  Expanded(child: Text(p, style: const TextStyle(fontSize: 13.5))),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p, style: const TextStyle(fontSize: 13.5)),
+                        // 项目在电脑上的实际位置(总目录+项目名),供用户核对会话 cwd
+                        if (root.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Text(joinProjectCwd(root, p),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+                          ),
+                      ],
+                    ),
+                  ),
                   // ⋮ 只开菜单,不触发选中(内层 InkWell 吃掉点击)
                   InkWell(
                     borderRadius: BorderRadius.circular(99),
