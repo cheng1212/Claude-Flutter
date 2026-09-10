@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
 import '../panel_utils.dart';
+import '../scroll_utils.dart';
 import '../session_utils.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
@@ -32,6 +33,10 @@ class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
   final ImagePicker _picker = ImagePicker();
+  final ScrollController _listCtrl = ScrollController(); // 流式补偿用(见 _compensateScroll)
+  final GlobalKey _streamKey = GlobalKey(); // 量流式区渲染高度
+  double? _lastStreamH; // 上一帧流式区高度;null = 尚未量过,不补偿
+  bool _scrollFixQueued = false; // 同一帧只排一次补偿
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
@@ -111,6 +116,7 @@ class _ChatPageState extends State<ChatPage> {
     app.removeListener(_onApp);
     _input.dispose();
     _pendingImages.dispose();
+    _listCtrl.dispose();
     super.dispose();
   }
 
@@ -796,13 +802,15 @@ class _ChatPageState extends State<ChatPage> {
     final plan = derivePlanSteps(rows);
     final planIdx = rows.length + 1;
     final headIdx = rows.length + 2;
+    _queueScrollCompensation();
 
     return ListView.builder(
       reverse: true,
+      controller: _listCtrl,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       itemCount: rows.length + 3,
       itemBuilder: (context, i) {
-        if (i == 0) return _streamingArea();
+        if (i == 0) return KeyedSubtree(key: _streamKey, child: _streamingArea());
         if (i <= rows.length) return buildChatRow(rows[rows.length - i]);
         if (i == planIdx) {
           return plan == null
@@ -825,6 +833,29 @@ class _ChatPageState extends State<ChatPage> {
         return const SizedBox.shrink();
       },
     );
+  }
+
+  /// 流式下拉的解药:reverse 列表锚点钉在底部,流式区每长高 δ,其上历史内容整体
+  /// 上移 δ 而视口不动,用户停在上面会被持续拽向底部。此处在每帧布局完成后量流式区
+  /// 高度,用户不在底部时把滚动位置补偿同样 δ,锁住视觉位置;在底部(容差内)不干预,
+  /// 保持跟随最新的原生体验。补偿判定见 scroll_utils.dart(纯函数,有单测)。
+  void _queueScrollCompensation() {
+    if (_scrollFixQueued) return;
+    _scrollFixQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollFixQueued = false;
+      final ctx = _streamKey.currentContext;
+      final box = ctx?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final h = box.size.height;
+      final prev = _lastStreamH;
+      _lastStreamH = h;
+      if (prev == null || !_listCtrl.hasClients) return; // 首帧只记录基准
+      final target = compensateStreamScroll(prevH: prev, currH: h, offset: _listCtrl.offset);
+      if (target != null) {
+        _listCtrl.jumpTo(target.clamp(0.0, _listCtrl.position.maxScrollExtent));
+      }
+    });
   }
 
   Widget _streamingArea() {
