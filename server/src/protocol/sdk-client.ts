@@ -368,7 +368,21 @@ export class SessionRuntime {
               }
               continue;
             }
-            if (this.aborted) break;
+            if (this.aborted) {
+              // 中断后继续消费:CLI 收到 interrupt 会把已生成的部分内容作为
+              // assistant 消息发出来,丢掉等于让用户白等半天的生成蒸发。
+              // 仅拦新工具启动(马上要停了),result(complete) 到达后自然收尾;
+              // CLI 僵死由强裁兜底。原实现此处直接 break,partial 全部蒸发。
+              for (const event of transformMessage(raw)) {
+                if (event.kind === 'tool_use') continue;
+                if (event.kind === 'complete') {
+                  emitTerminal(event.exitCode, true);
+                  continue;
+                }
+                this.opts.emit(event);
+              }
+              continue;
+            }
             const events = transformMessage(raw);
             for (const event of events) {
               if (event.kind === 'tool_use') this.openTools.add(event.toolId);
