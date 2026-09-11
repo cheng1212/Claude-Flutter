@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 主题名:cream = 明快奶油(原版默认)/ citrus = 柑橘晨光(移植 zremote)。
-enum ZTheme { cream, citrus }
+/// 主题名:cream = 明快奶油(原版默认)/ citrus = 柑橘晨光(移植 zremote)/
+/// sticker = 墨线贴纸(方案 A:柑橘加大号)。
+enum ZTheme { cream, citrus, sticker }
 
 extension ZThemeLabel on ZTheme {
   String get label => switch (this) {
         ZTheme.cream => '原版奶油',
         ZTheme.citrus => '柑橘晨光',
+        ZTheme.sticker => '墨线贴纸',
       };
 }
 
@@ -34,6 +36,8 @@ class ZPalette {
   final bool neoShadow; // true = 墨线硬阴影(blur 0, neo-brutalist);false = 柔影
   final double borderWidth; // 默认描边宽度(citrus 墨线更粗更"硬")
   final double cardBorderWidth; // 会话卡等列表卡描边(cream 无框软卡 / citrus 墨线)
+  final Color? bgDot; // 页面底的圆点纹理色;null = 纯平底色(cream/citrus)
+  final double bgDotStep; // 圆点纹理的网格步长(逻辑像素)
 
   const ZPalette({
     required this.bg,
@@ -55,6 +59,8 @@ class ZPalette {
     required this.neoShadow,
     required this.borderWidth,
     required this.cardBorderWidth,
+    this.bgDot,
+    this.bgDotStep = 16,
   });
 }
 
@@ -107,6 +113,35 @@ const ZPalette kZCitrus = ZPalette(
   cardBorderWidth: 1.6,
 );
 
+/// 墨线贴纸 Sticker(方案 A,见 docs/ui-mockups/style-A-neo-sticker.html):
+/// 柑橘系的"加大号"——底色更深、圆点纹理,墨线 2px 更粗、圆角 16 更圆,
+/// 色块当贴纸用。色值取自原型 style-A 的 CSS;状态色语义与 citrus 同源
+/// (running=橘 / done=青 / error=玫红 / queued=柠黄 / thinking=葡萄紫),
+/// 因此所有 `neoShadow` 分流点会自动走 neo-brutalist 分支,与 citrus 同骨架。
+const ZPalette kZSticker = ZPalette(
+  bg: Color(0xFFFFE9CC), // 原型 body 底色(比 citrus 更深一档)
+  surface: Color(0xFFFFFCF5), // 同 citrus:卡片保持亮面
+  surfaceHi: Color(0xFFFFF3DE), // 同 citrus:高亮面板
+  ink: Color(0xFF241C15), // 同 citrus:墨色
+  inkSoft: Color(0xFF5C5044),
+  inkFaint: Color(0xFF7A6853),
+  line: Color(0xFFE8DCC8),
+  edge: Color(0xFF241C15), // 描边 = 墨线(贴纸感的关键)
+  primary: Color(0xFFFF6B1A),
+  primaryDeep: Color(0xFFE05500),
+  aqua: Color(0xFF0FB5A3),
+  lemon: Color(0xFFFFC93C),
+  rose: Color(0xFFE5484D),
+  grape: Color(0xFF7C5CFF),
+  onInk: Color(0xFFFFF6E9),
+  radius: 16, // 原型 .bub 圆角 16
+  neoShadow: true,
+  borderWidth: 2.0, // 原型 2px 墨线
+  cardBorderWidth: 2.0,
+  bgDot: Color(0xFFE8B98A), // 原型 radial-gradient 点色
+  bgDotStep: 16, // 原型 background-size:16px 16px
+);
+
 /// 主题切换开关:改 [ZT] 全局调色板 + 持久化。
 /// notifier 挂在 MaterialApp 外层,切换时整树重建(所有色值都是 build 时读取)。
 class ZThemeController {
@@ -130,8 +165,15 @@ class ZThemeController {
     await p.setString(_kTheme, t.name);
   }
 
-  static void use(ZTheme t) =>
-      ZT._palette = switch (t) { ZTheme.cream => kZCream, ZTheme.citrus => kZCitrus };
+  static void use(ZTheme t) => ZT._palette = paletteOf(t);
+
+  /// 主题 → 调色板。UI 侧(如设置里的主题缩略色卡)请一律走这里,
+  /// 别再自己写 switch —— 新增主题时只改这一处。
+  static ZPalette paletteOf(ZTheme t) => switch (t) {
+        ZTheme.cream => kZCream,
+        ZTheme.citrus => kZCitrus,
+        ZTheme.sticker => kZSticker,
+      };
 }
 
 /// 主题 token 门面:全部委托给当前 [ZPalette]。
@@ -273,6 +315,43 @@ abstract final class ZT {
           _palette.neoShadow ? InkRipple.splashFactory : InkSparkle.splashFactory,
     );
   }
+}
+
+/// 页面底纹理:调色板带 [ZPalette.bgDot] 时铺圆点纹(sticker),否则透明直通。
+/// 只在 AppShell 的 body 外层包一次 —— 不要每个页面各包一次(会重复叠加)。
+class ZDotBg extends StatelessWidget {
+  final Widget child;
+  const ZDotBg({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = ZT.palette.bgDot;
+    if (dot == null) return child;
+    return CustomPaint(
+      painter: _DotPainter(color: dot, step: ZT.palette.bgDotStep),
+      child: child,
+    );
+  }
+}
+
+class _DotPainter extends CustomPainter {
+  final Color color;
+  final double step;
+  _DotPainter({required this.color, required this.step});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    const r = 0.55; // 对应原型 1.1px 直径
+    for (double y = step / 2; y < size.height; y += step) {
+      for (double x = step / 2; x < size.width; x += step) {
+        canvas.drawCircle(Offset(x, y), r, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DotPainter old) => old.color != color || old.step != step;
 }
 
 /// 硬卡:浅暖底 + 柔和阴影;Material+Ink 让涟漪盖住底色。
