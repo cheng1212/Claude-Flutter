@@ -332,15 +332,13 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
       selectable: true,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
+      // 正文/标题用 sans 比例字体(阅读友好),mono 只属于代码块与行内 code
       styleSheet: MarkdownStyleSheet(
         p: widget.baseStyle ??
-            TextStyle(fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
-        h1: TextStyle(
-            fontSize: 19, fontWeight: FontWeight.w800, color: ZT.ink, fontFamily: ZT.mono),
-        h2: TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w800, color: ZT.ink, fontFamily: ZT.mono),
-        h3: TextStyle(
-            fontSize: 15.5, fontWeight: FontWeight.w700, color: ZT.ink, fontFamily: ZT.mono),
+            TextStyle(fontSize: 14, height: 1.5, color: ZT.ink),
+        h1: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: ZT.ink),
+        h2: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: ZT.ink),
+        h3: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: ZT.ink),
         code: TextStyle(
           fontSize: 12.5,
           fontFamily: ZT.mono,

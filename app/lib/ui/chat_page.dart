@@ -1041,7 +1041,7 @@ class _ChatPageState extends State<ChatPage> {
             Text(h.content,
                 maxLines: 6,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink, fontFamily: ZT.mono)),
+                style: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink)),
             const SizedBox(height: 6),
             Align(
               alignment: Alignment.centerRight,
@@ -1123,8 +1123,7 @@ class _ChatPageState extends State<ChatPage> {
               MemoMarkdown(
                 text: text,
                 streaming: true,
-                baseStyle: TextStyle(
-                    fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
+                baseStyle: TextStyle(fontSize: 14, height: 1.5, color: ZT.ink),
               ),
             ]),
           ),
@@ -1584,7 +1583,7 @@ class _QuickTile extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: c,
+                        color: ZT.inkSoft,
                         fontFamily: ZT.mono),
                   ),
                 ),
