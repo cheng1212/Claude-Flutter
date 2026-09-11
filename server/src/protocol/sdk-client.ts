@@ -387,6 +387,10 @@ export class SessionRuntime {
             for (const event of events) {
               if (event.kind === 'tool_use') this.openTools.add(event.toolId);
               else if (event.kind === 'tool_result') this.openTools.delete(event.toolId);
+              // 手机端气泡显示时间用:发射时刻即内容产生时刻(近似)
+              if (['text', 'thinking', 'tool_use', 'tool_result', 'error'].includes(event.kind)) {
+                (event as { createdAt?: string }).createdAt = new Date().toISOString();
+              }
               if (event.kind === 'complete') emitTerminal(event.exitCode, event.aborted);
               else this.opts.emit(event);
             }

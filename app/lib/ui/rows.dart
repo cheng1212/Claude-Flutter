@@ -13,12 +13,20 @@ import '../theme.dart';
 /// 统一入口:按行类型分发。
 Widget buildChatRow(ChatRow row) {
   return switch (row) {
-    UserRow() => UserBubble(row: row),
-    TextRow() => AssistantBlock(text: row.content),
+    UserRow(:final createdAt) => UserBubble(row: row, createdAt: createdAt),
+    TextRow(:final createdAt) => AssistantBlock(text: row.content, createdAt: createdAt),
     ThinkingRow() => ReasoningCard(text: row.content),
     ToolRow() => ToolCallCard(row: row),
     ErrorRow() => ErrorBlock(content: row.content, neutral: row.neutral),
   };
+}
+
+/// ISO 时间 → HH:mm(解析失败返回原串截断)。
+String chatTimeLabel(String? iso) {
+  if (iso == null || iso.isEmpty) return '';
+  final t = DateTime.tryParse(iso)?.toLocal();
+  if (t == null) return iso.length > 5 ? iso.substring(0, 5) : iso;
+  return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
 
 /// data URI 缩略图:data: scheme 移动端 Image.network 拉不到,解 base64 走内存。
@@ -470,7 +478,10 @@ class _CodeBlockState extends State<_CodeBlock> {
 class UserBubble extends StatelessWidget {
   final UserRow row;
 
-  const UserBubble({super.key, required this.row});
+  /// ISO 时间:气泡下方右侧显示 HH:mm(pending 发送中不显示)
+  final String? createdAt;
+
+  const UserBubble({super.key, required this.row, this.createdAt});
 
   static ShapeDecoration _inkDeco() => ShapeDecoration(
         color: ZT.ink,
@@ -517,18 +528,31 @@ class UserBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasImages = row.images.isNotEmpty;
+    final time = (!row.pending && createdAt != null) ? chatTimeLabel(createdAt) : '';
+    Widget bubble = Container(
+      constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.82),
+      padding: const EdgeInsets.fromLTRB(13, 9, 13, 10),
+      decoration: _inkDeco(),
+      child: _inkChild(),
+    );
     if (!hasImages) {
       return Align(
         alignment: Alignment.centerRight,
         child: Opacity(
           opacity: row.pending ? 0.72 : 1,
-          child: Container(
-            constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.82),
-            margin: const EdgeInsets.only(top: 8, left: 44),
-            padding: const EdgeInsets.fromLTRB(13, 9, 13, 10),
-            decoration: _inkDeco(),
-            child: _inkChild(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              bubble,
+              if (time.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3, right: 2),
+                  child: Text(time,
+                      style: TextStyle(fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+                ),
+            ],
           ),
         ),
       );
@@ -567,14 +591,30 @@ class UserBubble extends StatelessWidget {
 class AssistantBlock extends StatelessWidget {
   final String text;
 
-  const AssistantBlock({super.key, required this.text});
+  /// ISO 时间:气泡下方右侧显示 HH:mm(空则不显示)
+  final String? createdAt;
+
+  const AssistantBlock({super.key, required this.text, this.createdAt});
 
   @override
   Widget build(BuildContext context) {
     if (text.trim().isEmpty) return const SizedBox.shrink();
+    final time = chatTimeLabel(createdAt);
     return Padding(
       padding: const EdgeInsets.only(top: 8, right: 10),
-      child: MemoMarkdown(text: text),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MemoMarkdown(text: text),
+          if (time.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(time,
+                  style: TextStyle(fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+            ),
+        ],
+      ),
     );
   }
 }

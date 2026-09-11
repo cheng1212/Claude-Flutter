@@ -15,15 +15,21 @@ class UserRow extends ChatRow {
   /// 随消息发的图(data URI):乐观行本地就有,历史重建时 meta 里有,零网络成本回显。
   final List<String> images;
 
+  /// ISO 时间:气泡显示 HH:mm 用(本地发送时刻或服务器发射时刻)
+  final String? createdAt;
+
   /// true = 本地乐观插入还没收到服务器回显;发送失败会被回滚。
   final bool pending;
-  const UserRow(this.content, {this.pending = false, this.images = const []});
+  const UserRow(this.content, {this.pending = false, this.images = const [], this.createdAt});
 }
 
 @immutable
 class TextRow extends ChatRow {
   final String content;
-  const TextRow(this.content);
+
+  /// ISO 时间:助手气泡显示 HH:mm 用
+  final String? createdAt;
+  const TextRow(this.content, {this.createdAt});
 }
 
 @immutable
@@ -201,13 +207,13 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         final idx = rows.indexWhere((r) => r is UserRow && r.pending && r.content == content);
         if (idx >= 0) {
           final pendingRow = rows[idx] as UserRow;
-          rows[idx] = UserRow(content, images: historyImages ?? pendingRow.images);
+          rows[idx] = UserRow(content, images: historyImages ?? pendingRow.images, createdAt: pendingRow.createdAt ?? (ev['createdAt'] as String?));
         } else {
-          rows.add(UserRow(content, images: historyImages ?? const <String>[]));
+          rows.add(UserRow(content, images: historyImages ?? const <String>[], createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String()));
         }
         return _with(s, lastSeq: nextSeq, running: true, rows: rows);
       }
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, TextRow(ev['content'] as String? ?? '')], clearStreamText: true);
+      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, TextRow(ev['content'] as String? ?? '', createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String())], clearStreamText: true);
     case 'thinking':
       return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ThinkingRow(ev['content'] as String? ?? '')], clearStreamThinking: true);
     case 'tool_use':
@@ -378,7 +384,7 @@ ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
 /// 本地乐观插入用户消息(不占 seq)。images 随行带:气泡里直接回显缩略图(本地就有 base64)。
 ChatState applyLocalUser(ChatState s, String content, {List<String> images = const []}) {
   // 新回合从零开始等:上一回合的上游相位不能再带到这一回合的静默期里
-  return _with(s, running: true, clearUpstream: true, rows: [...s.rows, UserRow(content, pending: true, images: images)]);
+  return _with(s, running: true, clearUpstream: true, rows: [...s.rows, UserRow(content, pending: true, images: images, createdAt: DateTime.now().toIso8601String())]);
 }
 
 /// 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。
