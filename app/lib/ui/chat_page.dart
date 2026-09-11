@@ -649,7 +649,10 @@ class _ChatPageState extends State<ChatPage> {
             child: Text(_title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800)),
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2)),
           ),
           const SizedBox(width: 8),
           StatusChip(phase: _phase(), compact: true),
@@ -750,10 +753,14 @@ class _ChatPageState extends State<ChatPage> {
           ],
           if (chat.rows.isEmpty && !app.historyLoading && !_searching && !chat.running)
             Padding(
-              padding: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.only(top: 48),
               child: Center(
-                child: Text('发第一条消息,开始这个会话',
-                    style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.waving_hand_rounded, size: 30, color: ZT.inkFaint),
+                  const SizedBox(height: 12),
+                  Text('发第一条消息,开始这个会话',
+                      style: TextStyle(fontSize: 13, color: ZT.inkFaint)),
+                ]),
               ),
             ),
           if (!_searching && _showStreamingPanel) _streamingArea()!,

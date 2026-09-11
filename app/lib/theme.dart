@@ -310,6 +310,13 @@ abstract final class ZT {
             (s) => s.contains(WidgetState.selected) ? primary.withValues(alpha: 0.25) : line),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: primary),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.all(12),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
       // citrus=zremote:InkRipple 经典涟漪;cream:InkSparkle 细闪
       splashFactory:
           _palette.neoShadow ? InkRipple.splashFactory : InkSparkle.splashFactory,
@@ -424,6 +431,9 @@ class StatusChip extends StatelessWidget {
     final citrus = ZT.palette.neoShadow;
     final (Color color, String label) = switch (p) {
       'running' || 'working' || 'processing' => (ZT.primary, '运行中'),
+      'prewarming' => (ZT.lemon, '预热中'),
+      'queued' => (ZT.lemon, '排队中'),
+      'waitinginput' => (ZT.grape, '等待输入'),
       'waiting' || 'permission' => (ZT.lemon, '待确认'),
       'reconnecting' => (ZT.rose, '断线'),
       'error' || 'failed' => (ZT.rose, '异常'),

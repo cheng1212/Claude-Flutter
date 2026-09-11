@@ -419,54 +419,60 @@ class _CodeBlockState extends State<_CodeBlock> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(width: 1, color: ZT.line)),
+    // 规格 6.8:ink 深底 + 圆角 10 + 描边 1.4;头部语言名 onInk 55% + 复制钮
+    // + white12 分隔线;正文 12px mono h1.55 onInk 完整软换行(无横向内滚)。
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: ZT.ink,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(width: 1.4, color: ZT.ink),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(width: 1, color: Colors.white12)),
+            ),
+            padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
+            child: Row(children: [
+              Expanded(
+                child: Text(
+                  widget.language.isEmpty ? '代码' : widget.language,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: ZT.onInk.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+              InkWell(
+                borderRadius: BorderRadius.circular(3),
+                onTap: _copy,
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    _copied ? Icons.check_rounded : Icons.content_copy_rounded,
+                    size: 15,
+                    color: _copied ? ZT.aqua : ZT.onInk.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ]),
           ),
-          padding: const EdgeInsets.fromLTRB(4, 0, 2, 0),
-          child: Row(children: [
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                widget.language.isEmpty ? '代码' : widget.language,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                  color: ZT.inkFaint,
-                ),
-              ),
-            ),
-            InkWell(
-              borderRadius: BorderRadius.circular(3),
-              onTap: _copy,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Icon(
-                  _copied ? Icons.check_rounded : Icons.content_copy_rounded,
-                  size: 15,
-                  color: _copied ? ZT.aqua : ZT.inkFaint,
-                ),
-              ),
-            ),
-          ]),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(10),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          Padding(
+            padding: const EdgeInsets.all(10),
             child: SelectableText(
               widget.code,
               style: TextStyle(
-                  fontSize: 12, height: 1.55, fontFamily: ZT.mono, color: ZT.ink),
+                  fontSize: 12, height: 1.55, fontFamily: ZT.mono, color: ZT.onInk),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -493,7 +499,7 @@ class UserBubble extends StatelessWidget {
             bottomLeft: Radius.circular(ZT.radius),
             bottomRight: Radius.circular(ZT.radius),
           ),
-          side: BorderSide(width: 1.4, color: ZT.primary),
+          side: ZT.inkSide(w: 1.6), // 规格 6.6:气泡描边 1.6
         ),
       );
 
