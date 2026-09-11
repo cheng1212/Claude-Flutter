@@ -22,7 +22,10 @@ import '../ws.dart';
 import 'rows.dart';
 
 /// 单张图片字节上限:超过的整张跳过(data URI 要进 WS 消息体)。
-const int kMaxImageBytes = 5 * 1024 * 1024;
+/// 上限推导:server 按 data URI 字符串长度卡 5MB(MAX_IMAGE_URI),base64 膨胀
+/// 4/3——5MB 二进制编出来约 6.7MB 字符会被服务端静默剔除。取 3.75MB 二进制
+/// 对应恰好 ≤5MB 字符,再留余量取整 3MB。
+const int kMaxImageBytes = 3 * 1024 * 1024;
 
 /// isolate 任务: picked 图片路径 → data URI 列表。必须是顶层函数(compute 要求);
 /// 读文件+base64 是纯 CPU 活,主线程做会在编码瞬间掉帧。超限单张跳过。
