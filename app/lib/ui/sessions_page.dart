@@ -59,7 +59,9 @@ class _SessionsPageState extends State<SessionsPage> {
     }
     app.refreshSessions();
     _loadCrons();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+    // 「下次 HH:MM」显示粒度是分钟,30s 刷一次足够;1s 全页 setState 会让
+    // 有定时任务的设备持续整页重建(几十张卡片/秒),纯耗电
+    _tick = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted && _cronNext.isNotEmpty) setState(() {});
     });
   }
