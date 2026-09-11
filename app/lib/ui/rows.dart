@@ -594,7 +594,7 @@ class UserBubble extends StatelessWidget {
 }
 
 /// 助手回复:Markdown;空文本不占位。
-class AssistantBlock extends StatelessWidget {
+class AssistantBlock extends StatefulWidget {
   final String text;
 
   /// ISO 时间:气泡下方右侧显示 HH:mm(空则不显示)
@@ -603,9 +603,33 @@ class AssistantBlock extends StatelessWidget {
   const AssistantBlock({super.key, required this.text, this.createdAt});
 
   @override
+  State<AssistantBlock> createState() => _AssistantBlockState();
+}
+
+class _AssistantBlockState extends State<AssistantBlock> {
+  bool _copied = false;
+  Timer? _resetTimer;
+
+  void _copyAll() {
+    Clipboard.setData(ClipboardData(text: widget.text));
+    setState(() => _copied = true);
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final text = widget.text;
     if (text.trim().isEmpty) return const SizedBox.shrink();
-    final time = chatTimeLabel(createdAt);
+    final time = chatTimeLabel(widget.createdAt);
     return Padding(
       padding: const EdgeInsets.only(top: 8, right: 10),
       child: Column(
@@ -613,12 +637,27 @@ class AssistantBlock extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           MemoMarkdown(text: text),
-          if (time.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: Text(time,
-                  style: TextStyle(fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+          const SizedBox(height: 4),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            // ChatGPT 移动端模式:助手消息下方常驻一键复制(桌面是 hover,移动无 hover)
+            InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: _copyAll,
+              child: Padding(
+                padding: const EdgeInsets.all(3),
+                child: Icon(
+                  _copied ? Icons.check_rounded : Icons.content_copy_rounded,
+                  size: 13,
+                  color: _copied ? ZT.aqua : ZT.inkFaint,
+                ),
+              ),
             ),
+            if (time.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(time,
+                  style: TextStyle(fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+            ],
+          ]),
         ],
       ),
     );
