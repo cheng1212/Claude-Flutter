@@ -55,6 +55,7 @@ class _ChatPageState extends State<ChatPage> {
   final ImagePicker _picker = ImagePicker();
   final ScrollController _listCtrl = ScrollController(); // 「回到底部」药丸
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
+  int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
@@ -911,6 +912,10 @@ class _ChatPageState extends State<ChatPage> {
     final plan = derivePlanSteps(rows);
     final planIdx = rows.length;
     final headIdx = rows.length + 1;
+    // 行入场动画水位:历史换底/会话切换时水位对齐行数(不播);仅新增行播一次(规格四 180ms)
+    if (app.historyLoading && rows.length > _animatedUpTo) _animatedUpTo = rows.length;
+    final freshFrom = _animatedUpTo.clamp(0, rows.length);
+    if (rows.length > _animatedUpTo) _animatedUpTo = rows.length;
 
     return ListView.builder(
       reverse: true,
@@ -918,7 +923,23 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       itemCount: rows.length + 2,
       itemBuilder: (context, i) {
-        if (i < rows.length) return buildChatRow(rows[rows.length - 1 - i]);
+        if (i < rows.length) {
+          final row = buildChatRow(rows[rows.length - 1 - i]);
+          // reverse 列表 i 越小越新:新增行(未过水位)播 fade+slide 180ms 入场
+          if (i < rows.length - freshFrom) {
+            return TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              builder: (context, t, child) => Opacity(
+                opacity: t,
+                child: Transform.translate(offset: Offset(0, 4 * (1 - t)), child: child),
+              ),
+              child: row,
+            );
+          }
+          return row;
+        }
         if (i == planIdx) {
           return plan == null
               ? const SizedBox.shrink()
