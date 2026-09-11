@@ -380,6 +380,19 @@ class ZApp extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 批量删除:单请求(server batch-delete,幂等);被删会话若是当前打开的,清空聊天态。
+  Future<int> deleteSessions(List<String> ids) async {
+    if (ids.isEmpty) return 0;
+    final r = await _api.deleteSessions(ids);
+    if (ids.contains(currentSessionId)) {
+      currentSessionId = null;
+      chat = const ChatState();
+    }
+    await _loadSessions();
+    notifyListeners();
+    return r.deleted;
+  }
+
   /// 批量删除:一次请求;当前打开中的会话被删则清空聊天态。返回 {deleted, missing}。
   Future<({int deleted, List<String> missing})> deleteSessions(List<String> ids) async {
     if (ids.isEmpty) return (deleted: 0, missing: const <String>[]);
