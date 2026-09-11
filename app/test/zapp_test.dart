@@ -168,6 +168,97 @@ void main() {
     expect(texts.last, 'live');
   });
 
+  test('bug#4 刷新丢自己消息:回显先于 REST 到达,单页也不能丢', () async {
+    await openEmpty();
+    // ① 发消息:本地乐观 pending 行
+    app.sendChat('我刚发的');
+    expect((app.chat.rows.single as UserRow).pending, isTrue);
+    // ② 立刻刷新:REST 读取发生在落库之前(不含这条消息),首屏被 gate 卡住
+    final gate = Completer<void>();
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        return gate.future.then((_) => {
+              'messages': [
+                {'seq': 1, 'meta': jsonEncode({'kind': 'text', 'role': 'user', 'content': '旧问题', 'seq': 1})},
+              ],
+              'total': 1, // 单页:原实现在这里 early-return,直接丢弃 _backfill.extra
+            });
+      }
+      return null;
+    };
+    final opening = app.openSession('s1');
+    await pump();
+    expect(app.chat.rows, isEmpty, reason: '刷新先清屏,乐观行此刻已不在');
+    // ③ 服务器落库 + 回显:刷新窗口内到达 → 落进 _backfill.extra
+    channel.serverPush({'kind': 'text', 'role': 'user', 'content': '我刚发的', 'seq': 2, 'sessionId': 's1'});
+    await pump();
+    // ④ REST 首屏返回(不含回显行),原实现会把它整体覆盖且无人补回
+    gate.complete();
+    await opening;
+    final users = app.chat.rows.whereType<UserRow>().toList();
+    expect([for (final r in users) r.content], ['旧问题', '我刚发的'],
+        reason: '首屏覆盖后必须由 bf.extra 归约补回,否则"刷的时候没了、过会儿又出现"');
+    expect(users.last.pending, isFalse, reason: '补回的是服务器回显,不是残留的乐观行');
+  });
+
+  test('bug#4 单页会话:补齐窗口内到达的实时行不被首屏覆盖丢弃', () async {
+    await openEmpty();
+    final gate = Completer<void>();
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        return gate.future.then((_) => {
+              'messages': [
+                {'seq': 1, 'meta': jsonEncode({'kind': 'text', 'role': 'assistant', 'content': '旧回答', 'seq': 1})},
+              ],
+              'total': 1,
+            });
+      }
+      return null;
+    };
+    final opening = app.openSession('s1');
+    await pump();
+    channel.serverPush({'kind': 'text', 'role': 'assistant', 'content': '窗口内的新回答', 'seq': 2, 'sessionId': 's1'});
+    await pump();
+    gate.complete();
+    await opening;
+    final texts = [for (final r in app.chat.rows) if (r is TextRow) r.content];
+    expect(texts, ['旧回答', '窗口内的新回答'],
+        reason: '单页路径统一走换底:extra 必须归约,实时行不能被覆盖后无人补回(且不重复)');
+    expect(app.chat.lastSeq, 2);
+  });
+
+  test('bug#4 换底保留 running:补齐期间实时开跑不被 REST 换底冲掉', () async {
+    await openEmpty();
+    final gate = Completer<void>();
+    // 多页会话:首屏立刻上屏,翻页窗口内服务器广播"开跑",换底不能把 running 冲回 false
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        final q = Uri.parse(c.path).queryParameters;
+        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
+        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
+        final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
+        final msgs = <Map>[];
+        for (var s = high; s > high - 500 && s >= 1; s--) {
+          msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
+        }
+        final page = {'messages': msgs, 'total': 1200};
+        return beforeSeq == null ? page : gate.future.then((_) => page);
+      }
+      return null;
+    };
+    final opening = app.openSession('s1');
+    await pump(const Duration(milliseconds: 20));
+    expect(app.historyLoading, isFalse, reason: '首屏已上屏,正在后台补齐');
+    channel.serverPush({'kind': 'subscribed', 'sessionId': 's1', 'isProcessing': true});
+    await pump();
+    expect(app.chat.running, isTrue, reason: '实时 subscribed 已置运行中');
+    gate.complete();
+    await opening;
+    expect(app.chat.rows.length, 1200);
+    expect(app.chat.running, isTrue,
+        reason: '换底重建不推断 running,但必须保留实时已置位的 running(否则按钮从 STOP 变回发送)');
+  });
+
   test('sessions_dirty:250ms 防抖合并成一次列表刷新;控制帧不进 reducer', () async {
     await openEmpty();
     var sessionFetches = 0;
