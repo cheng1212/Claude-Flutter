@@ -327,9 +327,13 @@ class ZDotBg extends StatelessWidget {
   Widget build(BuildContext context) {
     final dot = ZT.palette.bgDot;
     if (dot == null) return child;
-    return CustomPaint(
-      painter: _DotPainter(color: dot, step: ZT.palette.bgDotStep),
-      child: child,
+    // RepaintBoundary:圆点网格每次 paint 全量画数千个圆,隔离后只在自身
+    // 脏了(主题切换/尺寸变化)才重画,内容滚动/流式更新不再连带重绘底纹
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _DotPainter(color: dot, step: ZT.palette.bgDotStep),
+        child: child,
+      ),
     );
   }
 }
