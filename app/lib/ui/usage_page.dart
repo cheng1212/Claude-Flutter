@@ -65,7 +65,9 @@ class _UsagePageState extends State<UsagePage> {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.insights_rounded, size: 40, color: ZT.inkFaint),
                 const SizedBox(height: 12),
-                Text(app.usageStatsLoading ? '统计中…' : '暂无用量数据',
+                Text(app.usageStatsLoading
+                    ? '统计中…'
+                    : (app.usageStatsError ? '用量数据加载失败,点下方按钮重试' : '暂无用量数据'),
                     style: TextStyle(fontSize: 13, color: ZT.inkSoft)),
                 const SizedBox(height: 14),
                 BigButton(label: '重新加载', icon: Icons.refresh_rounded, onPressed: app.usageStatsLoading ? null : _load),

@@ -676,19 +676,27 @@ class _SessionsPageState extends State<SessionsPage> {
             backgroundColor: ZT.surface,
             onRefresh: app.refreshSessions,
             child: sessions.isEmpty
-                ? ListView(children: [
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.55,
-                      child: Center(
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.chat_bubble_outline_rounded, size: 40, color: ZT.inkFaint),
-                          const SizedBox(height: 12),
-                          Text(app.linked ? '这里空空如也' : '等待连接…',
-                              style: TextStyle(fontSize: 13, color: ZT.inkFaint)),
-                        ]),
-                      ),
-                    ),
-                  ])
+                ? (app.sessionsLoaded
+                    ? ListView(children: [
+                        SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.55,
+                          child: Center(
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.chat_bubble_outline_rounded, size: 40, color: ZT.inkFaint),
+                              const SizedBox(height: 12),
+                              Text(app.linked ? '这里空空如也' : '等待连接…',
+                                  style: TextStyle(fontSize: 13, color: ZT.inkFaint)),
+                            ]),
+                          ),
+                        ),
+                      ])
+                    : ListView(children: [
+                        SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.55,
+                          child: Center(
+                              child: CircularProgressIndicator(strokeWidth: 2, color: ZT.primary)),
+                        ),
+                      ]))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
                     itemCount: sessions.length,
