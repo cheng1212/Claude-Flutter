@@ -221,7 +221,10 @@ class ZApp extends ChangeNotifier {
       final first = await _api.messages(id, limit: 500, offset: 0);
       if (token != _openToken) return;
       final (headEvents, maxSeq) = _histEvents(first);
-      var st = _replay(headEvents, maxSeq);
+      // 首屏即并入留底的实时事件:REST 读取发生在落库/回显之前时,窗口内到达的
+      // 回显消息只存在于 bf.extra——不并进来就会被下面这行 `chat = st` 整体覆盖,
+      // 且之后无人补回(去重指针已被抬高,订阅补发不重发 ≤N)。
+      var st = _replay([...headEvents, ...bf.extra], maxSeq);
       if (keepPermission != null && st.pendingPermission == null) {
         st = _withPermission(st, keepPermission);
       }
@@ -232,13 +235,14 @@ class ZApp extends ChangeNotifier {
       // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
       _socket.seedLastSeq(id, maxSeq > st.lastSeq ? maxSeq : st.lastSeq);
       _socket.subscribeSession(id);
-      if (first.total <= first.messages.length) {
-        _backfill = null;
-        return;
-      }
+      // 单页会话(≤500 条,绝大多数)不需要翻页,但**不能**在这里提前收工:
+      // 换底那步还要归约 bf.extra——原实现 `if (total <= 页数) { _backfill = null; return; }`
+      // 直接丢弃留底,窗口内到达的实时行(含自己刚发消息的回显)被首屏覆盖后
+      // 永远补不回,即"刷新丢自己消息"的根因。统一走换底路径,消除双路径漂移。
+      var beforeSeq =
+          first.total <= first.messages.length ? null : _minSeqOf(headEvents);
       // 后台补齐老消息:按 seq 锚点翻更旧页——offset 分页期间若新消息插入(更高 seq),
       // 窗口会整体上移、整段漏掉;锚点(比当前最小 seq 更旧)免疫漂移,翻到底为止。
-      var beforeSeq = _minSeqOf(headEvents);
       while (beforeSeq != null) {
         final hist = await _api.messages(id, limit: 500, beforeSeq: beforeSeq);
         if (token != _openToken || _backfill != bf) return;
