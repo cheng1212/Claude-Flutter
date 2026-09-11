@@ -7,6 +7,7 @@ export type ProtocolEvent =
   | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown; parentToolUseId?: string }
   | { kind: 'tool_result'; toolId: string; content: string; isError: boolean; parentToolUseId?: string }
   | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown; parentToolUseId?: string }
+  | { kind: 'permission_resolved'; requestId: string; parentToolUseId?: string }
   | {
     kind: 'task_started'; taskId: string; description: string; taskType?: string;
     toolUseId?: string; subagentType?: string; isBackgrounded?: boolean; spawnDepth?: number;

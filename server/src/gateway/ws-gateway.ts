@@ -228,13 +228,23 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
       }
 
       if (type === 'chat.permission-response') {
-        const runtime = runtimes.get(String(data.sessionId ?? ''));
-        runtime?.answerPermission(String(data.requestId ?? ''), {
+        const sessionId = String(data.sessionId ?? '');
+        const requestId = String(data.requestId ?? '');
+        const runtime = runtimes.get(sessionId);
+        runtime?.answerPermission(requestId, {
           allow: Boolean(data.allow),
           updatedInput: data.updatedInput,
           message: typeof data.message === 'string' ? data.message : undefined,
           rememberTool: data.rememberTool === true,
         });
+        // 多端同步:任一端应答后,其余端同 requestId 的审批卡立刻收起
+        // (无 seq 瞬态广播,不落库不补发——审批是瞬态交互,replay 由 pending 通道兜底)
+        for (const client of wss.clients) {
+          const c = client as StateWs;
+          if (c.authed && c.subs?.has(sessionId) && c.readyState === c.OPEN) {
+            send(c, { kind: 'permission_resolved', requestId, sessionId });
+          }
+        }
         return;
       }
 
