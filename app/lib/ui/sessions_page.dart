@@ -1133,10 +1133,7 @@ class _SessionsPageState extends State<SessionsPage> {
   /// 主题切换行:两个签名色小卡(各画主题底色+主色描边),点选即换即存。
   Widget _themeRow(ZTheme current, ValueChanged<ZTheme> onPick) {
     Widget swatch(ZTheme t) {
-      final p = switch (t) {
-        ZTheme.cream => kZCream,
-        ZTheme.citrus => kZCitrus,
-      };
+      final p = ZThemeController.paletteOf(t);
       return Container(
         width: 20,
         height: 13,

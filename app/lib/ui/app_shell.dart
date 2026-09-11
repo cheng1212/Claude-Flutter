@@ -35,16 +35,18 @@ class _AppShellState extends State<AppShell> {
 
     return Scaffold(
       backgroundColor: ZT.bg,
-      body: IndexedStack(index: _tab, children: [
-        SessionsPage(
-          key: ValueKey('sess-$_projectFilter'),
-          app: app,
-          onLogout: widget.onLogout,
-          initialProject: _projectFilter,
-        ),
-        _projectsTab(projectNames, projects),
-        _mineTab(),
-      ]),
+      body: ZDotBg(
+        child: IndexedStack(index: _tab, children: [
+          SessionsPage(
+            key: ValueKey('sess-$_projectFilter'),
+            app: app,
+            onLogout: widget.onLogout,
+            initialProject: _projectFilter,
+          ),
+          _projectsTab(projectNames, projects),
+          _mineTab(),
+        ]),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
