@@ -64,6 +64,11 @@ class _ChatPageState extends State<ChatPage> {
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
 
   Future<void> _pickReference() async {
+    // 引用最终要发进当前会话:回合运行中发了会被 RUN_IN_PROGRESS 拒,提前拦截
+    if (chat.running) {
+      _toastRef('当前回合运行中,结束后再引用');
+      return;
+    }
     final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
     if (others.isEmpty) {
       _toastRef('没有其他会话可引用');
