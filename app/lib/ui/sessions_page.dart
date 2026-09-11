@@ -1189,13 +1189,15 @@ class _SessionsPageState extends State<SessionsPage> {
     //   状态(白底+全彩墨线框+w700,同 zremote StatusChip)
     //   信息(8% 彩底+线色细框+w700,同 zremote _CardChip)
     // cream:点 + 着色底,无边框(PNG 参考稿)
+    // 色彩纪律(规格 6.3):状态色只出现在描边与圆点(小面积点缀),
+    // 文字一律中性 inkSoft——彩底+彩字+彩框三彩齐全是视觉噪音的来源
     final text = Text(label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
             fontSize: 10.5,
             fontWeight: citrus ? FontWeight.w700 : null,
-            color: c.$1,
+            color: ZT.inkSoft,
             fontFamily: kind == 'model' ? ZT.mono : ZT.sans));
     final Widget row;
     if (isStatus) {
@@ -1218,10 +1220,12 @@ class _SessionsPageState extends State<SessionsPage> {
     final content = maxWidth == null
         ? row
         : ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: row);
+    // 信息族(模型/项目/子代理/标签)一律中性白底+line 细框;
+    // 状态族白底+状态色描边——两族都以中性文字收口
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: ShapeDecoration(
-        color: isStatus && citrus ? ZT.surface : c.$1.withValues(alpha: citrus ? 0.08 : 0.09),
+        color: ZT.surface,
         shape: StadiumBorder(
             side: citrus
                 ? (isStatus ? ZT.inkSide(w: 1.2, color: c.$2) : ZT.inkSide(w: 1, color: ZT.line))
