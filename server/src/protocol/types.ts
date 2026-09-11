@@ -1,11 +1,11 @@
 export type ProtocolEvent =
   | { kind: 'session_created'; providerSessionId: string; parentToolUseId?: string }
-  | { kind: 'text'; role: 'assistant' | 'user'; content: string; images?: string[]; parentToolUseId?: string }
+  | { kind: 'text'; role: 'assistant' | 'user'; content: string; images?: string[]; createdAt?: string; parentToolUseId?: string }
   | { kind: 'stream_delta'; content: string; parentToolUseId?: string }
-  | { kind: 'thinking'; content: string; parentToolUseId?: string }
+  | { kind: 'thinking'; content: string; createdAt?: string; parentToolUseId?: string }
   | { kind: 'thinking_delta'; content: string; parentToolUseId?: string }
-  | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown; parentToolUseId?: string }
-  | { kind: 'tool_result'; toolId: string; content: string; isError: boolean; parentToolUseId?: string }
+  | { kind: 'tool_use'; toolId: string; toolName: string; toolInput: unknown; createdAt?: string; parentToolUseId?: string }
+  | { kind: 'tool_result'; toolId: string; content: string; isError: boolean; createdAt?: string; parentToolUseId?: string }
   | { kind: 'permission_request'; requestId: string; toolName: string; input: unknown; parentToolUseId?: string }
   | { kind: 'permission_resolved'; requestId: string; parentToolUseId?: string }
   | {
@@ -35,7 +35,7 @@ export type ProtocolEvent =
     parentToolUseId?: string;
   }
   | { kind: 'complete'; exitCode: number; aborted: boolean; parentToolUseId?: string }
-  | { kind: 'error'; content: string; parentToolUseId?: string };
+  | { kind: 'error'; content: string; createdAt?: string; parentToolUseId?: string };
 
 /** 后台保活判定:这些工具会把工作留到 result 之后。 */
 export const DEFERRED_WORK_TOOLS = new Set(['Monitor', 'ScheduleWakeup', 'CronCreate', 'TaskCreate']);
