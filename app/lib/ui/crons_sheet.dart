@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../session_utils.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 本会话定时任务面板内容(任务中心三 Tab 复用):秒级倒计时 + 删除 + 时间详情。
 class CronsPanel extends StatefulWidget {
@@ -43,7 +44,12 @@ class _CronsPanelState extends State<CronsPanel> {
   }
 
   Future<void> _remove(String id) async {
-    await widget.app.deleteCron(id);
+    try {
+      await widget.app.deleteCron(id);
+    } on Object catch (e) {
+      if (mounted) showToast(context, '删除失败: $e');
+      return;
+    }
     _load();
   }
 

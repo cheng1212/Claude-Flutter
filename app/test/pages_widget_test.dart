@@ -51,7 +51,7 @@ Map<String, dynamic> sessionRow(String id,
       'title': title,
       'is_pinned': pinned ? 1 : 0,
       'archived': archived ? 1 : 0,
-      if (preview != null) 'last_preview': preview,
+      'last_preview': ?preview,
       'updated_at': '2026-09-12T10:00:00Z',
     };
 
@@ -197,7 +197,6 @@ void main() {
     });
 
     testWidgets('退出批量:X 关闭并清空选择,卡片恢复正常点击', (tester) async {
-      var opened = 0;
       final app = makeApp(http, channel, sessions: [sessionRow('s1', title: '卡片')]);
       await tester.runAsync(() => app.bootstrap());
       await tester.pumpWidget(host(SessionsPage(app: app, onLogout: () {})));
