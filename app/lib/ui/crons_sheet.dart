@@ -163,7 +163,12 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
   }
 
   Future<void> _remove(String id) async {
-    await widget.app.deleteCron(id);
+    try {
+      await widget.app.deleteCron(id);
+    } on Object catch (e) {
+      if (mounted) showToast(context, '删除失败: $e');
+      return;
+    }
     setState(() => _future = widget.app.crons());
   }
 
