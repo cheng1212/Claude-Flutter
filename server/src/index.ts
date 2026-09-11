@@ -77,6 +77,10 @@ const app = await buildApp({
     if (ctx) runtime.update(ctx.cfg);
     if (patch.permissionMode) void runtime.setPermissionModeLive(patch.permissionMode);
     if (ctx?.bareModel && patch.model) void runtime.setModelLive(patch.model);
+    // 置顶/归档/改名等列表属性变更也广播:否则手机置顶后,电脑端列表
+    // 要等下次手动刷新/重连才更新(跨端同步缺口)。sessions_dirty 走
+    // gateway.notify(无 seq 不落库,各端 250ms 防抖拉列表),与开跑/跑完同路。
+    gateway.notify({ kind: 'sessions_dirty', sessionId });
   },
 }); // buildApp 内部已挂 REST
 
