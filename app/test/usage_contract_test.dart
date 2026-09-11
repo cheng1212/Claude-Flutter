@@ -100,7 +100,7 @@ void main() {
 
     test('全部范围:切片聚合 = summary 总量', () {
       final slice = aggregateSlice(sliceDailyByChoice(view.daily, UsageRangeChoice.all));
-      expect(slice.totalTokens, 3000 + 500 + 1500); // daily 明细之和(与 models 总量口径不同源)
+      expect(slice.totalTokens, 4500); // 3000(9-11) + 1500(9-12) // daily 明细之和(与 models 总量口径不同源)
       expect(slice.activeDays, 2);
     });
 
