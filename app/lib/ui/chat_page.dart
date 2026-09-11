@@ -59,6 +59,9 @@ class _ChatPageState extends State<ChatPage> {
   double? _lastStreamH; // 上一帧流式区高度;null = 尚未量过,不补偿
   bool _scrollFixQueued = false; // 同一帧只排一次补偿
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
+  bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
+  String _searchQuery = '';
+  final TextEditingController _searchCtrl = TextEditingController();
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
@@ -139,6 +142,7 @@ class _ChatPageState extends State<ChatPage> {
     _input.dispose();
     _pendingImages.dispose();
     _listCtrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -650,6 +654,27 @@ class _ChatPageState extends State<ChatPage> {
           StatusChip(phase: _phase(), compact: true),
         ]),
         actions: [
+          // 聊天内搜索:读态模式,结果可复制/引用发送
+          InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () => setState(() => _searching = true),
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: ShapeDecoration(
+                color: ZT.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                  side: ZT.inkSide(w: 1.2),
+                ),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.search_rounded, size: 15, color: ZT.inkSoft),
+                SizedBox(width: 4),
+                Text('搜索', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+              ]),
+            ),
+          ),
           // 引用直达:把另一会话的上下文带进来(三个任务面板已合并进底部「任务」)
           InkWell(
             borderRadius: BorderRadius.circular(999),
@@ -678,6 +703,10 @@ class _ChatPageState extends State<ChatPage> {
           if (app.socket.state == ZSocketState.reconnecting) _reconnectStrip(),
           if (app.error != null) _errorStrip(),
           const Divider(height: 1),
+          if (_searching) ...[
+            _searchBar(),
+            Expanded(child: _searchResults()),
+          ] else ...[
           Expanded(
             child: NotificationListener<ScrollNotification>(
               onNotification: (n) {
@@ -717,7 +746,8 @@ class _ChatPageState extends State<ChatPage> {
               ]),
             ),
           ),
-          if (chat.pendingPermission != null)
+          ],
+          if (!_searching && chat.pendingPermission != null)
             PermissionCard(
               req: chat.pendingPermission!,
               onAnswer: (allow, message, updatedInput, [rememberTool = false]) {
@@ -731,8 +761,8 @@ class _ChatPageState extends State<ChatPage> {
                 );
               },
             ),
-          _composer(),
-          _quickBar(planOn, subsOn || bgOn),
+          if (!_searching) _composer(),
+          if (!_searching) _quickBar(planOn, subsOn || bgOn),
         ]),
       ),
     );
@@ -892,6 +922,115 @@ class _ChatPageState extends State<ChatPage> {
               : _sessionHeader();
         }
         return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _searchBar() {
+    final hits = searchChatRows(chat.rows, _searchQuery);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(children: [
+        Expanded(
+          child: TextField(
+            controller: _searchCtrl,
+            autofocus: true,
+            onChanged: (v) => setState(() => _searchQuery = v),
+            style: const TextStyle(fontSize: 13.5),
+            decoration: const InputDecoration(
+              hintText: '在聊天记录中搜索…',
+              prefixIcon: Icon(Icons.search_rounded, size: 20),
+              isDense: true,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('${hits.length} 处',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
+        IconButton(
+          tooltip: '退出搜索',
+          icon: const Icon(Icons.close_rounded, size: 20),
+          onPressed: _exitSearch,
+        ),
+      ]),
+    );
+  }
+
+  void _exitSearch() {
+    _searchCtrl.clear();
+    setState(() {
+      _searching = false;
+      _searchQuery = '';
+    });
+  }
+
+  Widget _searchResults() {
+    final hits = searchChatRows(chat.rows, _searchQuery);
+    if (hits.isEmpty) {
+      return Center(
+        child: Text(_searchQuery.trim().isEmpty ? '输入关键词搜索聊天记录' : '没有匹配的消息',
+            style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+      itemCount: hits.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (context, i) {
+        final h = hits[i];
+        return HardCard(
+          padding: const EdgeInsets.all(11),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: ShapeDecoration(
+                  color: ZT.surfaceHi,
+                  shape: StadiumBorder(side: ZT.inkSide(w: 1)),
+                ),
+                child: Text(h.roleLabel,
+                    style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: h.content));
+                  showToast(context, '已复制');
+                },
+                child: Icon(Icons.copy_rounded, size: 15, color: ZT.inkSoft),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Text(h.content,
+                maxLines: 6,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink, fontFamily: ZT.mono)),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () {
+                  if (chat.running) {
+                    showToast(context, '当前回合运行中,结束后再引用发送');
+                    return;
+                  }
+                  app.sendChat('【引用 ${h.roleLabel} 的消息】\n${h.content}\n\n请基于以上内容继续');
+                  _exitSearch();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: ShapeDecoration(
+                    color: ZT.primary.withValues(alpha: 0.12),
+                    shape: StadiumBorder(side: BorderSide(width: 1.2, color: ZT.primary)),
+                  ),
+                  child: Text('引用发送',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+                ),
+              ),
+            ),
+          ]),
+        );
       },
     );
   }

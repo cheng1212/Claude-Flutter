@@ -1,4 +1,6 @@
 // 纯函数状态归约:WS 事件 → ChatState。UI 只读,所有变更走这里(可单测)。
+import 'dart:convert' show jsonEncode;
+
 import 'package:flutter/foundation.dart';
 
 @immutable
@@ -324,6 +326,37 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
     default:
       return seq != null ? _with(s, lastSeq: nextSeq) : s;
   }
+}
+
+/// 聊天内搜索:按关键词过滤消息行(大小写不敏感;空查询返回空)。
+/// 命中范围:用户/助手/思考的文本,工具行匹配工具名+入参 JSON。
+/// 返回 (行, 在 rows 中的下标, 角色标签, 参与匹配的全文) 供面板展示与引用发送。
+List<({ChatRow row, int index, String roleLabel, String content})> searchChatRows(
+    List<ChatRow> rows, String query) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return const [];
+  final hits = <({ChatRow row, int index, String roleLabel, String content})>[];
+  for (var i = 0; i < rows.length; i++) {
+    final r = rows[i];
+    String? role;
+    String? content;
+    if (r is UserRow) {
+      role = '用户';
+      content = r.content;
+    } else if (r is TextRow) {
+      role = '助手';
+      content = r.content;
+    } else if (r is ThinkingRow) {
+      role = '思考';
+      content = r.content;
+    } else if (r is ToolRow) {
+      role = '工具';
+      content = '${r.toolName} ${jsonEncode(r.toolInput)}';
+    }
+    if (content == null || !content.toLowerCase().contains(q)) continue;
+    hits.add((row: r, index: i, roleLabel: role!, content: content));
+  }
+  return hits;
 }
 
 /// 重连补发:一批事件按序灌入(applyEvent 自带 seq 去重)。
