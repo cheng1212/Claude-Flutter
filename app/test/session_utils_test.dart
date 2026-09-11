@@ -122,7 +122,7 @@ void main() {
       ];
       final out = filterSessions(rows,
           filter: SessionFilter.project, project: kUncategorizedProject);
-      expect(out.map((s) => s['id']), ['b']);
+      expect(out.map((s) => s['id']), ['b', 'c'], reason: '无 project 键也算未分类');
     });
   });
 
