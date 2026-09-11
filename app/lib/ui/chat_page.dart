@@ -215,6 +215,7 @@ class _ChatPageState extends State<ChatPage> {
       if (picked.isEmpty) return;
       // 读字节+base64 丢 isolate:几张几 MB 的图在主线程编码会掉帧
       final uris = await compute(_encodeImagesJob, [for (final p in picked) p.path]);
+      final skippedBig = picked.length - uris.length; // 超限单张静默跳过计数
       if (uris.isEmpty) {
         if (mounted) showToast(context, '图片超过 ${kMaxImageBytes ~/ (1024 * 1024)}MB,换个小的');
         return;
@@ -226,7 +227,11 @@ class _ChatPageState extends State<ChatPage> {
         next.removeRange(maxImages, next.length);
       }
       _pendingImages.value = next;
-      if (dropped > 0 && mounted) showToast(context, '最多 $maxImages 张,超出 $dropped 张未添加');
+      if (dropped > 0 && mounted) {
+        showToast(context, '最多 $maxImages 张,超出 $dropped 张未添加');
+      } else if (skippedBig > 0 && mounted) {
+        showToast(context, '$skippedBig 张超过 ${kMaxImageBytes ~/ (1024 * 1024)}MB,未添加');
+      }
     } on Object catch (e) {
       if (mounted) showToast(context, '选图失败: $e');
     }

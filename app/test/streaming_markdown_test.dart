@@ -79,6 +79,17 @@ void main() {
       expect(MemoMarkdown.parseCount, 2, reason: 'streaming 翻 false 需失效缓存重排');
     });
 
+    testWidgets('节流窗内最后一版文本:尾沿定时器补刷', (tester) async {
+      await tester.pumpWidget(host('# t1', true));
+      expect(MemoMarkdown.parseCount, 1);
+      fakeNow = 1050; // 窗口内
+      await tester.pumpWidget(host('# t1 t2', true));
+      expect(MemoMarkdown.parseCount, 1, reason: '窗口内跳过');
+      await tester.pump(const Duration(milliseconds: 250)); // 尾沿定时器到点
+      await tester.pump(); // 重排帧
+      expect(MemoMarkdown.parseCount, 2, reason: '不再有后续事件也要补上最后一版');
+    });
+
     testWidgets('非流式文本不变时命中缓存,不重排', (tester) async {
       await tester.pumpWidget(host('hello', false));
       expect(MemoMarkdown.parseCount, 1);

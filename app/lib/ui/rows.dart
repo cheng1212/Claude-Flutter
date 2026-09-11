@@ -279,6 +279,7 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
   String? _built;
   Widget? _cached;
   int _lastBuildAtMs = 0;
+  Timer? _tailFlush;
   static const _throttleMs = 200;
 
   @override
@@ -288,15 +289,33 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
     if (widget.streaming &&
         _built != null &&
         MemoMarkdown.nowMs() - _lastBuildAtMs < _throttleMs) {
-      return; // 节流窗口内沿用旧缓存,下一批 delta 到达时再重排
+      // 节流窗口内沿用旧缓存。尾沿补刷:若跳过的这版是最后一版(之后不再有
+      // delta),没有这个定时器预览会停在旧内容直到下一个事件才追上。
+      _tailFlush?.cancel();
+      _tailFlush = Timer(const Duration(milliseconds: _throttleMs), () {
+        if (!mounted || _built == widget.text) return;
+        setState(() {
+          _built = null;
+          _cached = null;
+        });
+      });
+      return;
     }
+    _tailFlush?.cancel();
     _built = null;
     _cached = null;
   }
 
   @override
+  void dispose() {
+    _tailFlush?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (_cached != null) return _cached!;
+    _tailFlush?.cancel(); // 已重排,尾沿补刷不再需要
     _built = widget.text;
     _lastBuildAtMs = MemoMarkdown.nowMs();
     MemoMarkdown.parseCount++;
