@@ -91,9 +91,9 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 18),
                 const Text('zCode 终端',
                     style: TextStyle(
-                        fontSize: 22,
+                        fontSize: 40,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: 1.2)),
+                        letterSpacing: -1.5)),
                 const SizedBox(height: 5),
                 Text('连上你电脑上的 Claude Code',
                     style: TextStyle(fontSize: 12.5, color: ZT.inkSoft)),
