@@ -26,6 +26,8 @@ Widget buildChatRow(ChatRow row) {
 Widget chatImageThumb(String uri, {double size = 64}) => chatImageBox(uri, size, size);
 
 /// 指定尺寸的图片盒子(data URI 解码,坏图给占位图标)。
+/// cacheWidth 让解码器把原图降采样到 2 倍显示宽再进纹理:1280px 拍照直接
+/// 原样解进 GPU 是缩略图的十几倍内存。全屏查看器不用这个,缩放要全分辨率。
 Widget chatImageBox(String uri, double width, double height) {
   final Uint8List? bytes = _tryDecodeDataUri(uri);
   if (bytes == null) {
@@ -42,7 +44,8 @@ Widget chatImageBox(String uri, double width, double height) {
       height: height,
       fit: BoxFit.cover,
       gaplessPlayback: true,
-      filterQuality: FilterQuality.low);
+      filterQuality: FilterQuality.low,
+      cacheWidth: (width * 2).round());
 }
 
 /// 全屏图片查看器:左右滑动翻看该消息的全部图片,双指缩放,页码角标,点关闭退出。
@@ -196,15 +199,33 @@ class _UserImageCard extends StatelessWidget {
   }
 }
 
+/// data URI → 字节解码缓存:同一张图随滚动/重建被反复 build,base64 解码是
+/// 纯 CPU 活,主线程每帧来一遍必掉帧。FIFO 上限 64,最旧的先淘汰。
+final Map<String, Uint8List> _imgDecodeCache = <String, Uint8List>{};
+const int kMaxDecodeCache = 64;
+
 Uint8List? _tryDecodeDataUri(String uri) {
+  final hit = _imgDecodeCache[uri];
+  if (hit != null) return hit;
   final match = RegExp(r'^data:image/[^;]+;base64,(.+)$').firstMatch(uri);
   if (match == null) return null;
+  final Uint8List bytes;
   try {
-    return base64Decode(match.group(1)!);
+    bytes = base64Decode(match.group(1)!);
   } on FormatException {
     return null;
   }
+  _imgDecodeCache[uri] = bytes;
+  while (_imgDecodeCache.length > kMaxDecodeCache) {
+    _imgDecodeCache.remove(_imgDecodeCache.keys.first);
+  }
+  return bytes;
 }
+
+/// 测试钩子:私有解码入口/缓存量/清缓存(debug 前缀,生产不调用)。
+Uint8List? debugDecodeDataUri(String uri) => _tryDecodeDataUri(uri);
+int debugImageCacheSize() => _imgDecodeCache.length;
+void debugClearImageCache() => _imgDecodeCache.clear();
 
 // ------------------------------------------------------------- memoized md
 

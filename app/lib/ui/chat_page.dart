@@ -2,7 +2,9 @@
 // 布局参考 zremote chat_page(quick chips/选项弹层/计划弹层/SendOrStop),状态走 ZApp。
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +20,22 @@ import 'tasks_sheet.dart';
 import 'toast.dart';
 import '../ws.dart';
 import 'rows.dart';
+
+/// 单张图片字节上限:超过的整张跳过(data URI 要进 WS 消息体)。
+const int kMaxImageBytes = 5 * 1024 * 1024;
+
+/// isolate 任务: picked 图片路径 → data URI 列表。必须是顶层函数(compute 要求);
+/// 读文件+base64 是纯 CPU 活,主线程做会在编码瞬间掉帧。超限单张跳过。
+List<String> _encodeImagesJob(List<String> paths) {
+  final uris = <String>[];
+  for (final path in paths) {
+    final bytes = File(path).readAsBytesSync();
+    if (bytes.lengthInBytes > kMaxImageBytes) continue;
+    final mime = lookupMimeType(path) ?? 'image/jpeg';
+    uris.add('data:$mime;base64,${base64Encode(bytes)}');
+  }
+  return uris;
+}
 
 class ChatPage extends StatefulWidget {
   final ZApp app;
@@ -185,24 +203,20 @@ class _ChatPageState extends State<ChatPage> {
   /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
   Future<void> _pickImage() async {
     const maxImages = 4;
-    const maxBytes = 5 * 1024 * 1024;
     final remaining = maxImages - _pendingImages.value.length;
     if (remaining <= 0) {
       if (mounted) showToast(context, '一次最多 $maxImages 张');
       return;
     }
     try {
-      final picked = await _picker.pickMultiImage(maxWidth: 2048, imageQuality: 85);
+      // 拾取即压缩到 1280px/80:base64 要进 WS 消息体,原图又大又没必要
+      final picked =
+          await _picker.pickMultiImage(maxWidth: 1280, maxHeight: 1280, imageQuality: 80);
       if (picked.isEmpty) return;
-      final uris = <String>[];
-      for (final p in picked) {
-        final bytes = await p.readAsBytes();
-        if (bytes.lengthInBytes > maxBytes) continue; // 超限的单张跳过
-        final mime = lookupMimeType(p.path) ?? 'image/jpeg';
-        uris.add('data:$mime;base64,${base64Encode(bytes)}');
-      }
+      // 读字节+base64 丢 isolate:几张几 MB 的图在主线程编码会掉帧
+      final uris = await compute(_encodeImagesJob, [for (final p in picked) p.path]);
       if (uris.isEmpty) {
-        if (mounted) showToast(context, '图片超过 ${maxBytes ~/ (1024 * 1024)}MB,换个小的');
+        if (mounted) showToast(context, '图片超过 ${kMaxImageBytes ~/ (1024 * 1024)}MB,换个小的');
         return;
       }
       final next = [..._pendingImages.value, ...uris];
