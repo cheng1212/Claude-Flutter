@@ -657,7 +657,7 @@ class _ChatPageState extends State<ChatPage> {
           const Divider(height: 1),
           Expanded(child: _list()),
           if (chat.pendingPermission != null)
-            _PermissionCard(
+            PermissionCard(
               req: chat.pendingPermission!,
               onAnswer: (allow, message, updatedInput, [rememberTool = false]) {
                 HapticFeedback.lightImpact();
@@ -1437,20 +1437,22 @@ class _OptionRow extends StatelessWidget {
 }
 
 /// 权限请求卡:显示工具与输入,允许/拒绝(可附留言);非交互工具另给「本会话总是允许」。
-// AskUserQuestion 走结构化渲染:问题 + 选项 chips,选中后整包回传 updatedInput。
-class _PermissionCard extends StatefulWidget {
+/// AskUserQuestion 是「模型问用户」,不是「用户授权模型」——同一骨架但语义分流:
+/// 标题去工具名、选项 description 常显、单选圆多选方、按钮「跳过」。
+/// 公开为 PermissionCard 以便单测覆盖两种语义分支。
+class PermissionCard extends StatefulWidget {
   final PermissionReq req;
 
   /// rememberTool = 用户勾了「本会话总是允许」:server 端记名,同工具后续免弹。
   final void Function(bool allow, String message, Map<String, dynamic>? updatedInput, [bool rememberTool]) onAnswer;
 
-  const _PermissionCard({required this.req, required this.onAnswer});
+  const PermissionCard({super.key, required this.req, required this.onAnswer});
 
   @override
-  State<_PermissionCard> createState() => _PermissionCardState();
+  State<PermissionCard> createState() => _PermissionCardState();
 }
 
-class _PermissionCardState extends State<_PermissionCard> {
+class _PermissionCardState extends State<PermissionCard> {
   final _message = TextEditingController();
   String? _pretty;
   // AskUserQuestion 的选择:问题文本 → 已选 option label 集合
@@ -1506,33 +1508,58 @@ class _PermissionCardState extends State<_PermissionCard> {
 
   List<Widget> _questionWidgets(Map<String, dynamic> q) {
     final question = '${q['question'] ?? ''}';
+    final header = '${q['header'] ?? ''}'.trim();
     final options = (q['options'] as List?) ?? const [];
     final multi = q['multiSelect'] == true;
     final picked = _picked.putIfAbsent(question, () => <String>{});
     return [
       Padding(
-        padding: const EdgeInsets.only(top: 7),
-        child: Text(question, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+        padding: const EdgeInsets.only(top: 9),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (header.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(right: 7, top: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: ZT.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(header,
+                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+            ),
+          Expanded(
+            child: Text(question,
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, height: 1.35)),
+          ),
+          // 单选/多选必须一眼可辨:否则用户点第二个静默清掉第一个,会当成 bug。
+          Padding(
+            padding: const EdgeInsets.only(left: 6, top: 1),
+            child: Text(multi ? '可多选' : '单选',
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: ZT.inkFaint)),
+          ),
+        ]),
       ),
+      // 选项整行可点:label 一行,description 直接铺在下行常显。
+      // 原来把 description 塞 tooltip —— 手机没有 hover,等于没给用户看。
       Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
+        child: Column(
           children: [
             for (final o in options)
               if (o is Map)
-                FilterChip(
-                  label: Text('${o['label'] ?? ''}', style: const TextStyle(fontSize: 12)),
-                  tooltip: '${o['description'] ?? ''}',
+                _askOption(
+                  label: '${o['label'] ?? ''}',
+                  description: '${o['description'] ?? ''}'.trim(),
                   selected: picked.contains('${o['label'] ?? ''}'),
-                  onSelected: (sel) => setState(() {
+                  multi: multi,
+                  onTap: () => setState(() {
+                    final label = '${o['label'] ?? ''}';
                     if (multi) {
-                      sel ? picked.add('${o['label'] ?? ''}') : picked.remove('${o['label'] ?? ''}');
+                      picked.contains(label) ? picked.remove(label) : picked.add(label);
                     } else {
                       picked
                         ..clear()
-                        ..add('${o['label'] ?? ''}');
+                        ..add(label);
                     }
                   }),
                 ),
@@ -1542,25 +1569,116 @@ class _PermissionCardState extends State<_PermissionCard> {
     ];
   }
 
+  /// 单个选项:左侧单选圆点 / 多选方框,右侧 label + description。
+  Widget _askOption({
+    required String label,
+    required String description,
+    required bool selected,
+    required bool multi,
+    required VoidCallback onTap,
+  }) {
+    final accent = ZT.primary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Material(
+        color: selected ? accent.withValues(alpha: 0.10) : ZT.surfaceHi,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(9),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(
+                width: selected ? 1.6 : 1.0,
+                color: selected ? accent : ZT.line,
+              ),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: _marker(selected: selected, multi: multi, accent: accent),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.3,
+                          fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                          color: ZT.ink)),
+                  if (description.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(description,
+                          style: TextStyle(fontSize: 11.5, height: 1.35, color: ZT.inkSoft)),
+                    ),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 单选=圆形(选中实心点),多选=方形(选中打勾)。形状本身就是语义。
+  Widget _marker({required bool selected, required bool multi, required Color accent}) {
+    if (multi) {
+      return Container(
+        width: 16,
+        height: 16,
+        decoration: BoxDecoration(
+          color: selected ? accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(width: 1.4, color: selected ? accent : ZT.inkFaint),
+        ),
+        child: selected ? Icon(Icons.check_rounded, size: 12, color: ZT.onInk) : null,
+      );
+    }
+    return Container(
+      width: 16,
+      height: 16,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(width: 1.4, color: selected ? accent : ZT.inkFaint),
+      ),
+      alignment: Alignment.center,
+      child: selected
+          ? Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: accent))
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final questions = _questions;
+    final isAsk = _isAsk && questions.isNotEmpty;
     return Container(
       decoration: BoxDecoration(
         color: ZT.surface,
-        border: Border(top: BorderSide(width: 1.4, color: ZT.lemon)),
+        // 问询卡用主色(是"问你话"),审批卡用琥珀(是"要你授权") —— 颜色分流语义。
+        border: Border(top: BorderSide(width: 1.4, color: isAsk ? ZT.primary : ZT.lemon)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
-          Icon(Icons.verified_user_rounded, size: 15, color: ZT.lemon),
+          Icon(isAsk ? Icons.help_outline_rounded : Icons.verified_user_rounded,
+              size: 15, color: isAsk ? ZT.primary : ZT.lemon),
           const SizedBox(width: 7),
           Expanded(
-            child: Text('权限请求 · ${widget.req.toolName}',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+            child: isAsk
+                // 问询卡是「模型在问你」,标题就是它要问的事 —— 别再把内部工具名
+                // AskUserQuestion 摆在标题位,那不是用户需要知道的信息。
+                ? Text(questions.length > 1 ? '需要你确认 ${questions.length} 个问题' : '需要你确认',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))
+                : Text('权限请求 · ${widget.req.toolName}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
           ),
         ]),
-        if (_isAsk && questions.isNotEmpty)
+        if (isAsk)
           for (final q in questions) ..._questionWidgets(q)
         else ...[
           if (_prettyInput.isNotEmpty)
@@ -1589,16 +1707,25 @@ class _PermissionCardState extends State<_PermissionCard> {
           padding: const EdgeInsets.only(top: 9),
           child: Row(children: [
             Expanded(
-              child: BigButton(
-                label: '拒绝',
-                color: ZT.rose,
-                textColor: Colors.white,
-                onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
-              ),
+              child: isAsk
+                  // 问询卡上是「模型问你」,不是「申请授权」。原「拒绝」语义错位
+                  // (像在批权限);改成「跳过」——它是"这题我不答",而非否决。
+                  ? BigButton(
+                      label: '跳过',
+                      color: ZT.surfaceHi,
+                      textColor: ZT.inkSoft,
+                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                    )
+                  : BigButton(
+                      label: '拒绝',
+                      color: ZT.rose,
+                      textColor: Colors.white,
+                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                    ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: _isAsk && questions.isNotEmpty
+              child: isAsk
                   ? BigButton(
                       label: _askReady ? '提交回答' : '请先选择',
                       onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
@@ -1611,7 +1738,7 @@ class _PermissionCardState extends State<_PermissionCard> {
           ]),
         ),
         // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
-        if (!_isAsk)
+        if (!isAsk)
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: SizedBox(
