@@ -243,6 +243,8 @@ describe('ws gateway', () => {
 
     ws.send(JSON.stringify({ type: 'chat.permission-response', sessionId: s.id, requestId: 'r1', allow: true }));
     await waitFor(() => calls.some((c) => c.startsWith('perm:')));
+    // 多端同步广播:应答端会先收到 permission_resolved(无 seq 瞬态),多端卡片同步的数据源
+    expect(await next()).toMatchObject({ kind: 'permission_resolved', requestId: 'r1' });
     ws.send(JSON.stringify({ type: 'chat.abort', sessionId: s.id }));
     await waitFor(() => calls.includes('abort'));
     expect(await next()).toMatchObject({ kind: 'complete', exitCode: 1 }); // finally 兜底
