@@ -11,7 +11,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
 import '../panel_utils.dart';
-import '../scroll_utils.dart';
 import '../session_utils.dart';
 import '../state/reducer.dart';
 import '../state/zapp.dart';
@@ -54,10 +53,7 @@ class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
   final ImagePicker _picker = ImagePicker();
-  final ScrollController _listCtrl = ScrollController(); // 流式锁位/回到底部(见 _queueScrollCompensation)
-  final GlobalKey _streamKey = GlobalKey(); // 量流式区渲染高度
-  double? _lastStreamH; // 上一帧流式区高度;null = 尚未量过,不补偿
-  bool _scrollFixQueued = false; // 同一帧只排一次补偿
+  final ScrollController _listCtrl = ScrollController(); // 「回到底部」药丸
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
   String _searchQuery = '';
@@ -747,6 +743,15 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
           ],
+          if (chat.rows.isEmpty && !app.historyLoading && !_searching && !chat.running)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Center(
+                child: Text('发第一条消息,开始这个会话',
+                    style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+              ),
+            ),
+          if (!_searching && _showStreamingPanel) _streamingArea()!,
           if (!_searching && chat.pendingPermission != null)
             PermissionCard(
               req: chat.pendingPermission!,
@@ -889,20 +894,19 @@ class _ChatPageState extends State<ChatPage> {
   /// reversed 列表:index 0 = 最新,贴着输入框。
   Widget _list() {
     final rows = chat.rows;
-    // itemCount = 1(流式区) + rows + 1(计划面板) + 1(会话头/加载)
+    // itemCount = rows + 1(计划面板) + 1(会话头/加载);流式区已移出列表成为独立面板
+    // (reverse 列表锚点钉底,流式区在列表内长高会把历史内容顶走=「滚来滚去」的根因)
     final plan = derivePlanSteps(rows);
-    final planIdx = rows.length + 1;
-    final headIdx = rows.length + 2;
-    _queueScrollCompensation();
+    final planIdx = rows.length;
+    final headIdx = rows.length + 1;
 
     return ListView.builder(
       reverse: true,
       controller: _listCtrl,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-      itemCount: rows.length + 3,
+      itemCount: rows.length + 2,
       itemBuilder: (context, i) {
-        if (i == 0) return KeyedSubtree(key: _streamKey, child: _streamingArea());
-        if (i <= rows.length) return buildChatRow(rows[rows.length - i]);
+        if (i < rows.length) return buildChatRow(rows[rows.length - 1 - i]);
         if (i == planIdx) {
           return plan == null
               ? const SizedBox.shrink()
@@ -1035,54 +1039,22 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 流式锁位(混合方案):reverse 列表锚点钉在底部,流式区每长高 δ,其上历史内容
-  /// 整体上移 δ——停在原地读的用户会被缓缓拽向底部。此处在帧末量流式区高度,
-  /// 用户已离开底部时把滚动位置补偿同样 δ,锁住视觉位置。
-  /// 三个不让补偿添乱的例外:①用户正在拖拽/滑行(isScrolling)——补偿跳转会打断
-  /// 手势、杀惯性,只刷新基准,松手静止后恢复锁位;②历史重建中(高度剧变不是流式
-  /// 增量);③流式区被列表惰性回收量不到——基准作废,防回滚重入时误发大额跳转。
-  /// 底部 60px 容差内不干预保持跟随;离开底部时「回到底部」药丸见 body 的 Stack。
-  void _queueScrollCompensation() {
-    if (_scrollFixQueued) return;
-    _scrollFixQueued = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollFixQueued = false;
-      if (!_listCtrl.hasClients) return;
-      final ctx = _streamKey.currentContext;
-      final box = ctx?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize) {
-        // 流式区滚出列表缓存量不到:基准作废,重入树那帧只重记不补偿
-        _lastStreamH = null;
-        return;
-      }
-      final h = box.size.height;
-      final prev = _lastStreamH;
-      _lastStreamH = h;
-      if (prev == null) return; // 首帧只记录基准
-      if (app.historyLoading || _listCtrl.position.isScrollingNotifier.value) {
-        return; // 本轮增量不补偿,基准已刷新,静止后自动恢复锁位
-      }
-      final target = compensateStreamScroll(prevH: prev, currH: h, offset: _listCtrl.offset);
-      if (target != null) {
-        _listCtrl.jumpTo(target.clamp(0.0, _listCtrl.position.maxScrollExtent));
-      }
-    });
+  /// 是否显示流式面板:有流式内容,或已发送且全部工具已收尾(静默骨架行)。
+  bool get _showStreamingPanel {
+    final hasStream =
+        (chat.streamingText?.isNotEmpty ?? false) ||
+        (chat.streamingThinking?.isNotEmpty ?? false);
+    if (hasStream || chat.pendingPermission != null) return true;
+    return chat.running;
   }
 
-  Widget _streamingArea() {
+  /// 流式面板(独立于消息列表):只在有内容或骨架行时占位,返回 null = 不显示。
+  /// 列表里不再放流式区——reverse 列表锚点钉底,流式区在列表内长高会把历史
+  /// 内容顶走(「滚来滚去」根因);搬出来后长高吃自己的固定空间,列表纹丝不动。
+  Widget? _streamingArea() {
     final thinking = chat.streamingThinking;
     final text = chat.streamingText;
     if ((thinking == null || thinking.isEmpty) && (text == null || text.isEmpty)) {
-      // 新会话空态:一条消息都没有且没在跑,给一句引导而不是整页空白
-      if (chat.rows.isEmpty && !app.historyLoading && !chat.running) {
-        return Padding(
-          padding: const EdgeInsets.only(top: 26),
-          child: Center(
-            child: Text('发第一条消息,开始这个会话',
-                style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
-          ),
-        );
-      }
       // 静默期骨架行:已送达、模型还没开口的那段真空期。只在回合真的在跑时出现——
       // 空闲会话进窗口、回复已完成(turn_complete 后流式区清空)都不得显示,
       // 否则就是"一进来就计时/回完话还在计时"。等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊。
