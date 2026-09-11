@@ -270,3 +270,48 @@ describe('REST · 复制会话(fork)', () => {
     expect(missing.statusCode).toBe(404);
   });
 });
+
+describe('export + usage 路由(审计补层:此前无直测)', () => {
+  it('GET /api/sessions/:id/export 导出 markdown 含标题/模型/消息体;不存在 404', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const s = createSession(db, { title: '导出测试', cwd: 'C:/work/demo' });
+    appendMessage(db, s.id, { kind: 'text', role: 'user', content: '你好,帮我看看' });
+    appendMessage(db, s.id, { kind: 'text', role: 'assistant', content: '好的,结论是 **42**' });
+    appendMessage(db, s.id, { kind: 'tool_use', content: '{"cmd":"ls"}', meta: { toolName: 'Bash', toolId: 't1' } });
+
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${s.id}/export`, headers: H });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { filename: string; markdown: string };
+    expect(body.filename).toContain('导出测试');
+    expect(body.markdown).toContain('# 导出测试');
+    expect(body.markdown).toContain('C:/work/demo');
+    expect(body.markdown).toContain('你好,帮我看看');
+    expect(body.markdown).toContain('**42**');
+
+    const missing = await app.inject({ method: 'GET', url: '/api/sessions/nope/export', headers: H });
+    expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('GET /api/usage 与 /api/sessions/:id/usage 返回聚合形状', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const s = createSession(db, { title: '用量' });
+    const r = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, r.id, { status: 'success', usage: { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 300, cacheCreationInputTokens: 0, numTurns: 2, totalCostUsd: 0.01, durationMs: 1000 } });
+
+    const global = await app.inject({ method: 'GET', url: '/api/usage?range=30d', headers: H });
+    expect(global.statusCode).toBe(200);
+    const g = global.json() as { range: string; summary: { totalTokens: number; totalSessions: number }; models: unknown[]; daily: unknown[] };
+    expect(g.range).toBe('30d');
+    expect(g.summary.totalSessions).toBe(1);
+    expect(g.summary.totalTokens).toBe(450); // 100+300+0+50
+    expect(g.models.length).toBe(1);
+
+    const per = await app.inject({ method: 'GET', url: `/api/sessions/${s.id}/usage`, headers: H });
+    expect(per.statusCode).toBe(200);
+    expect((per.json() as { runs: number }).runs).toBe(1);
+    await app.close();
+  });
+});
