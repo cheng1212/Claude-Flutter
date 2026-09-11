@@ -440,6 +440,15 @@ class _UsagePageState extends State<UsagePage> {
   Widget _modelsCard(UsageStatsView view) {
     final slice = aggregateSlice(_sliceDaily(view));
     final models = _filteredModels(view, slice);
+    // 明细行颜色与堆叠柱同源:按图表系列色取色(前 4 名循环色,其余灰),
+    // 原写法 _seriesColors([单个]) 恒返回 palette[0],全部行同色且与图表对不上
+    final chart = buildUsageTrendChart(_sliceDaily(view));
+    final chartColors = _seriesColors(chart.modelIds);
+    Color seriesColor(String modelId) {
+      final i = chart.modelIds.indexOf(modelId);
+      return i >= 0 ? chartColors[i] : ZT.inkSoft;
+    }
+
     return HardCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -454,7 +463,7 @@ class _UsagePageState extends State<UsagePage> {
           Text('该范围内没有用量', style: TextStyle(fontSize: 12, color: ZT.inkFaint))
         else
           for (var i = 0; i < models.length; i++) ...[
-            _modelRow(models[i], _seriesColors([models[i].modelId])[0]),
+            _modelRow(models[i], seriesColor(models[i].modelId)),
             if (i != models.length - 1) const SizedBox(height: 12),
           ],
       ]),
