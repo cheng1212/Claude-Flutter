@@ -10,6 +10,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../state/reducer.dart';
 import '../theme.dart';
 
+
 /// 统一入口:按行类型分发。
 Widget buildChatRow(ChatRow row) {
   return switch (row) {
@@ -338,25 +339,28 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
       // 表格/引用保持细线。信息密度优先:同 1000 字占用高度明显下降。
       styleSheet: MarkdownStyleSheet(
         p: widget.baseStyle ??
-            TextStyle(fontSize: 13.5, height: 1.55, color: ZT.ink),
+            TextStyle(
+                fontSize: AgentText.bodySize,
+                height: AgentText.bodyHeight,
+                color: ZT.ink),
         h1: TextStyle(
-            fontSize: 17,
+            fontSize: AgentText.heading1Size,
             fontWeight: FontWeight.w700,
-            height: 1.3,
+            height: AgentText.headingHeight,
             color: ZT.ink),
-        h1Padding: const EdgeInsets.only(top: 12, bottom: 4),
+        h1Padding: EdgeInsets.only(top: AgentSpace.lg, bottom: AgentSpace.xs),
         h2: TextStyle(
-            fontSize: 15.5,
+            fontSize: AgentText.heading2Size,
             fontWeight: FontWeight.w700,
-            height: 1.3,
+            height: AgentText.headingHeight,
             color: ZT.ink),
-        h2Padding: const EdgeInsets.only(top: 10, bottom: 3),
+        h2Padding: EdgeInsets.only(top: 10, bottom: 3),
         h3: TextStyle(
-            fontSize: 14.5,
+            fontSize: AgentText.heading3Size,
             fontWeight: FontWeight.w600,
-            height: 1.3,
+            height: AgentText.headingHeight,
             color: ZT.ink),
-        h3Padding: const EdgeInsets.only(top: 8, bottom: 2),
+        h3Padding: EdgeInsets.only(top: AgentSpace.sm, bottom: 2),
         strong: const TextStyle(fontWeight: FontWeight.w600),
         em: const TextStyle(fontStyle: FontStyle.italic),
         code: TextStyle(
@@ -376,7 +380,10 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
           color: ZT.surface,
         ),
         blockquotePadding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
-        listBullet: TextStyle(fontSize: 13.5, height: 1.5, color: ZT.ink),
+        listBullet: TextStyle(
+            fontSize: AgentText.bodySize,
+            height: AgentText.bodyHeight,
+            color: ZT.ink),
         listIndent: 14,
         tableBorder: TableBorder.all(width: 1, color: ZT.line),
         tableHead: TextStyle(
@@ -782,6 +789,26 @@ class ToolCallCard extends StatefulWidget {
   State<ToolCallCard> createState() => _ToolCallCardState();
 }
 
+/// 工具名 → 操作类型图标(Activity Row:读/改/写/搜/跑/任务一眼可扫)。
+IconData _activityIcon(String toolName) {
+  final n = toolName.toLowerCase();
+  if (n.contains('read') || n == 'view') return Icons.description_outlined;
+  if (n.contains('edit') || n.contains('multiedit') || n.contains('patch')) {
+    return Icons.edit_outlined;
+  }
+  if (n.contains('write') || n.contains('create') || n.contains('notebook')) {
+    return Icons.note_add_outlined;
+  }
+  if (n.contains('glob') || n.contains('grep') || n.contains('search')) {
+    return Icons.search_rounded;
+  }
+  if (n.contains('bash') || n.contains('shell')) return Icons.terminal_rounded;
+  if (n.contains('task') || n.contains('agent')) return Icons.hub_outlined;
+  if (n.contains('webfetch') || n.contains('websearch')) return Icons.language_rounded;
+  if (n.contains('cron')) return Icons.schedule_rounded;
+  return Icons.build_outlined;
+}
+
 class _ToolCallCardState extends State<ToolCallCard> {
   bool _open = false;
 
@@ -822,13 +849,11 @@ class _ToolCallCardState extends State<ToolCallCard> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: ZT.primary),
                     )
+                  else if (failed)
+                    Icon(Icons.close_rounded, size: 13, color: ZT.rose)
                   else
-                    Icon(
-                      failed ? Icons.close_rounded : Icons.check_rounded,
-                      size: 13,
-                      color: accent,
-                      weight: 3,
-                    ),
+                    Icon(_activityIcon(widget.row.toolName),
+                        size: 13, color: ZT.aqua),
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(

@@ -698,3 +698,28 @@ Widget sheetHandle() {
     Divider(height: 1, thickness: 1.2, color: ZT.primary.withValues(alpha: 0.2)),
   ]);
 }
+
+/// ---------------------------------------------------------------- Agent 输出渲染设计令牌
+///
+/// Agent 消息渲染(MemoMarkdown/AssistantBlock/UserBubble/工具卡)统一引用本组,
+/// 调整信息密度只改这里——禁止在渲染层散落魔法数。
+/// 语义分层:结论 > 标题 > 正文 > 代码 > 工具活动(视觉重量递减)。
+abstract final class AgentText {
+  static const double bodySize = 13.5;
+  static const double bodyHeight = 1.55;
+  static const double heading1Size = 17;
+  static const double heading2Size = 15.5;
+  static const double heading3Size = 14.5;
+  static const double headingHeight = 1.3;
+  static const double codeSize = 12;
+  static const double codeHeight = 1.55;
+  static const double smallSize = 9.5;
+}
+
+/// Agent 渲染间距令牌:4/8/12/16,禁 32+ 随机空白。
+abstract final class AgentSpace {
+  static const double xs = 4;
+  static const double sm = 8;
+  static const double md = 12;
+  static const double lg = 16;
+}
