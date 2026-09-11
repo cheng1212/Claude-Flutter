@@ -458,19 +458,17 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
     );
     if (ok != true || !mounted) return;
-    var failed = 0;
-    for (final id in ids) {
-      try {
-        await app.deleteSession(id);
-      } on Object {
-        failed++;
-      }
+    try {
+      await app.deleteSessions(ids);
+    } on Object catch (e) {
+      if (mounted) showToast(context, '批量删除失败: $e');
+      return;
     }
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _picked.clear());
     });
-    showToast(context, failed == 0 ? '已删除 ${ids.length} 个会话' : '$failed 个失败,其余已删除');
+    showToast(context, '已删除 ${ids.length} 个会话');
   }
 
   /// 批量操作条:置顶/归档的目标态按已选项推断,全空时按钮禁用。
