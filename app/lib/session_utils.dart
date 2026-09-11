@@ -3,6 +3,10 @@
 /// 筛选维度(对应参考稿 chips:全部/置顶/归档/项目)。
 enum SessionFilter { all, pinned, archived, project }
 
+/// 「未分类」哨兵:项目 tab 点未分类卡片时作为 project 传入,
+/// filterSessions 据此只保留没有项目归属的会话(AppBar 显示为「未分类」)。
+const String kUncategorizedProject = '__uncategorized__';
+
 /// 兼容读取:服务端 snake_case / 部分客户端 camelCase。
 dynamic fieldOf(Map<String, dynamic> s, List<String> keys) {
   for (final k in keys) {
@@ -82,7 +86,11 @@ List<Map<String, dynamic>> filterSessions(
         if (!archived) return false;
       case SessionFilter.project:
         if (archived) return false;
-        if (project != null && '${s['project'] ?? ''}' != project) return false;
+        if (project == kUncategorizedProject) {
+          if ('${s['project'] ?? ''}'.isNotEmpty) return false; // 未分类 = 无项目归属
+        } else if (project != null && '${s['project'] ?? ''}' != project) {
+          return false;
+        }
     }
     return matchQuery(s);
   }).toList();
