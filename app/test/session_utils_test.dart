@@ -112,6 +112,20 @@ void main() {
     });
   });
 
+  group('filterSessions 未分类哨兵', () {
+    test('kUncategorizedProject 只保留无项目归属的未归档会话', () {
+      final rows = [
+        {'id': 'a', 'project': '商城'},
+        {'id': 'b', 'project': ''},
+        {'id': 'c'},
+        {'id': 'd', 'project': '', 'archived': 1},
+      ];
+      final out = filterSessions(rows,
+          filter: SessionFilter.project, project: kUncategorizedProject);
+      expect(out.map((s) => s['id']), ['b']);
+    });
+  });
+
   group('joinProjectCwd', () {
     test('按服务器路径分隔符拼项目 cwd', () {
       expect(joinProjectCwd('C:\\Users\\x\\zcode-projects', '商城'), 'C:\\Users\\x\\zcode-projects\\商城');

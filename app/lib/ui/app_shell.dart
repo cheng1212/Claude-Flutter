@@ -2,6 +2,7 @@
 // 项目 tab 点某个项目 → 切到会话 tab 并按该项目过滤(SessionsPage 以 Key 重挂载带初始过滤)。
 import 'package:flutter/material.dart';
 
+import '../session_utils.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'sessions_page.dart';
@@ -111,7 +112,7 @@ class _AppShellState extends State<AppShell> {
             padding: const EdgeInsets.only(bottom: 8),
             child: HardCard(
               onTap: () => setState(() {
-                _projectFilter = null;
+                _projectFilter = kUncategorizedProject; // 未分类 = 只看无项目归属的会话
                 _tab = 0;
               }),
               child: Row(children: [

@@ -340,7 +340,7 @@ class _SessionsPageState extends State<SessionsPage> {
           Icon(_project == null ? Icons.chat_bubble_outline_rounded : Icons.folder_open_rounded,
               size: 16, color: ZT.primary),
           const SizedBox(width: 6),
-          Text(_project ?? '全部会话',
+          Text(_projectTitle,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: ZT.ink)),
           Icon(Icons.arrow_drop_down_rounded, size: 22, color: ZT.inkSoft),
         ]),
@@ -523,6 +523,19 @@ class _SessionsPageState extends State<SessionsPage> {
     );
   }
 
+  /// 项目过滤的显示名:哨兵「未分类」、空 =「全部会话」,其余显示项目名。
+  String get _projectTitle => switch (_project) {
+        kUncategorizedProject => '未分类',
+        null => '全部会话',
+        _ => _project!,
+      };
+
+  String get _projectChipLabel => switch (_project) {
+        kUncategorizedProject => '未分类',
+        null => '项目',
+        _ => _project!,
+      };
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -629,7 +642,7 @@ class _SessionsPageState extends State<SessionsPage> {
               const SizedBox(width: 6),
               _chip('归档', SessionFilter.archived),
               const SizedBox(width: 6),
-              _chip(_project ?? '项目', SessionFilter.project),
+              _chip(_projectChipLabel, SessionFilter.project),
               const SizedBox(width: 6),
               InkWell(
                 borderRadius: BorderRadius.circular(999),
