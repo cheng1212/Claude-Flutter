@@ -5,14 +5,14 @@
 
 /// 流式区渲染高度从 [prevH] 变为 [currH](可负=收起)时,应跳到的目标 offset。
 /// [offset] 为当前滚动位置(reverse 列表:距底部锚点的距离,0=底部);
-/// [atBottomPx] 为「视为在底部」的容差:24px ≈ 一行半正文,既容忍布局微抖,
-/// 也保证用户轻微上滑即脱离跟随(审核者建议:阈值依据记入提交说明)。
+/// [atBottomPx] 为「视为在底部」的容差:60px,约三行正文——既容忍布局微抖和
+/// 轻微滚动,也保证用户稍一上滑即脱离跟随(与「回到底部」药丸同一阈值)。
 /// 返回 null = 不动(在底部跟随最新 / 高度无变化)。
 double? compensateStreamScroll({
   required double prevH,
   required double currH,
   required double offset,
-  double atBottomPx = 24,
+  double atBottomPx = 60,
 }) {
   final delta = currH - prevH;
   if (delta == 0) return null;

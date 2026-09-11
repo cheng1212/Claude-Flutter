@@ -33,10 +33,11 @@ class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
   final ImagePicker _picker = ImagePicker();
-  final ScrollController _listCtrl = ScrollController(); // 流式补偿用(见 _compensateScroll)
+  final ScrollController _listCtrl = ScrollController(); // 流式锁位/回到底部(见 _queueScrollCompensation)
   final GlobalKey _streamKey = GlobalKey(); // 量流式区渲染高度
   double? _lastStreamH; // 上一帧流式区高度;null = 尚未量过,不补偿
   bool _scrollFixQueued = false; // 同一帧只排一次补偿
+  bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
   List<PlanStep>? _stickyPlan; // 计划弹层的粘性缓存:工具行被翻篇也不闪没
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
@@ -655,7 +656,45 @@ class _ChatPageState extends State<ChatPage> {
           if (app.socket.state == ZSocketState.reconnecting) _reconnectStrip(),
           if (app.error != null) _errorStrip(),
           const Divider(height: 1),
-          Expanded(child: _list()),
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (n) {
+                if (!_listCtrl.hasClients) return false;
+                final away = _listCtrl.offset > 60;
+                if (away != _listAway) setState(() => _listAway = away);
+                return false;
+              },
+              child: Stack(children: [
+                _list(),
+                if (_listAway)
+                  Positioned(
+                    right: 16,
+                    bottom: 12,
+                    child: Material(
+                      color: ZT.surface,
+                      borderRadius: BorderRadius.circular(99),
+                      elevation: 3,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(99),
+                        onTap: () => _listCtrl.animateTo(0,
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeOutCubic),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.arrow_downward_rounded, size: 14, color: ZT.primaryDeep),
+                            const SizedBox(width: 4),
+                            Text('回到底部',
+                                style: TextStyle(
+                                    fontSize: 12, fontWeight: FontWeight.w700, color: ZT.primaryDeep)),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
           if (chat.pendingPermission != null)
             PermissionCard(
               req: chat.pendingPermission!,
@@ -835,27 +874,33 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 流式下拉的解药:reverse 列表锚点钉在底部,流式区每长高 δ,其上历史内容整体
-  /// 上移 δ 而视口不动,用户停在上面会被持续拽向底部。此处在每帧布局完成后量流式区
-  /// 高度,用户不在底部时把滚动位置补偿同样 δ,锁住视觉位置;在底部(容差内)不干预,
-  /// 保持跟随最新的原生体验。补偿判定见 scroll_utils.dart(纯函数,有单测)。
+  /// 流式锁位(混合方案):reverse 列表锚点钉在底部,流式区每长高 δ,其上历史内容
+  /// 整体上移 δ——停在原地读的用户会被缓缓拽向底部。此处在帧末量流式区高度,
+  /// 用户已离开底部时把滚动位置补偿同样 δ,锁住视觉位置。
+  /// 三个不让补偿添乱的例外:①用户正在拖拽/滑行(isScrolling)——补偿跳转会打断
+  /// 手势、杀惯性,只刷新基准,松手静止后恢复锁位;②历史重建中(高度剧变不是流式
+  /// 增量);③流式区被列表惰性回收量不到——基准作废,防回滚重入时误发大额跳转。
+  /// 底部 60px 容差内不干预保持跟随;离开底部时「回到底部」药丸见 body 的 Stack。
   void _queueScrollCompensation() {
     if (_scrollFixQueued) return;
     _scrollFixQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollFixQueued = false;
+      if (!_listCtrl.hasClients) return;
       final ctx = _streamKey.currentContext;
       final box = ctx?.findRenderObject();
       if (box is! RenderBox || !box.hasSize) {
-        // 流式区被列表惰性回收(滚出缓存)时量不到:基准作废,重入树那帧只重记
-        // 基准不补偿,否则累积的流式增量会在用户回滚时误触发一次大额下拉
+        // 流式区滚出列表缓存量不到:基准作废,重入树那帧只重记不补偿
         _lastStreamH = null;
         return;
       }
       final h = box.size.height;
       final prev = _lastStreamH;
       _lastStreamH = h;
-      if (prev == null || !_listCtrl.hasClients) return; // 首帧只记录基准
+      if (prev == null) return; // 首帧只记录基准
+      if (app.historyLoading || _listCtrl.position.isScrollingNotifier.value) {
+        return; // 本轮增量不补偿,基准已刷新,静止后自动恢复锁位
+      }
       final target = compensateStreamScroll(prevH: prev, currH: h, offset: _listCtrl.offset);
       if (target != null) {
         _listCtrl.jumpTo(target.clamp(0.0, _listCtrl.position.maxScrollExtent));

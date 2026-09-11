@@ -23,9 +23,13 @@ void main() {
       );
     });
 
-    test('在底部容差内(≤24px):跟随最新,不补偿', () {
+    test('在底部容差内(≤60px):跟随最新,不补偿', () {
       expect(compensateStreamScroll(prevH: 100, currH: 140, offset: 0), isNull);
-      expect(compensateStreamScroll(prevH: 100, currH: 140, offset: 24), isNull);
+      expect(compensateStreamScroll(prevH: 100, currH: 140, offset: 60), isNull);
+    });
+
+    test('刚超出容差(61px):立即锁位', () {
+      expect(compensateStreamScroll(prevH: 100, currH: 140, offset: 61), 101);
     });
 
     test('高度无变化:不动', () {
@@ -34,7 +38,7 @@ void main() {
 
     test('补偿目标为负(收起幅度超过当前 offset):钳到 0', () {
       expect(
-        compensateStreamScroll(prevH: 100, currH: 20, offset: 50),
+        compensateStreamScroll(prevH: 100, currH: 20, offset: 80),
         0,
       );
     });
