@@ -1073,6 +1073,16 @@ class _ChatPageState extends State<ChatPage> {
     final thinking = chat.streamingThinking;
     final text = chat.streamingText;
     if ((thinking == null || thinking.isEmpty) && (text == null || text.isEmpty)) {
+      // 新会话空态:一条消息都没有且没在跑,给一句引导而不是整页空白
+      if (chat.rows.isEmpty && !app.historyLoading && !chat.running) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 26),
+          child: Center(
+            child: Text('发第一条消息,开始这个会话',
+                style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
+          ),
+        );
+      }
       // 静默期骨架行:已送达、模型还没开口的那段真空期。只在回合真的在跑时出现——
       // 空闲会话进窗口、回复已完成(turn_complete 后流式区清空)都不得显示,
       // 否则就是"一进来就计时/回完话还在计时"。等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊。

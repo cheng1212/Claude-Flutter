@@ -30,6 +30,9 @@ class ZApp extends ChangeNotifier {
   List<String> models = const [];
   List<Map<String, dynamic>> modelGroups = const [];
   List<Map<String, dynamic>> sessions = const [];
+
+  /// 首次会话列表拉取完成(成败皆置):页面据此区分「加载中」与「真空空如也」
+  bool sessionsLoaded = false;
   String? currentSessionId;
   ChatState chat = const ChatState();
   bool historyLoading = false;
@@ -194,6 +197,8 @@ class ZApp extends ChangeNotifier {
     } on Object catch (e) {
       // 后台自动刷新(定时/事件驱动)失败保持静默:一次 REST 抖动不该在聊天页顶上弹错误条
       if (!silent) error = '$e';
+    } finally {
+      sessionsLoaded = true;
     }
   }
 
@@ -480,17 +485,20 @@ class ZApp extends ChangeNotifier {
   // ---- 用量总览(/api/usage) ----
   Map<String, dynamic>? usageStats; // 原始快照,页面经 parseUsageStats 解析
   bool usageStatsLoading = false;
+  bool usageStatsError = false; // 拉取失败(区别于「暂无数据」的真空态)
   String usageStatsRange = '7d';
 
   /// 拉全局用量;失败置 null(页面空态),下次刷新再试。
   Future<void> loadUsageStats({String range = '7d'}) async {
     usageStatsLoading = true;
+    usageStatsError = false;
     usageStatsRange = range;
     notifyListeners();
     try {
       usageStats = await _api.usageStats(range);
     } on Object {
       usageStats = null;
+      usageStatsError = true;
     }
     usageStatsLoading = false;
     notifyListeners();
