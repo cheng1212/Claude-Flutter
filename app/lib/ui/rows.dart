@@ -332,34 +332,60 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
       selectable: true,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
-      // 正文/标题用 sans 比例字体(阅读友好),mono 只属于代码块与行内 code
+      // 紧凑开发者风(用户规格 2026-09-12):正文 13.5/h1.55 w400 sans;
+      // 标题降级(17/15.5,w600,h1.3,上下距收紧)——**加粗**降为 w600 而非 bold;
+      // 行内 code 中性化(轻墨底+墨字,去掉刺眼橙字);bullet 缩进收窄;
+      // 表格/引用保持细线。信息密度优先:同 1000 字占用高度明显下降。
       styleSheet: MarkdownStyleSheet(
         p: widget.baseStyle ??
-            TextStyle(fontSize: 14, height: 1.5, color: ZT.ink),
-        h1: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: ZT.ink),
-        h2: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: ZT.ink),
-        h3: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: ZT.ink),
+            TextStyle(fontSize: 13.5, height: 1.55, color: ZT.ink),
+        h1: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            height: 1.3,
+            color: ZT.ink),
+        h1Padding: const EdgeInsets.only(top: 12, bottom: 4),
+        h2: TextStyle(
+            fontSize: 15.5,
+            fontWeight: FontWeight.w700,
+            height: 1.3,
+            color: ZT.ink),
+        h2Padding: const EdgeInsets.only(top: 10, bottom: 3),
+        h3: TextStyle(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w600,
+            height: 1.3,
+            color: ZT.ink),
+        h3Padding: const EdgeInsets.only(top: 8, bottom: 2),
+        strong: const TextStyle(fontWeight: FontWeight.w600),
+        em: const TextStyle(fontStyle: FontStyle.italic),
         code: TextStyle(
-          fontSize: 12.5,
+          fontSize: 12,
           fontFamily: ZT.mono,
-          backgroundColor: ZT.bg,
-          color: ZT.primaryDeep,
+          backgroundColor: ZT.ink.withValues(alpha: 0.06),
+          color: ZT.ink,
         ),
         codeblockDecoration: BoxDecoration(
-          color: ZT.bg,
-          borderRadius: BorderRadius.circular(ZT.radius),
-          border: Border.all(width: 1.2, color: ZT.edge),
+          color: ZT.ink,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(width: 1.4, color: ZT.ink),
         ),
         codeblockPadding: const EdgeInsets.all(10),
         blockquoteDecoration: BoxDecoration(
-          border: Border(left: BorderSide(width: 3, color: ZT.primary)),
+          border: Border(left: BorderSide(width: 2, color: ZT.primary)),
           color: ZT.surface,
         ),
         blockquotePadding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
-        listBullet: TextStyle(
-            fontSize: 14, height: 1.5, color: ZT.ink, fontFamily: ZT.mono),
+        listBullet: TextStyle(fontSize: 13.5, height: 1.5, color: ZT.ink),
+        listIndent: 14,
         tableBorder: TableBorder.all(width: 1, color: ZT.line),
-        a: TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w700),
+        tableHead: TextStyle(
+            fontSize: 12.5, fontWeight: FontWeight.w600, color: ZT.ink),
+        tableBody: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink),
+        a: TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w600),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(top: BorderSide(width: 1, color: ZT.line)),
+        ),
       ),
     );
     return _cached!;
