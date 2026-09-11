@@ -40,6 +40,8 @@ class _SessionsPageState extends State<SessionsPage> {
   String? _project; // 项目 chip 选中时生效
   String _sort = _kSortUpdated;
   bool _reloadTick = false; // 刷新按钮转圈
+  bool _picking = false; // 批量管理模式
+  final Set<String> _picked = <String>{};
 
   /// session_id → 最早的下次触发时间(ISO):卡片 ⏰ 胶囊数据源,秒级 ticker 刷新。
   Map<String, String> _cronNext = {};
@@ -318,6 +320,211 @@ class _SessionsPageState extends State<SessionsPage> {
     return '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
   }
 
+  // ---------------------------------------------------------------- 批量管理
+
+  AppBar _normalAppBar() {
+    return AppBar(
+      leading: Builder(
+        builder: (ctx) => IconButton(
+          tooltip: '菜单',
+          icon: const Icon(Icons.menu_rounded, size: 22),
+          onPressed: () => Scaffold.of(ctx).openDrawer(),
+        ),
+      ),
+      // 标题去胶囊:裸图标+文字+下拉箭头(胶囊壳与贴纸主题的圆角硬阴影语言
+      // 不符,且占掉一半标题宽度);点击仍进项目切换
+      title: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _pickProject,
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(_project == null ? Icons.chat_bubble_outline_rounded : Icons.folder_open_rounded,
+              size: 16, color: ZT.primary),
+          const SizedBox(width: 6),
+          Text(_project ?? '全部会话',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: ZT.ink)),
+          Icon(Icons.arrow_drop_down_rounded, size: 22, color: ZT.inkSoft),
+        ]),
+      ),
+      actions: [
+        IconButton(
+          tooltip: '批量管理',
+          icon: const Icon(Icons.checklist_rounded, size: 21),
+          onPressed: () => _enterPicking(),
+        ),
+        IconButton(
+          tooltip: '刷新',
+          icon: _reloadTick
+              ? const SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.refresh_rounded, size: 21),
+          onPressed: () async {
+            setState(() => _reloadTick = true);
+            await app.refreshSessions();
+            await _loadCrons();
+            if (mounted) setState(() => _reloadTick = false);
+          },
+        ),
+        IconButton(
+          tooltip: '设置',
+          onPressed: _openSettings,
+          icon: const Icon(Icons.settings_outlined, size: 20),
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+
+  AppBar _pickingAppBar() {
+    final all = _visibleSessions();
+    final allPicked = all.isNotEmpty && _picked.length >= all.length;
+    return AppBar(
+      leading: IconButton(
+        tooltip: '退出批量管理',
+        icon: const Icon(Icons.close_rounded, size: 22),
+        onPressed: _exitPicking,
+      ),
+      title: Text('已选 ${_picked.length} / ${all.length}',
+          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900, color: ZT.ink)),
+      actions: [
+        IconButton(
+          tooltip: allPicked ? '取消全选' : '全选',
+          icon: Icon(allPicked ? Icons.deselect_rounded : Icons.select_all_rounded, size: 21),
+          onPressed: _pickAll,
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+
+  void _enterPicking([String? firstId]) {
+    setState(() {
+      _picking = true;
+      if (firstId != null) _picked.add(firstId);
+    });
+  }
+
+  void _exitPicking() => setState(() {
+        _picking = false;
+        _picked.clear();
+      });
+
+  void _togglePick(String id) => setState(() {
+        if (!_picked.remove(id)) _picked.add(id);
+      });
+
+  void _pickAll() => setState(() {
+        final all = _visibleSessions().map((s) => '${s['id']}').toSet();
+        if (all.isNotEmpty && _picked.containsAll(all)) {
+          _picked.clear();
+        } else {
+          _picked
+            ..clear()
+            ..addAll(all);
+        }
+      });
+
+  /// 批量置顶/归档:目标态按已选项推断(全已置顶=取消置顶,否则置顶;归档同理)。
+  Future<void> _batchPatch({bool? isPinned, bool? archived}) async {
+    final ids = _picked.toList();
+    var failed = 0;
+    for (final id in ids) {
+      try {
+        await app.patchSession(id, isPinned: isPinned, archived: archived);
+      } on Object {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _picked.clear());
+    });
+    showToast(context, failed == 0 ? '已更新 ${ids.length} 个会话' : '$failed 个失败,其余已更新');
+  }
+
+  Future<void> _batchDelete() async {
+    final ids = _picked.toList();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZT.surface,
+        title: Text('删除 ${ids.length} 个会话', style: const TextStyle(fontSize: 16)),
+        content: Text('将连同全部聊天记录删除,不可恢复。',
+            style: TextStyle(fontSize: 13.5, color: ZT.inkSoft)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('删除', style: TextStyle(color: ZT.rose))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    var failed = 0;
+    for (final id in ids) {
+      try {
+        await app.deleteSession(id);
+      } on Object {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _picked.clear());
+    });
+    showToast(context, failed == 0 ? '已删除 ${ids.length} 个会话' : '$failed 个失败,其余已删除');
+  }
+
+  /// 批量操作条:置顶/归档的目标态按已选项推断,全空时按钮禁用。
+  Widget _batchBar() {
+    final pickedRows =
+        app.sessions.where((s) => _picked.contains('${s['id']}')).toList();
+    bool flagOf(Map<String, dynamic> s, String key) =>
+        (s[key] ?? 0) == 1 || s[key] == true;
+    final allPinned = pickedRows.isNotEmpty && pickedRows.every((s) => flagOf(s, 'is_pinned'));
+    final allArchived = pickedRows.isNotEmpty && pickedRows.every((s) => flagOf(s, 'archived'));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      child: Row(children: [
+        _batchBtn(allPinned ? '取消置顶' : '置顶', Icons.push_pin_rounded,
+            () => _batchPatch(isPinned: !allPinned)),
+        const SizedBox(width: 8),
+        _batchBtn(allArchived ? '取消归档' : '归档', Icons.archive_outlined,
+            () => _batchPatch(archived: !allArchived)),
+        const SizedBox(width: 8),
+        _batchBtn('删除', Icons.delete_outline_rounded, _batchDelete, danger: true),
+      ]),
+    );
+  }
+
+  Widget _batchBtn(String label, IconData icon, VoidCallback onTap, {bool danger = false}) {
+    final enabled = _picked.isNotEmpty;
+    return Expanded(
+      child: Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          onTap: enabled ? onTap : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: ShapeDecoration(
+              color: ZT.surface,
+              shape: StadiumBorder(
+                  side: ZT.inkSide(w: 1.2, color: danger ? ZT.rose : ZT.edge)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon, size: 15, color: danger ? ZT.rose : ZT.inkSoft),
+              const SizedBox(width: 5),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: danger ? ZT.rose : ZT.ink)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -325,54 +532,7 @@ class _SessionsPageState extends State<SessionsPage> {
     final sessions = _visibleSessions();
     return Scaffold(
       backgroundColor: ZT.bg,
-      appBar: AppBar(
-        leading: Builder(
-          builder: (ctx) => IconButton(
-            tooltip: '菜单',
-            icon: const Icon(Icons.menu_rounded, size: 22),
-            onPressed: () => Scaffold.of(ctx).openDrawer(),
-          ),
-        ),
-        title: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _pickProject,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: ShapeDecoration(
-              color: ZT.surface,
-              shape: StadiumBorder(side: ZT.inkSide(w: 1.2)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(_project == null ? Icons.chat_bubble_outline_rounded : Icons.folder_open_rounded,
-                  size: 15, color: ZT.primary),
-              const SizedBox(width: 6),
-              Text(_project ?? '全部会话',
-                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900, color: ZT.ink)),
-              Icon(Icons.arrow_drop_down_rounded, size: 20, color: ZT.inkSoft),
-            ]),
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            icon: _reloadTick
-                ? const SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.refresh_rounded, size: 21),
-            onPressed: () async {
-              setState(() => _reloadTick = true);
-              await app.refreshSessions();
-              await _loadCrons();
-              if (mounted) setState(() => _reloadTick = false);
-            },
-          ),
-          IconButton(
-            tooltip: '设置',
-            onPressed: _openSettings,
-            icon: const Icon(Icons.settings_outlined, size: 20),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
+      appBar: _picking ? _pickingAppBar() : _normalAppBar(),
       drawer: Drawer(
         backgroundColor: ZT.surface,
         shape: RoundedRectangleBorder(
@@ -436,6 +596,8 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
       body: Column(children: [
         if (!app.linked) _linkStrip(),
+        // 批量管理模式:搜索/筛选让位给批量操作条(不再额外包 ZDotBg,AppShell 已有)
+        if (_picking) _batchBar() else ...[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
           child: TextField(
@@ -460,43 +622,41 @@ class _SessionsPageState extends State<SessionsPage> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Row(children: [
-            // zremote 同款结构:Expanded(Wrap) 强制筛选钮靠左,排序钮独行居右
-            Expanded(
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  _chip('全部', SessionFilter.all),
-                  _chip('置顶', SessionFilter.pinned),
-                  _chip('归档', SessionFilter.archived),
-                  // 排序与筛选同排同行(zremote 排序菜单风格不符,改走底部弹层)
-                  InkWell(
-                    borderRadius: BorderRadius.circular(999),
-                    onTap: _showSortSheet,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
-                      decoration: ShapeDecoration(
-                        color: ZT.surface,
-                        shape: StadiumBorder(side: ZT.inkSide(w: _sort != _kSortUpdated ? 1.2 : 1.6)),
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.swap_vert_rounded, size: 14, color: ZT.inkSoft),
-                        const SizedBox(width: 4),
-                        Text('排序',
-                            style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w800,
-                                color: ZT.inkSoft)),
-                      ]),
-                    ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              _chip('全部', SessionFilter.all),
+              const SizedBox(width: 6),
+              _chip('置顶', SessionFilter.pinned),
+              const SizedBox(width: 6),
+              _chip('归档', SessionFilter.archived),
+              const SizedBox(width: 6),
+              _chip(_project ?? '项目', SessionFilter.project),
+              const SizedBox(width: 6),
+              InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: _showSortSheet,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                  decoration: ShapeDecoration(
+                    color: ZT.surface,
+                    shape: StadiumBorder(side: ZT.inkSide(w: _sort != _kSortUpdated ? 1.2 : 1.6)),
                   ),
-                ],
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.swap_vert_rounded, size: 14, color: ZT.inkSoft),
+                    const SizedBox(width: 4),
+                    Text('排序',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800,
+                            color: ZT.inkSoft)),
+                  ]),
+                ),
               ),
-            ),
-          ],
+            ]),
+          ),
         ),
-      ),
+        ],
         Expanded(
           child: RefreshIndicator(
             color: ZT.primary,
@@ -903,6 +1063,8 @@ class _SessionsPageState extends State<SessionsPage> {
 
   Widget _sessionCard(Map<String, dynamic> s) {
     final pinned = (s['is_pinned'] ?? 0) == 1 || s['is_pinned'] == true;
+    final id = '${s['id']}';
+    final checked = _picked.contains(id);
     final badge = statusBadgeOf(s);
     final preview = _previewOf(s);
     final model = '${s['model'] ?? ''}';
@@ -912,12 +1074,19 @@ class _SessionsPageState extends State<SessionsPage> {
     final subagents = (s['subagentCount'] as num?)?.toInt() ?? 0;
 
     return HardCard(
-      color: ZT.surface,
+      color: _picking && checked ? ZT.primary.withValues(alpha: 0.10) : ZT.surface,
       padding: const EdgeInsets.all(12),
       borderWidth: ZT.cardBorderWidth, // cream 无框软卡 / citrus 墨线
-      onTap: () => _openChat(s),
+      onTap: () => _picking ? _togglePick(id) : _openChat(s),
+      // 长按任意卡片进入批量管理并选中它(批量入口的 discoverable 路径)
+      onLongPress: _picking ? null : () => _enterPicking(id),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
+          if (_picking) ...[
+            Icon(checked ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                size: 20, color: checked ? ZT.primary : ZT.inkSoft),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: Text('${s['title'] ?? '未命名会话'}',
                 maxLines: 1,
@@ -928,11 +1097,12 @@ class _SessionsPageState extends State<SessionsPage> {
             const SizedBox(width: 6),
             Icon(Icons.push_pin, size: 13, color: ZT.primary),
           ],
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
-            onPressed: () => _sessionMenu(s),
-          ),
+          if (!_picking)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
+              onPressed: () => _sessionMenu(s),
+            ),
         ]),
         if (preview.isNotEmpty) ...[
           const SizedBox(height: 6),
