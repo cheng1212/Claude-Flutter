@@ -119,6 +119,24 @@ void main() {
     expect(s.running, isFalse);
   });
 
+  test('permission_resolved:同 requestId 收起审批卡,不匹配则保留', () {
+    final withCard = applyEvent(const ChatState(), {
+      'kind': 'permission_request',
+      'requestId': 'req-1',
+      'toolName': 'Bash',
+      'input': {'command': 'ls'},
+    });
+    expect(withCard.pendingPermission?.requestId, 'req-1');
+
+    // 不匹配的 resolved:卡片保留
+    final kept = applyEvent(withCard, {'kind': 'permission_resolved', 'requestId': 'other'});
+    expect(kept.pendingPermission?.requestId, 'req-1');
+
+    // 匹配的 resolved:卡片收起
+    final cleared = applyEvent(withCard, {'kind': 'permission_resolved', 'requestId': 'req-1'});
+    expect(cleared.pendingPermission, isNull);
+  });
+
   test('text 事件按 role 分流:user → UserRow,assistant → TextRow', () {
     var s = const ChatState();
     s = applyEvent(s, ev('text', seq: 1, extra: {'role': 'user', 'content': '我的问题'}));

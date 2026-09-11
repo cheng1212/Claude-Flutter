@@ -232,6 +232,13 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         return _with(s, lastSeq: nextSeq, running: true, rows: rows);
       }
       return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+    case 'permission_resolved':
+      // 多端同步:另一端已应答该审批,本地同 requestId 的卡片收起(不匹配则忽略)
+      final resolvedId = ev['requestId'] as String? ?? '';
+      if (s.pendingPermission?.requestId == resolvedId) {
+        return _with(s, clearPermission: true);
+      }
+      return s;
     case 'permission_request':
       return _with(s, pendingPermission: PermissionReq(
         requestId: ev['requestId'] as String? ?? '',
