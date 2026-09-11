@@ -55,6 +55,14 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
             if (snap.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator(strokeWidth: 2));
             }
+            if (snap.hasError) {
+              // 拉取失败不能和"转录为空"混同:一个是没数据,一个是网络/服务出错
+              return Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('转录拉取失败: ${snap.error}',
+                    style: TextStyle(fontSize: 12.5, color: ZT.rose, height: 1.6)),
+              );
+            }
             final events = snap.data ?? const <Map<String, dynamic>>[];
             if (events.isEmpty) {
               return Padding(
