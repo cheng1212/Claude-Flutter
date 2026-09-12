@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart' show Color;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // 通知判定:哪些 WS 事件值得弹系统通知(仅 App 在后台时)。
 // 纯函数可单测;实际弹出由 lib/notify.dart 的插件封装执行。
 
@@ -8,12 +9,45 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 /// 用户可能在刷抖音干别的——按会话区分标题,不按前台后台裁剪)。
 ///
 /// [extraTitle] 由调用方传入补充信息(如停止原因);null = 不弹。
+/// 通知偏好:总开关(关=不弹任何通知)+提醒方式(声音/震动/静音)。
+/// SharedPreferences 持久化,启动时 load 一次。
+class NotifyPrefs {
+  static bool enabled = true;
+
+  /// 提醒方式:sound(铃声)/vibrate(震动)/silent(静音)
+  static String mode = 'sound';
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    enabled = p.getBool('notify.enabled') ?? true;
+    mode = p.getString('notify.mode') ?? 'sound';
+  }
+
+  static Future<void> save() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('notify.enabled', enabled);
+    await p.setString('notify.mode', mode);
+  }
+
+  static Future<void> setEnabled(bool v) async {
+    enabled = v;
+    await save();
+  }
+
+  static Future<void> setMode(String m) async {
+    mode = m;
+    await save();
+  }
+}
+
 String? notifyDecision({
   required String lifecycleState,
   required String kind, // WS 事件 kind
   required bool forCurrentSession,
   String? extraTitle,
 }) {
+  // 总开关关闭:任何通知都不弹
+  if (!NotifyPrefs.enabled) return null;
   switch (kind) {
     case 'complete':
       // 前台也弹:用户可能在看别的会话/页面,回合落定是关键节点
@@ -62,29 +96,38 @@ class Notify {
   }
 
   static void show(String title, String body, {String? sessionId, bool isError = false}) {
-    if (!_ready) return;
+    if (!_ready || !NotifyPrefs.enabled) return;
     try {
-      // 错误走独立渠道(用户可按渠道关掉某一类,视觉也有区分)
-      final details = isError
-          ? NotificationDetails(
-              android: AndroidNotificationDetails(
-                'zcode_errors',
-                '会话错误',
-                channelDescription: '任务失败 / 执行错误',
-                importance: Importance.high,
-                priority: Priority.high,
-                color: const Color(0xFFE5484D),
-              ),
-            )
-          : const NotificationDetails(
-              android: AndroidNotificationDetails(
-                'zcode_events',
-                '会话事件',
-                channelDescription: '任务完成 / 等待审批',
-                importance: Importance.high,
-                priority: Priority.high,
-              ),
-            );
+      // 提醒方式(用户设置):铃声=默认带声;震动=无声只振;静音=low 无声无振。
+      // Android 渠道一旦创建不可改属性,故按模式分渠道 id。
+      final mode = NotifyPrefs.mode;
+      final suffix = mode == 'sound' ? '' : '_$mode';
+      final importance = mode == 'silent' ? Importance.low : Importance.high;
+      final priority = mode == 'silent' ? Priority.low : Priority.high;
+      final enableVibration = mode == 'vibrate';
+      final playSound = mode != 'silent';
+      final errDetails = NotificationDetails(
+          android: AndroidNotificationDetails(
+        'zcode_errors$suffix',
+        '会话错误',
+        channelDescription: '任务失败 / 执行错误',
+        importance: importance,
+        priority: priority,
+        enableVibration: enableVibration,
+        playSound: playSound,
+        color: const Color(0xFFE5484D),
+      ));
+      final evtDetails = NotificationDetails(
+          android: AndroidNotificationDetails(
+        'zcode_events$suffix',
+        '会话事件',
+        channelDescription: '任务完成 / 等待审批',
+        importance: importance,
+        priority: priority,
+        enableVibration: enableVibration,
+        playSound: playSound,
+      ));
+      final details = isError ? errDetails : evtDetails;
       _plugin.show(
         id: _idSeq++,
         title: title,

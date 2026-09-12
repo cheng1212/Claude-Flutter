@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../notify.dart';
 import '../session_utils.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
@@ -1301,6 +1302,36 @@ class _SessionsPageState extends State<SessionsPage> {
               const SizedBox(height: 14),
               _themeRow(current, (t) => ZThemeController.set(t)),
               const SizedBox(height: 6),
+              Divider(height: 18, thickness: 1, color: ZT.line),
+              Row(children: [
+                Icon(Icons.notifications_outlined, size: 18, color: ZT.lemon),
+                SizedBox(width: 8),
+                Text('通知', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              ]),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('状态变化通知', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                subtitle: Text('完成/出错/等审批 时弹系统通知', style: TextStyle(fontSize: 11.5, color: ZT.inkSoft)),
+                value: NotifyPrefs.enabled,
+                activeThumbColor: ZT.primary,
+                onChanged: (v) async {
+                  await NotifyPrefs.setEnabled(v);
+                  if (context.mounted) setState(() {});
+                },
+              ),
+              if (NotifyPrefs.enabled)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(children: [
+                    Expanded(child: _modeChip('铃声', 'sound')),
+                    const SizedBox(width: 6),
+                    Expanded(child: _modeChip('震动', 'vibrate')),
+                    const SizedBox(width: 6),
+                    Expanded(child: _modeChip('静音', 'silent')),
+                  ]),
+                ),
+              Divider(height: 18, thickness: 1, color: ZT.line),
               _settingsRow('连接状态', link),
               _settingsRow('会话数', '${app.sessions.length}'),
               _settingsRow('模型数', '${app.models.length}'),
@@ -1373,6 +1404,31 @@ class _SessionsPageState extends State<SessionsPage> {
             ),
           ),
       ]),
+    );
+  }
+
+  Widget _modeChip(String label, String mode) {
+    final selected = NotifyPrefs.mode == mode;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () async {
+        await NotifyPrefs.setMode(mode);
+        if (context.mounted) setState(() {});
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        alignment: Alignment.center,
+        decoration: ShapeDecoration(
+          color: selected ? ZT.primary.withValues(alpha: 0.12) : ZT.surface,
+          shape: StadiumBorder(
+              side: BorderSide(width: selected ? 1.5 : 1.2, color: selected ? ZT.primary : ZT.edge)),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected ? ZT.primaryDeep : ZT.inkSoft)),
+      ),
     );
   }
 
