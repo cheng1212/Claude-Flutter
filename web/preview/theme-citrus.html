@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>zCode · 柑橘晨光 · 整页预览</title>
+<style>
+  :root{
+    --k-bg:#FFF6E9; --k-surface:#FFFCF5; --k-surface-hi:#FFF3DE;
+    --k-ink:#241C15; --k-ink-soft:#5C5044; --k-ink-faint:#7A6853;
+    --k-line:#E8DCC8; --k-edge:#241C15; --k-primary:#FF6B1A;
+    --k-primary-deep:#E05500; --k-aqua:#0FB5A3; --k-lemon:#FFC93C;
+    --k-rose:#E5484D; --k-grape:#7C5CFF; --k-on-ink:#FFF6E9;
+    --k-radius:14px; --k-border:1.6px;
+    --k-shadow:4px 4px 0 0 var(--k-ink);
+    --k-f-display:var(--sans); --k-f-body:var(--sans); --k-f-mono:var(--mono);
+    --sans:'Outfit','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:30px 26px 80px;min-height:100vh;
+    background-color:var(--k-bg);background-image:radial-gradient(130% 90% at 0% -20%, rgba(255,107,26,.10), transparent 62%);
+    
+    color:var(--k-ink);font:14px/1.55 var(--k-f-body);
+  }
+  .top{max-width:1260px;margin:0 auto 26px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .back{padding:7px 13px;border:var(--k-border) solid var(--k-edge);border-radius:99px;
+    background:var(--k-surface);color:var(--k-ink-soft);font:700 12px/1 var(--k-f-body);
+    text-decoration:none}
+  .back:hover{color:var(--k-primary);border-color:var(--k-primary)}
+  .ttl{font:800 24px/1.2 var(--k-f-display)}
+  .sub{color:var(--k-ink-soft);font-size:12.5px}
+  .stage{max-width:1260px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);
+    gap:22px;align-items:start}
+  @media(max-width:1080px){.stage{grid-template-columns:1fr}}
+
+  .phone{border:var(--k-border) solid var(--k-edge);border-radius:calc(var(--k-radius) + 14px);
+    background:var(--k-surface);box-shadow:var(--k-shadow);padding:10px}
+  .scr{height:664px;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--k-radius);
+    background-color:var(--k-bg);background-image:radial-gradient(130% 90% at 0% -20%, rgba(255,107,26,.10), transparent 62%);
+    }
+  .bar{display:flex;align-items:center;justify-content:space-between;padding:13px 14px 7px}
+  .bar b{font:900 21px/1 var(--k-f-display);letter-spacing:-.4px}
+  .bar i{color:var(--k-ink-soft);font-style:normal;font-size:16px;letter-spacing:9px}
+  .pad{padding:0 14px}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;padding:10px 14px 4px}
+  .chip{padding:4px 10px;border:1.2px solid var(--k-edge);border-radius:99px;background:var(--k-surface);
+    color:var(--k-ink-soft);font-size:11.5px;font-weight:700}
+  .chip--on{background:var(--k-primary);border-color:var(--k-ink);color:var(--k-on-ink)}
+  .list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:10px 14px 14px}
+  .nav{display:flex;border-top:1px solid var(--k-line);background:var(--k-surface)}
+  .nav span{flex:1;padding:12px 0;text-align:center;color:var(--k-ink-faint);
+    font-size:11.5px;font-weight:700}
+  .nav .on{color:var(--k-primary)}
+
+  .row{padding:11px 12px;background:var(--k-surface);border:var(--k-border) solid var(--k-edge);
+    border-radius:var(--k-radius);box-shadow:var(--k-shadow)}
+  .row__top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .row__title{font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row__meta{display:flex;align-items:center;gap:6px;margin-top:5px;color:var(--k-ink-faint);font-size:10.5px}
+  .row__proj{padding:1px 6px;border:1px solid var(--k-line);border-radius:5px;
+    background:var(--k-surface-hi);color:var(--k-ink-soft);font-weight:700}
+  .row__time{margin-left:auto}
+  .row__preview{margin:7px 0 0;color:var(--k-ink-soft);font-size:11.5px;line-height:1.5;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+  .z-pill{display:inline-flex;align-items:center;gap:5px;flex:none;padding:3px 9px;border-radius:99px;
+    border:1.2px solid currentColor;background:var(--k-surface);font-size:11.5px;font-weight:700;line-height:1}
+  .z-pulse{width:7px;height:7px;border-radius:50%;background:currentColor;
+    border:1px solid color-mix(in srgb,var(--k-ink) 45%,transparent)}
+  .tone-primary{color:var(--k-primary)} .tone-inkSoft{color:var(--k-ink-soft)}
+  .tone-lemon{color:var(--k-lemon)} .tone-rose{color:var(--k-rose)}
+  .z-mono{font-family:var(--k-f-mono)}
+
+  /* 对话页 */
+  .chat{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:11px;padding:12px 14px}
+  .msg{display:flex}
+  .msg--user{justify-content:flex-end}
+  .bub{max-width:88%;padding:9px 12px;border:var(--k-border) solid var(--k-edge);
+    border-radius:var(--k-radius);font-size:12.5px;box-shadow:var(--k-shadow)}
+  .bub--user{background:var(--k-primary);color:var(--k-on-ink)}
+  .bub--asst{background:var(--k-surface);box-shadow:0 2px 12px -8px rgba(0,0,0,.4)}
+  .code{margin:8px 0 0;padding:8px 10px;border-radius:calc(var(--k-radius) - 4px);
+    background:var(--k-surface-hi);border:1px solid var(--k-line);color:var(--k-primary-deep);
+    font:11px/1.6 var(--k-f-mono);overflow-x:auto}
+  .think{margin-top:8px;padding:7px 9px;border-left:3px solid var(--k-grape);
+    border-radius:4px;background:color-mix(in srgb,var(--k-grape) 9%,transparent);
+    color:var(--k-ink-soft);font-size:11px}
+  .think em{display:block;margin-top:3px;font-style:normal;color:var(--k-ink-faint)}
+  .tool{margin-top:8px;border:1px solid var(--k-line);border-radius:calc(var(--k-radius) - 3px);
+    overflow:hidden;background:var(--k-surface-hi)}
+  .tool__head{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:11.5px;
+    border-bottom:1px solid var(--k-line)}
+  .tool__head b{color:var(--k-aqua);font-family:var(--k-f-mono)}
+  .tool__head span{color:var(--k-ink-faint);font-family:var(--k-f-mono);font-size:10.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tool__ok{margin-left:auto;color:var(--k-aqua)}
+  .tool__dot{width:6px;height:6px;border-radius:50%;background:var(--k-aqua);flex:none}
+  .tool__body{padding:7px 9px;font:10.5px/1.6 var(--k-f-mono);color:var(--k-ink-soft);
+    white-space:pre;overflow-x:auto}
+  .bub--perm{border-color:var(--k-lemon);background:color-mix(in srgb,var(--k-lemon) 12%,var(--k-surface))}
+  .perm__head{font-weight:800;color:var(--k-lemon);font-size:12px}
+  .perm__tool{margin-top:5px;font-size:11px;color:var(--k-ink-soft)}
+  .perm__acts{display:flex;gap:8px;margin-top:9px}
+  .perm__allow,.perm__deny{padding:4px 12px;border-radius:99px;font-size:11.5px;font-weight:800}
+  .perm__allow{background:var(--k-primary);color:var(--k-on-ink);border:1.2px solid var(--k-ink)}
+  .perm__deny{border:1.2px solid var(--k-edge);color:var(--k-ink-soft)}
+  .composer{display:flex;gap:8px;align-items:center;padding:10px 14px;
+    border-top:1px solid var(--k-line);background:var(--k-surface)}
+  .composer .inp{flex:1;padding:9px 12px;border:var(--k-border) solid var(--k-edge);
+    border-radius:99px;background:var(--k-bg);color:var(--k-ink-faint);font-size:12px}
+  .composer .send{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+    background:var(--k-primary);color:var(--k-on-ink);border:1.2px solid var(--k-ink);font-size:15px}
+</style>
+</head>
+<body>
+  <div class="top">
+    <a class="back" href="index.html">← 回到选择</a>
+    <span class="ttl">柑橘晨光</span>
+    <span class="sub">移植 app 现役主题:墨线粗框 + 纯墨硬阴影,状态色当贴纸用。</span>
+  </div>
+
+  <div class="stage">
+    <!-- ① 会话列表 -->
+    <div class="phone"><div class="scr">
+      <div class="bar"><b>会话</b><i>⌕ ⋮</i></div>
+      <div class="pad"><div class="z-input" style="padding:9px 12px;border:var(--k-border) solid var(--k-edge);border-radius:var(--k-radius);background:var(--k-surface);color:var(--k-ink-faint);font-size:12.5px">搜索会话标题 / 内容</div></div>
+      <div class="chips">
+        <span class="chip chip--on">全部</span><span class="chip">已置顶</span>
+        <span class="chip">项目</span><span class="chip">已归档</span>
+      </div>
+      <div class="list">
+        <article class="row">
+          <div class="row__top">
+            <span class="row__title">重构 auth 中间件</span>
+            <span class="z-pill tone-primary"><i class="z-pulse"></i>运行中</span>
+          </div>
+          <div class="row__meta">
+            <span class="row__proj">zremote</span>
+            <span class="row__model z-mono">claude-sonnet-4.5</span>
+            <span class="row__time">14:02</span>
+          </div>
+          <p class="row__preview">看一下 server/src/http.ts 的鉴权钩子,顺便把 CORS 收一下</p>
+        </article>
+        <article class="row">
+          <div class="row__top">
+            <span class="row__title">排查图片上传内存暴涨</span>
+            <span class="z-pill tone-inkSoft"><i class="z-pulse"></i>空闲</span>
+          </div>
+          <div class="row__meta">
+            <span class="row__proj">zremote</span>
+            <span class="row__model z-mono">claude-opus-4.1</span>
+            <span class="row__time">昨天</span>
+          </div>
+          <p class="row__preview">1280px 拍照原样解进 GPU 是缩略图的十几倍内存</p>
+        </article>
+        <article class="row">
+          <div class="row__top">
+            <span class="row__title">用量统计图表对不上</span>
+            <span class="z-pill tone-lemon"><i class="z-pulse"></i>待确认</span>
+          </div>
+          <div class="row__meta">
+            <span class="row__proj">billing</span>
+            <span class="row__model z-mono">claude-haiku-4</span>
+            <span class="row__time">昨天</span>
+          </div>
+          <p class="row__preview">需要你确认 7d 窗口是从本地零点算还是 UTC</p>
+        </article>
+        <article class="row">
+          <div class="row__top">
+            <span class="row__title">给会话列表加批量删除</span>
+            <span class="z-pill tone-rose"><i class="z-pulse"></i>异常</span>
+          </div>
+          <div class="row__meta">
+            <span class="row__proj">zremote</span>
+            <span class="row__model z-mono">claude-sonnet-4.5</span>
+            <span class="row__time">9月11日</span>
+          </div>
+          <p class="row__preview">batch-delete 接口 500:ids 为空数组时没短路</p>
+        </article>
+        <article class="row">
+          <div class="row__top">
+            <span class="row__title">写一份部署交接文档</span>
+            <span class="z-pill tone-lemon"><i class="z-pulse"></i>排队中</span>
+          </div>
+          <div class="row__meta">
+            <span class="row__proj">docs</span>
+            <span class="row__model z-mono">claude-opus-4.1</span>
+            <span class="row__time">9月10日</span>
+          </div>
+          <p class="row__preview">把 5190/5191 双端口和令牌生成的步骤都写进去</p>
+        </article></div>
+      <div class="nav"><span class="on">会话</span><span>项目</span><span>我的</span></div>
+    </div></div>
+
+    <!-- ② 对话页 -->
+    <div class="phone"><div class="scr">
+      <div class="bar"><b>重构 auth 中间件</b><i>⋮</i></div>
+      <div class="chat">
+        <div class="msg msg--user"><div class="bub bub--user">把网关的 CORS 也一起改掉,顺手补个测试</div></div>
+        <div class="msg"><div class="bub bub--asst">
+          好,我先读一下现有实现,确认鉴权钩子和 CORS 的注册顺序。
+          <pre class="code">app.addHook('onRequest', async (req, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+});</pre>
+          <div class="think">思考中 · 3s<em>这里要注意 CORS 必须先于鉴权钩子注册,否则 OPTIONS 预检会被拦。</em></div>
+          <div class="tool">
+            <div class="tool__head"><i class="tool__dot"></i><b>Read</b><span>server/src/http.ts</span><span class="tool__ok">✓</span></div>
+            <div class="tool__body">1  import Fastify from 'fastify';
+2  import { registerHttpRoutes } from './http-routes.js';</div>
+          </div>
+        </div></div>
+        <div class="msg"><div class="bub bub--perm">
+          <div class="perm__head">⚠ 需要你确认</div>
+          <div class="perm__tool z-mono">Bash · pnpm test</div>
+          <div class="perm__acts"><span class="perm__allow">允许</span><span class="perm__deny">拒绝</span></div>
+        </div></div></div>
+      <div class="composer">
+        <div class="inp">发消息…</div>
+        <div class="send">↑</div>
+      </div>
+    </div></div>
+
+    <!-- ③ 项目 / 用量 -->
+    <div class="phone"><div class="scr">
+      <div class="bar"><b>项目</b><i>⋮</i></div>
+      <div class="list" style="padding-top:14px">
+        <div class="row" style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--k-primary)">▤</span>
+          <span style="font-size:14.5px;font-weight:700">zremote</span>
+          <span style="margin-left:auto;color:var(--k-ink-faint);font-size:12px">12 个会话</span>
+        </div>
+        <div class="row" style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--k-primary)">▤</span>
+          <span style="font-size:14.5px;font-weight:700">billing</span>
+          <span style="margin-left:auto;color:var(--k-ink-faint);font-size:12px">4 个会话</span>
+        </div>
+        <div class="row" style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--k-primary)">▤</span>
+          <span style="font-size:14.5px;font-weight:700">docs</span>
+          <span style="margin-left:auto;color:var(--k-ink-faint);font-size:12px">2 个会话</span>
+        </div>
+        <div style="margin-top:8px;padding:12px;border:var(--k-border) solid var(--k-edge);border-radius:var(--k-radius);background:var(--k-surface);box-shadow:var(--k-shadow)">
+          <div style="font-size:13px;font-weight:800;margin-bottom:9px">近 7 天用量</div>
+          <div style="display:flex;align-items:flex-end;gap:5px;height:76px">
+            <div style="flex:1;height:38%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div><div style="flex:1;height:62%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div><div style="flex:1;height:44%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div><div style="flex:1;height:88%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div><div style="flex:1;height:71%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div><div style="flex:1;height:96%;border-radius:3px;background:var(--k-primary);opacity:1;border:1px solid var(--k-ink)"></div><div style="flex:1;height:55%;border-radius:3px;background:var(--k-aqua);opacity:0.55;border:1px solid var(--k-ink)"></div>
+          </div>
+          <div style="display:flex;gap:5px;margin-top:6px;color:var(--k-ink-faint);font-size:9.5px">
+            <span style="flex:1;text-align:center">一</span><span style="flex:1;text-align:center">二</span>
+            <span style="flex:1;text-align:center">三</span><span style="flex:1;text-align:center">四</span>
+            <span style="flex:1;text-align:center">五</span><span style="flex:1;text-align:center">六</span>
+            <span style="flex:1;text-align:center">日</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <div style="flex:1;padding:10px;border:var(--k-border) solid var(--k-edge);border-radius:var(--k-radius);background:var(--k-surface);box-shadow:var(--k-shadow)">
+            <div style="color:var(--k-ink-faint);font-size:10.5px">总花费</div>
+            <div style="font:800 19px/1.3 var(--k-f-mono)">$12.48</div>
+          </div>
+          <div style="flex:1;padding:10px;border:var(--k-border) solid var(--k-edge);border-radius:var(--k-radius);background:var(--k-surface);box-shadow:var(--k-shadow)">
+            <div style="color:var(--k-ink-faint);font-size:10.5px">缓存命中</div>
+            <div style="font:800 19px/1.3 var(--k-f-mono)">87%</div>
+          </div>
+        </div>
+      </div>
+      <div class="nav"><span>会话</span><span class="on">项目</span><span>我的</span></div>
+    </div></div>
+  </div>
+</body>
+</html>
