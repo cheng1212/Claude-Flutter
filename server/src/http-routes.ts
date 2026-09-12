@@ -9,6 +9,26 @@ import { readOutputTail } from './backgrounds.js';
 import { listProjects, createProject, renameProject, renameProjectSessions, deleteProjectDir, projectSessionIds } from './projects.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
 
+// Windows 保留设备名(CON/PRN/AUX/NUL/COM1-9/LPT1-9):做文件名会创建失败或行为诡异
+const WIN_RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+
+/** 上传文件名净化:basename 防穿越 → 非法字符/控制字符替换 → 剥尾随点空格(Windows 静默吞)
+ *  → 保留名加前缀 → 超长截断(保扩展名)。净化必须自身完备,不依赖 `${Date.now()}_` 前缀兜底。 */
+export function sanitizeFileName(raw: string): string {
+  let name = path
+    .basename(String(raw ?? ''))
+    .replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_')
+    .replace(/[. ]+$/, '');
+  if (!name) name = 'file';
+  if (WIN_RESERVED_NAME.test(name)) name = `_${name}`;
+  if (name.length > 120) {
+    const dot = name.lastIndexOf('.');
+    const ext = dot > 0 ? name.slice(dot) : '';
+    name = ext.length < 120 ? `${name.slice(0, 120 - ext.length)}${ext}` : name.slice(0, 120);
+  }
+  return name;
+}
+
 export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string }): void {
   // 项目文件夹:总目录下的子文件夹 = 项目;新建会话/移动会话从这里选,也可现场新建
   app.get('/api/projects', async () => {
@@ -179,8 +199,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     if (!session) return reply.code(404).send({ error: '会话不存在' });
 
     const body = (req.body ?? {}) as { fileName?: unknown; dataB64?: unknown };
-    const rawName = String(body.fileName ?? 'file');
-    const safeName = path.basename(rawName).replace(/[\/:*?"<>|]/g, '_') || 'file';
+    const safeName = sanitizeFileName(String(body.fileName ?? 'file'));
     const dataB64 = String(body.dataB64 ?? '');
     if (!dataB64) return reply.code(400).send({ error: '空文件' });
     const buf = Buffer.from(dataB64, 'base64');

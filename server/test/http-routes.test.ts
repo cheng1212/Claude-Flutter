@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/http.js';
-import { openDb, createSession, appendMessage, createRun, finishRun } from '../src/db.js';
+import { openDb, createSession, appendMessage, createRun, finishRun, updateSession } from '../src/db.js';
 
 const H = { authorization: 'Bearer t' };
 
@@ -42,6 +42,31 @@ describe('REST', () => {
 
     const del = await app.inject({ method: 'DELETE', url: `/api/sessions/${id}`, headers: H });
     expect((del.json() as { ok: boolean }).ok).toBe(true);
+    await app.close();
+  });
+
+  it('上传文件名净化:穿越收敛/Windows 保留名/控制字符/尾随点空格/超长保扩展名', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const s = createSession(db, { title: 'up' });
+    updateSession(db, s.id, { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-up-')) });
+    const up = async (fileName: string): Promise<string> => {
+      const res = await app.inject({
+        method: 'POST', url: `/api/sessions/${s.id}/files`, headers: H,
+        payload: { fileName, dataB64: Buffer.from('x').toString('base64') },
+      });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as { fileName: string }).fileName;
+    };
+    expect(await up('a/b/../../evil.txt')).toBe('evil.txt'); // 目录穿越 → basename
+    expect(await up('CON.txt')).toBe('_CON.txt'); // Windows 保留名加前缀
+    expect(await up('com1')).toBe('_com1');
+    expect(await up('报告.txt. . ')).toBe('报告.txt'); // 尾随点/空格提前剥掉
+    expect(await up('bell\u0007name.txt')).toBe('bell_name.txt'); // 控制字符替换
+    expect(await up('..')).toBe('file'); // 剥完为空 → file
+    const long = await up(`${'x'.repeat(200)}.txt`);
+    expect(long.length).toBeLessThanOrEqual(120);
+    expect(long.endsWith('.txt')).toBe(true); // 超长截断仍保扩展名
     await app.close();
   });
 

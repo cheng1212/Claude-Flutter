@@ -166,12 +166,14 @@ class ZApi {
   Future<String> uploadFile(String sessionId, String fileName, List<int> bytes,
       {void Function(double progress)? onProgress}) async {
     // base64 分块编码,边编码边上报进度(编码完 = 发送完,本端点为小文件直传)
+    // 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位;改块长务必保住这一点
     const chunk = 3 * 256 * 1024; // 768KB 原始字节/块
+    assert(chunk % 3 == 0);
     var done = 0;
     final parts = <String>[];
     while (done < bytes.length) {
       final end = min(done + chunk, bytes.length);
-      parts.add(base64Encode(bytes.sublist(done, end)).substring(done % 4 == 0 ? 0 : 0));
+      parts.add(base64Encode(bytes.sublist(done, end)));
       done = end;
       onProgress?.call(done / bytes.length);
     }
