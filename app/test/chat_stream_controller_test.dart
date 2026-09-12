@@ -8,9 +8,9 @@ void main() {
 
   group('ChatStreamController · delta 缓冲与节流', () {
     test('同周期内多个 delta 合并为一次 flush,拼接无损', () {
-      final c = ChatStreamController(interval: Duration.zero, onFlush: (_) {});
       var flushes = 0;
-      c.onFlush = (_) => flushes++;
+      final c = ChatStreamController(
+          interval: Duration.zero, onFlush: (_) => flushes++);
       c.onText('你');
       c.onText('好');
       c.onText('，世界');
@@ -20,24 +20,28 @@ void main() {
       c.dispose();
     });
 
-    test('interval=0:每次 flush 清空缓冲,不丢内容', () {
-      final c = ChatStreamController(interval: Duration.zero, onFlush: (_) {});
+    test('interval=0:每次 flush 都带上累计内容,不丢', () {
       var lastText = '';
-      c.onFlush = (s) => lastText = s.text;
+      final c = ChatStreamController(
+          interval: Duration.zero, onFlush: (s) => lastText = s.text);
       c.onText('a');
       c.onText('b');
       expect(lastText, contains('a'));
+      expect(lastText, contains('b'));
       c.dispose();
     });
 
     test('finish():残余 delta 立即刷出并定稿 active=false', () {
-      final c = ChatStreamController(interval: Duration.zero, onFlush: (_) {});
+      StreamState? last;
+      final c = ChatStreamController(
+          interval: Duration.zero, onFlush: (s) => last = s);
       c.onText('部分内容');
       c.onText('更多');
       c.finish();
       expect(c.state.value.active, isFalse);
       expect(c.state.value.text, contains('部分内容'));
       expect(c.state.value.text, contains('更多'));
+      expect(last?.active, isFalse);
       c.dispose();
     });
 
