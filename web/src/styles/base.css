@@ -1,0 +1,241 @@
+/**
+ * 全局样式 —— 组件一律通过 var(--z-*) 取色,不写死色值。
+ * 所有值由 src/theme/palettes.ts 的 applyPalette() 注入到 :root。
+ */
+
+:root {
+  /* 兜底:未初始化时的柑橘主题色,避免首帧闪白 */
+  --z-bg: #fff6e9;
+  --z-surface: #fffcf5;
+  --z-ink: #241c15;
+  --z-primary: #ff6b1a;
+  --z-radius: 14px;
+  --z-border-w: 1.6px;
+  --z-font-body: 'Outfit', 'PingFang SC', system-ui, sans-serif;
+  --z-font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--z-bg);
+  background-image: var(--z-atmosphere, none);
+  background-size: var(--z-bg-dot-step, 16px) var(--z-bg-dot-step, 16px);
+  color: var(--z-ink);
+  font-family: var(--z-font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 主题切换时的平滑过渡,避免硬闪 */
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+/* 无圆点纹理的主题:atmosphere 若不是 repeating 点阵,步长不影响它 */
+html[data-ztheme='sticker'] body {
+  background-size: var(--z-bg-dot-step) var(--z-bg-dot-step);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--z-font-display);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--z-primary);
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--z-primary);
+  color: var(--z-on-ink);
+}
+
+/* 滚动条:跟随主题,别用系统默认的亮灰 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--z-edge) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--z-edge);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--z-primary);
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------- 基础原语 */
+
+/** 硬卡:对应 theme.dart 的 HardCard(描边 + 主题阴影)。 */
+.z-card {
+  background: var(--z-surface);
+  border: var(--z-card-border-w, var(--z-border-w)) solid var(--z-edge);
+  border-radius: var(--z-radius);
+  box-shadow: var(--z-card-shadow);
+}
+
+/** 药丸徽章,对应 StatusChip 的胶囊形。 */
+.z-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  border: 1.2px solid currentColor;
+  background: var(--z-surface);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/** 大按钮:焦糖填充 + 按压下沉,对应 BigButton。 */
+.z-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 44px;
+  padding: 0 18px;
+  border: var(--z-border-w) solid var(--z-edge);
+  border-radius: var(--z-radius);
+  background: var(--z-primary);
+  color: var(--z-on-ink);
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  box-shadow: var(--z-card-shadow);
+  transition: transform 0.09s ease, box-shadow 0.09s ease, filter 0.15s ease;
+}
+.z-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.z-btn:active:not(:disabled) {
+  transform: translate(2.5px, 2.5px);
+  box-shadow: 0 0 0 0 transparent;
+}
+.z-btn:disabled {
+  background: var(--z-line);
+  color: var(--z-ink-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/** 幽灵按钮(次要动作)。 */
+.z-btn-ghost {
+  background: transparent;
+  color: var(--z-ink-soft);
+  border-color: var(--z-edge);
+  box-shadow: none;
+  font-weight: 600;
+  font-size: 13px;
+}
+.z-btn-ghost:hover:not(:disabled) {
+  color: var(--z-ink);
+  border-color: var(--z-primary);
+}
+
+/** 文本输入,对应 InputDecorationTheme。 */
+.z-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--z-surface);
+  border: var(--z-border-w) solid var(--z-edge);
+  border-radius: var(--z-radius);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.z-input:focus {
+  border-color: var(--z-primary-deep);
+  border-width: 2.2px;
+  padding: 9.65px 11.65px; /* 补回边框增量,避免聚焦时布局跳动 */
+}
+.z-input::placeholder {
+  color: var(--z-ink-faint);
+}
+
+.z-mono {
+  font-family: var(--z-font-mono);
+}
+
+/** 发丝分隔线。 */
+.z-divider {
+  height: 1px;
+  background: var(--z-line);
+  border: 0;
+}
+
+/** 呼吸点,对应 PulseDot。 */
+.z-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--z-ink) 55%, transparent);
+  flex: none;
+  position: relative;
+  overflow: hidden;
+}
+.z-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.35;
+  animation: z-breathe 0.9s ease-in-out infinite alternate;
+}
+@keyframes z-breathe {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 尊重系统的减弱动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
