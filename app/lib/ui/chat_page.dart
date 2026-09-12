@@ -69,46 +69,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
 
-  Future<void> _pickReference() async {
-    // 引用最终要发进当前会话:回合运行中发了会被 RUN_IN_PROGRESS 拒,提前拦截
-    if (chat.running) {
-      _toastRef('当前回合运行中,结束后再引用');
-      return;
-    }
-    final others = app.sessions.where((s) => '${s['id']}' != widget.sessionId).toList();
-    if (others.isEmpty) {
-      _toastRef('没有其他会话可引用');
-      return;
-    }
-    final picked = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        backgroundColor: ZT.surface,
-        title: const Text('引用哪个会话?'),
-        children: [
-          for (final s in others)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, s),
-              child: Text('${s['title'] ?? '未命名'}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13.5)),
-            ),
-        ],
-      ),
-    );
-    if (picked == null || !mounted) return;
-    final fromTitle = '${picked['title'] ?? '会话'}';
-    final out = await app.exportSession('${picked['id']}');
-    if (!mounted) return;
-    if (out == null || out.markdown.trim().isEmpty) {
-      _toastRef('「$fromTitle」没有可引用的内容');
-      return;
-    }
-    final msg = buildReferenceMessage(fromTitle: fromTitle, markdown: out.markdown);
-    app.sendChat(msg);
-    _toastRef('已把「$fromTitle」的上下文发给当前会话');
-  }
-
   void _toastRef(String msg) {
     if (!mounted) return;
     showToast(context, msg);
@@ -744,50 +704,7 @@ class _ChatPageState extends State<ChatPage> {
           const SizedBox(width: 8),
           StatusChip(phase: _phase(), compact: true),
         ]),
-        actions: [
-          // 聊天内搜索:读态模式,结果可复制/引用发送
-          InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: () => setState(() => _searching = true),
-            child: Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: ShapeDecoration(
-                color: ZT.surface,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                  side: ZT.inkSide(w: 1.2),
-                ),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.search_rounded, size: 15, color: ZT.inkSoft),
-                SizedBox(width: 4),
-                Text('搜索', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
-              ]),
-            ),
-          ),
-          // 引用直达:把另一会话的上下文带进来(三个任务面板已合并进底部「任务」)
-          InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: _pickReference,
-            child: Container(
-              margin: const EdgeInsets.only(right: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: ShapeDecoration(
-                color: ZT.surface,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                  side: ZT.inkSide(w: 1.2),
-                ),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.link_rounded, size: 15, color: ZT.inkSoft),
-                SizedBox(width: 4),
-                Text('引用', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.inkSoft)),
-              ]),
-            ),
-          ),
-        ],
+        actions: const [],
       ),
       body: SafeArea(
         child: Column(children: [
