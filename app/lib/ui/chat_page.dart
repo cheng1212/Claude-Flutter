@@ -1390,17 +1390,23 @@ class _ChatPageState extends State<ChatPage> {
             valueListenable: _input,
             builder: (context, value, _) => ValueListenableBuilder<List<String>>(
               valueListenable: _pendingImages,
-              builder: (context, images, _) => _SendOrStop(
+              builder: (context, images, _) => ValueListenableBuilder<
+                  List<({String name, String path})>>(
+                valueListenable: _pendingFiles,
+                builder: (context, files, _) => _SendOrStop(
                 // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
                 canStop: chat.running && app.socket.state == ZSocketState.open,
                 stopping: _stopping && chat.running,
-                hasText: value.text.trim().isNotEmpty || images.isNotEmpty || _pendingFiles.value.isNotEmpty,
+                hasText: value.text.trim().isNotEmpty ||
+                    images.isNotEmpty ||
+                    files.isNotEmpty,
                 onSend: _send,
                 onStop: () {
                   HapticFeedback.mediumImpact();
                   setState(() => _stopping = true); // 乐观反馈:别等 CLI 掐断流才给动静
                   app.abort();
                 },
+                ),
               ),
             ),
           ),
