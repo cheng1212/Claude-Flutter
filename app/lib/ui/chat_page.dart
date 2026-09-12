@@ -69,11 +69,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
 
-  void _toastRef(String msg) {
-    if (!mounted) return;
-    showToast(context, msg);
-  }
-
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
   Future<void> _openTasks() async {
     await showModalBottomSheet(
