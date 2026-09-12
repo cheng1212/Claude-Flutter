@@ -115,6 +115,7 @@ class Notify {
         priority: priority,
         enableVibration: enableVibration,
         playSound: playSound,
+        fullScreenIntent: true,
         color: const Color(0xFFE5484D),
       ));
       final evtDetails = NotificationDetails(
@@ -126,7 +127,9 @@ class Notify {
         priority: priority,
         enableVibration: enableVibration,
         playSound: playSound,
+        fullScreenIntent: true,
       ));
+      // 微信式弹出:高优先级渠道 + fullScreenIntent(息屏/锁屏直接弹横幅)
       final details = isError ? errDetails : evtDetails;
       _plugin.show(
         id: _idSeq++,
