@@ -70,6 +70,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
     final base = p.getString(_kBase);
     final token = p.getString(_kToken);
     unawaited(ZThemeController.load()); // 主题独立加载,不阻塞连接配置
+    unawaited(NotifyPrefs.load()); // 通知开关与提醒方式同上
     if (base != null && base.isNotEmpty && token != null && token.isNotEmpty) {
       _wire(base, token);
     }
