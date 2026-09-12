@@ -930,7 +930,9 @@ class _ToolCallCardState extends State<ToolCallCard> {
                 if (_open) ...[
                   if (input.trim().isNotEmpty) _MonoSection(title: '输入', body: input),
                   if (output.trim().isNotEmpty)
-                    _MonoSection(title: '输出', body: output),
+                    _isDiffTool(row.toolName)
+                        ? _DiffView(body: output)
+                        : _MonoSection(title: '输出', body: output),
                 ],
               ],
             ),
@@ -991,6 +993,80 @@ class _ElapsedTickerState extends State<_ElapsedTicker> {
     return Text('已运行 $text',
         style: TextStyle(
             fontSize: 10.5, fontFamily: ZT.mono, color: ZT.primary));
+  }
+}
+
+/// 是否 diff 类工具(Edit/Write/MultiEdit 的输出是代码修改结果)。
+bool _isDiffTool(String toolName) {
+  final n = toolName.toLowerCase();
+  return n.contains('edit') || n.contains('write') || n.contains('patch');
+}
+
+/// Diff 视图:按行前缀着色(+ 绿 / - 红 / @@ 头蓝),monospace,
+/// 纵向可滚 maxHeight 240,无横向滚(行自动换行保证完整可读)。
+class _DiffView extends StatelessWidget {
+  final String body;
+  const _DiffView({required this.body});
+
+  Color _bgFor(String line) {
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      return ZT.aqua.withValues(alpha: 0.10);
+    }
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      return ZT.rose.withValues(alpha: 0.10);
+    }
+    return Color(0x00000000);
+  }
+
+  Color _fgFor(String line) {
+    if (line.startsWith('+') && !line.startsWith('+++')) return ZT.aqua;
+    if (line.startsWith('-') && !line.startsWith('---')) return ZT.rose;
+    if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) {
+      return ZT.primaryDeep;
+    }
+    return ZT.inkSoft;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = body.split('\n');
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('输出(diff)',
+            style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+                color: ZT.inkFaint)),
+        const SizedBox(height: 3),
+        Container(
+          constraints: const BoxConstraints(maxHeight: 240),
+          decoration: BoxDecoration(
+            color: ZT.bg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          padding: const EdgeInsets.all(6),
+          child: SingleChildScrollView(
+            child: SelectableText.rich(
+              TextSpan(
+                  children: [
+                    for (final line in lines)
+                      TextSpan(
+                          text: '$line
+',
+                          style: TextStyle(
+                              fontSize: 10.5,
+                              height: 1.4,
+                              fontFamily: ZT.mono,
+                              color: _fgFor(line),
+                              backgroundColor: _bgFor(line))),
+                  ]),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 }
 
