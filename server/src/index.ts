@@ -126,7 +126,6 @@ startUpstreamProxy({
 console.log(`[zcode-server] upstream relay proxy on http://127.0.0.1:${config.relayPort}`);
 
 console.log(`[zcode-server] listening on http://0.0.0.0:${config.port}`);
-console.log(`[zcode-server] token: ${config.token}`);
 await app.listen({ port: config.port, host: '0.0.0.0' });
 
 // 本机会话导入在 listen 之后异步跑:不让手机连上来干等(会话多时全量解析要一会儿)。
