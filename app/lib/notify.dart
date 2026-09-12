@@ -4,21 +4,27 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 // 纯函数可单测;实际弹出由 lib/notify.dart 的插件封装执行。
 
 /// App 是否在前台:'resumed' = 前台,其余(background/inactive/hidden/detached)算后台。
+/// 状态变化通知判定(用户 2026-09-12 需求:任何会话完成/报错/停止都弹,
+/// 用户可能在刷抖音干别的——按会话区分标题,不按前台后台裁剪)。
+///
+/// [extraTitle] 由调用方传入补充信息(如停止原因);null = 不弹。
 String? notifyDecision({
   required String lifecycleState,
   required String kind, // WS 事件 kind
   required bool forCurrentSession,
+  String? extraTitle,
 }) {
-  if (lifecycleState == 'resumed') return null; // 前台不看通知
   switch (kind) {
     case 'complete':
-      return forCurrentSession ? '任务完成' : '后台任务完成';
+      // 前台也弹:用户可能在看别的会话/页面,回合落定是关键节点
+      if (forCurrentSession) return '任务完成';
+      return '后台任务完成';
     case 'error':
-      return forCurrentSession ? '会话出错' : null; // 非当前会话的 error 不打扰
+      return forCurrentSession ? '会话出错' : '会话出错(其他会话)';
     case 'permission_request':
       return forCurrentSession ? '等待你的审批' : null;
     default:
-      return null;
+      return extraTitle;
   }
 }
 
