@@ -53,6 +53,7 @@ void main() {
         async.elapse(const Duration(milliseconds: 40));
         c.finish();
         c.onText('第二轮');
+        async.elapse(const Duration(milliseconds: 40)); // flush 后才可见
         expect(c.state.value.active, isTrue);
         expect(c.state.value.text, '第二轮');
         c.dispose();
