@@ -1,5 +1,6 @@
 // zcode-server REST 客户端(Bearer token)。HTTP 实现按平台条件导入。
 import 'dart:convert' show base64Encode;
+import 'dart:math' show min;
 import 'http_default.dart';
 import 'http_fn.dart';
 
@@ -161,10 +162,22 @@ class ZApi {
   }
 
   /// 上传文件到当前会话:bytes 走 base64 JSON 直传(server 解码存 cwd/uploads/)。
-  /// [fileName] 取自调用方(平台相关);返回电脑上的绝对路径;失败抛 ZApiException。
-  Future<String> uploadFile(String sessionId, String fileName, List<int> bytes) async {
+  /// [onProgress] 按已编码比例近似上报(0.0~1.0);返回电脑上的绝对路径。
+  Future<String> uploadFile(String sessionId, String fileName, List<int> bytes,
+      {void Function(double progress)? onProgress}) async {
+    // base64 分块编码,边编码边上报进度(编码完 = 发送完,本端点为小文件直传)
+    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块
+    var done = 0;
+    final parts = <String>[];
+    while (done < bytes.length) {
+      final end = min(done + chunk, bytes.length);
+      parts.add(base64Encode(bytes.sublist(done, end)).substring(done % 4 == 0 ? 0 : 0));
+      done = end;
+      onProgress?.call(done / bytes.length);
+    }
+    final dataB64 = parts.join();
     final res = await _call('POST', '/api/sessions/$sessionId/files',
-        {'fileName': fileName, 'dataB64': base64Encode(bytes)});
+        {'fileName': fileName, 'dataB64': dataB64});
     if (res is Map && res['path'] != null) return '${res['path']}';
     throw ZApiException('上传响应缺少 path');
   }

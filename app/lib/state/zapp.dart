@@ -505,13 +505,29 @@ class ZApp extends ChangeNotifier {
   }
 
   /// 上传文件到当前会话(电脑端 cwd/uploads/),返回 {显示名, 电脑路径}。
+  /// [onProgress] 0.0~1.0(不传则无进度);网络错误自动重试 2 次(0.8s/1.6s 退避)。
   /// 失败抛错(调用方 toast)。
   Future<({String name, String path})> uploadFile(
-      String fileName, List<int> bytes) async {
+      String fileName, List<int> bytes,
+      {void Function(double progress)? onProgress}) async {
     final sid = currentSessionId;
     if (sid == null) throw Exception('未打开会话');
-    final path = await _api.uploadFile(sid, fileName, bytes);
-    return (name: fileName, path: path);
+    var attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        final path = await _api.uploadFile(sid, fileName, bytes,
+            onProgress: onProgress == null
+                ? null
+                : (p) => onProgress(p.clamp(0.0, 1.0)));
+        return (name: fileName, path: path);
+      } on Object catch (e) {
+        final retryable =
+            e.toString().contains('超时') || e.toString().contains('网络');
+        if (!retryable || attempt > 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 800 << (attempt - 1)));
+      }
+    }
   }
 
   /// 项目重命名:文件夹改名 + 其下会话 cwd 迁移;失败抛错(对话框提示)。
