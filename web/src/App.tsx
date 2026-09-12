@@ -1,16 +1,23 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { createDefaultStore, loadCreds } from './lib/store';
 import { useStore } from 'zustand';
 import type { ZStore } from './lib/store';
+import { ZApi } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { ChatPage } from './pages/ChatPage';
+import { UsagePage } from './pages/UsagePage';
 
-/** 视图路由:phase(login/ready)+ currentSessionId(列表/聊天)。 */
+/** 视图路由:phase(login/ready)+ main(列表/聊天)/usage 用量子页。 */
 export function App({ store }: { store: ZStore }) {
   const phase = useStore(store, (s) => s.phase);
   const currentSessionId = useStore(store, (s) => s.currentSessionId);
   const error = useStore(store, (s) => s.error);
+  const [sub, setSub] = useState<'none' | 'usage'>('none');
+  const api = useMemo(() => {
+    const c = loadCreds();
+    return c ? new ZApi(c.baseUrl, c.token) : null;
+  }, []);
 
   if (phase === 'login') {
     const creds = loadCreds();
@@ -28,11 +35,13 @@ export function App({ store }: { store: ZStore }) {
           ⚠ {error} —— 点击关闭
         </button>
       )}
-      {currentSessionId
+      {sub === 'usage' && api ? (
+        <UsagePage api={api} onBack={() => setSub('none')} />
+      ) : currentSessionId
         ? <ChatPage store={store} sessionId={currentSessionId} onBack={() => {
           store.setState({ currentSessionId: null, chat: { rows: [], lastSeq: 0, running: false } });
         }} />
-        : <SessionsPage store={store} onOpen={(id) => { store.setState({ currentSessionId: id }); }} />}
+        : <SessionsPage store={store} onOpen={(id) => { store.setState({ currentSessionId: id }); }} onUsage={() => setSub('usage')} />}
     </div>
   );
 }

@@ -21,6 +21,8 @@ export interface ApiLike {
   deleteSessions(ids: string[]): Promise<{ deleted: number; missing: string[] }>;
   messages(id: string, limit?: number): Promise<{ messages: MessageRow[]; total: number }>;
   sessionUsage(id: string): Promise<unknown>;
+  /** 项目列表(可选:测试假件可不实现)。 */
+  projects?(): Promise<{ root: string; names: string[] }>;
 }
 
 export interface SocketLike {
@@ -66,6 +68,8 @@ export interface ZState {
   baseUrl: string;
   models: string[];
   modelGroups: ModelGroup[];
+  /** 项目总目录 + 子文件夹名(会话页项目过滤数据源)。 */
+  projects: { root: string; names: string[] };
   sessions: SessionRow[];
   currentSessionId: string | null;
   chat: ChatState;
@@ -76,6 +80,7 @@ export interface ZState {
   login(baseUrl: string, token: string): Promise<void>;
   logout(): void;
   refreshSessions(): Promise<void>;
+  loadProjects(): Promise<void>;
   openSession(id: string): Promise<void>;
   createSession(input?: { title?: string; model?: string }): Promise<SessionRow>;
   patchSession(id: string, patch: { title?: string; isPinned?: boolean; model?: string; permissionMode?: string }): Promise<void>;
@@ -144,6 +149,14 @@ export function createZStore(deps: {
       }
     }
 
+    async function loadProjects(): Promise<void> {
+      try {
+        set({ projects: await api.projects?.() ?? { root: '', names: [] } });
+      } catch {
+        /* 项目列表失败不打扰:过滤退化为"全部/未分类" */
+      }
+    }
+
     async function bootstrap(): Promise<void> {
       try {
         await socket.connect();
@@ -184,6 +197,7 @@ export function createZStore(deps: {
       baseUrl: '',
       models: [],
       modelGroups: [],
+      projects: { root: '', names: [] },
       sessions: [],
       currentSessionId: null,
       chat: emptyChat(),
@@ -216,6 +230,10 @@ export function createZStore(deps: {
 
       async refreshSessions() {
         await loadSessions();
+      },
+
+      async loadProjects() {
+        await loadProjects();
       },
 
       async openSession(id) {

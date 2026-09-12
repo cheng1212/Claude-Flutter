@@ -95,4 +95,77 @@ export class ZApi {
       return null;
     }
   }
+
+  /** 项目列表:总目录 + 子文件夹名。 */
+  async projects(): Promise<{ root: string; names: string[] }> {
+    const res = await this.call<{ root: string; projects: { name: string }[] }>('GET', '/api/projects');
+    return { root: res.root ?? '', names: (res.projects ?? []).map((p) => p.name) };
+  }
+
+  /** 会话定时任务(带 next_fire 预估);传 sessionId 只看该会话。 */
+  async crons(sessionId?: string): Promise<Record<string, unknown>[]> {
+    const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : '';
+    const res = await this.call<{ crons: Record<string, unknown>[] }>('GET', `/api/crons${q}`);
+    return res.crons ?? [];
+  }
+
+  async deleteCron(id: string): Promise<void> {
+    await this.call('DELETE', `/api/crons/${encodeURIComponent(id)}`);
+  }
+
+  /** 后台任务(含 outputTail 输出尾)。 */
+  async backgrounds(id: string): Promise<Record<string, unknown>[]> {
+    const res = await this.call<{ backgrounds: Record<string, unknown>[] }>('GET', `/api/sessions/${id}/backgrounds`);
+    return res.backgrounds ?? [];
+  }
+
+  /** 子代理虚拟会话列表(meta)。 */
+  async subagents(id: string): Promise<Record<string, unknown>[]> {
+    const res = await this.call<{ subagents: Record<string, unknown>[] }>('GET', `/api/sessions/${id}/subagents`);
+    return res.subagents ?? [];
+  }
+
+  /** 子代理只读转录。 */
+  async subagentMessages(id: string, agentId: string): Promise<Record<string, unknown>[]> {
+    const res = await this.call<{ messages: Record<string, unknown>[] }>(
+      'GET', `/api/sessions/${id}/subagents/${encodeURIComponent(agentId)}/messages`);
+    return res.messages ?? [];
+  }
+
+  /** 全局用量聚合:?range=7d|30d|all。 */
+  async usageStats(range = '7d'): Promise<Record<string, unknown> | null> {
+    try {
+      return await this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 上传文件到会话(cwd/uploads/):分块 base64 + 进度(0~1)。
+   * 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位。
+   */
+  async uploadFile(
+    sessionId: string, fileName: string, bytes: Uint8Array, onProgress?: (p: number) => void,
+  ): Promise<{ path: string; fileName: string }> {
+    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块,与 app/lib/api.dart 同参
+    let done = 0;
+    let dataB64 = '';
+    while (done < bytes.length) {
+      const end = Math.min(done + chunk, bytes.length);
+      dataB64 += bytesToB64(bytes.subarray(done, end));
+      done = end;
+      onProgress?.(done / bytes.length);
+    }
+    return this.call('POST', `/api/sessions/${sessionId}/files`, { fileName, dataB64 });
+  }
+}
+
+function bytesToB64(bytes: Uint8Array): string {
+  let s = '';
+  const step = 0x8000; // 小片转字符串,避免 fromCharCode 参数爆栈
+  for (let i = 0; i < bytes.length; i += step) {
+    s += String.fromCharCode(...bytes.subarray(i, i + step));
+  }
+  return btoa(s);
 }

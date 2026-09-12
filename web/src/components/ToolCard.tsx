@@ -1,6 +1,24 @@
 import { useEffect, useState } from 'react';
 import type { ToolRow } from '../lib/chatState';
 
+/** 这些工具的输出是补丁/diff 文本:按行前缀着色(对齐 Flutter _DiffView)。 */
+const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+/** diff 行着色:+青 / -玫红 / @@橘 / +++--- 元信息淡化。 */
+function DiffLines({ text }: { text: string }) {
+  return (
+    <>
+      {text.split('\n').map((l, i) => {
+        const cls = l.startsWith('+++') || l.startsWith('---') ? 'diff-meta'
+          : l.startsWith('@@') ? 'diff-hunk'
+          : l.startsWith('+') ? 'diff-add'
+          : l.startsWith('-') ? 'diff-del' : '';
+        return <span key={i} className={`diff-line${cls ? ` ${cls}` : ''}`}>{l}</span>;
+      })}
+    </>
+  );
+}
+
 function prettyInput(input: Record<string, unknown>): string {
   const one = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.prompt;
   if (typeof one === 'string' && one) return one;
@@ -43,7 +61,9 @@ export function ToolCard({ row }: { row: ToolRow }) {
           {row.result?.content && (
             <>
               <div className="toolcard__label">输出</div>
-              <pre className={`toolcard__pre mono${row.result.isError ? ' is-err' : ''}`}>{row.result.content}</pre>
+              <pre className={`toolcard__pre mono${row.result.isError ? ' is-err' : ''}`}>
+                {DIFF_TOOLS.has(row.toolName) ? <DiffLines text={row.result.content} /> : row.result.content}
+              </pre>
             </>
           )}
         </div>

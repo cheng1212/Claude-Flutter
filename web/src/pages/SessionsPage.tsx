@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import type { ZStore } from '../lib/store';
+import type { SessionRow } from '../lib/protocol';
+import { PALETTES, useTheme, setTheme } from '../theme';
 
 function timeLabel(iso: string): string {
   const t = new Date(iso);
@@ -14,13 +16,44 @@ function timeLabel(iso: string): string {
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
 
-/** 会话列表:普通模式点开即聊;管理模式多选批量置顶/删除。 */
-export function SessionsPage({ store, onOpen }: { store: ZStore; onOpen: (id: string) => void }) {
+/** 会话列表:搜索/项目过滤 + 普通模式点开即聊 + 管理模式多选批量置顶/删除。 */
+export function SessionsPage({ store, onOpen, onUsage }: {
+  store: ZStore; onOpen: (id: string) => void; onUsage?: () => void;
+}) {
   const sessions = useStore(store, (s) => s.sessions);
   const wsState = useStore(store, (s) => s.wsState);
+  const projects = useStore(store, (s) => s.projects);
+  const theme = useTheme();
   const [manage, setManage] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [proj, setProj] = useState('');
+
+  useEffect(() => { void store.getState().loadProjects(); }, [store]);
+
+  /** 会话所属项目:cwd 在项目总目录下取首段;不在总目录/无 cwd = 未分类。 */
+  const projectOf = useMemo(() => {
+    const root = projects.root.replace(/[\\/]+$/, '');
+    return (s: SessionRow): string => {
+      if (!root || !s.cwd) return '__none__';
+      const norm = s.cwd.replaceAll('/', '\\').toLowerCase();
+      const normRoot = root.replaceAll('/', '\\').toLowerCase();
+      if (!norm.startsWith(normRoot.toLowerCase() + '\\')) return '__none__';
+      const rest = norm.slice(normRoot.length + 1);
+      const first = rest.split('\\')[0];
+      return projects.names.some((n) => n.toLowerCase() === first) ? first : '__none__';
+    };
+  }, [projects]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sessions.filter((s) => {
+      if (q && !s.title.toLowerCase().includes(q)) return false;
+      if (proj && projectOf(s) !== proj) return false;
+      return true;
+    });
+  }, [sessions, query, proj, projectOf]);
 
   const togglePick = (id: string) => {
     const next = new Set(picked);
@@ -48,6 +81,15 @@ export function SessionsPage({ store, onOpen }: { store: ZStore; onOpen: (id: st
       <header className="sessions__head">
         <h2 className="page-title">会 话</h2>
         <div className="sessions__actions">
+          <select
+            aria-label="主题"
+            className="field__input sessions__theme"
+            value={theme.id}
+            onChange={(e) => setTheme(e.target.value)}
+          >
+            {PALETTES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          <button type="button" className="btn-ghost" onClick={() => onUsage?.()}>用量</button>
           <button type="button" className="btn-gold btn-gold--sm" onClick={() => setCreating(true)}>新建会话</button>
           <button
             type="button"
@@ -59,8 +101,23 @@ export function SessionsPage({ store, onOpen }: { store: ZStore; onOpen: (id: st
         </div>
       </header>
 
+      <div className="sessions__tools">
+        <input
+          aria-label="搜索会话"
+          className="field__input"
+          placeholder="搜索标题…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select aria-label="项目过滤" className="field__input sessions__proj" value={proj} onChange={(e) => setProj(e.target.value)}>
+          <option value="">全部项目</option>
+          <option value="__none__">未分类</option>
+          {projects.names.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+
       <ul className="session-list">
-        {sessions.map((s) => {
+        {visible.map((s) => {
           const id = s.id;
           const pickedRow = picked.has(id);
           return (
@@ -113,6 +170,7 @@ export function SessionsPage({ store, onOpen }: { store: ZStore; onOpen: (id: st
             </li>
           );
         })}
+        {visible.length === 0 && sessions.length > 0 && <li className="session-empty">没有匹配的会话。</li>}
         {sessions.length === 0 && <li className="session-empty">还没有会话,点右上角新建一个。</li>}
       </ul>
 

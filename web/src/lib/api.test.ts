@@ -96,4 +96,25 @@ describe('ZApi · 默认 fetch 绑定(Ilegal invocation 防御)', () => {
       globalThis.fetch = real;
     }
   });
+  test('uploadFile chunks base64 correctly and reports progress', async () => {
+    // 800KB → 768KB + 32KB 两块;3 字节对齐保证拼接 == 整体编码
+    const bytes = Uint8Array.from({ length: 800 * 1024 }, (_, i) => i % 251);
+    const f = okJson({ ok: true, path: 'D:/proj/uploads/a.bin', fileName: 'a.bin' });
+    const api = new ZApi('http://x:5190', 't', f);
+    const seen: number[] = [];
+    const res = await api.uploadFile('s1', 'a.bin', bytes, (p) => seen.push(p));
+    expect(res.path).toBe('D:/proj/uploads/a.bin');
+    const call = (f as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe('http://x:5190/api/sessions/s1/files');
+    const body = JSON.parse(String(call[1].body)) as { fileName: string; dataB64: string };
+    expect(body.fileName).toBe('a.bin');
+    let raw = '';
+    const step = 0x8000;
+    for (let i = 0; i < bytes.length; i += step) {
+      raw += String.fromCharCode(...bytes.subarray(i, i + step));
+    }
+    expect(body.dataB64).toBe(btoa(raw)); // 分块拼接必须与整体编码完全一致
+    expect(seen[0]).toBeGreaterThan(0);
+    expect(seen[seen.length - 1]).toBe(1);
+  });
 });

@@ -1,8 +1,8 @@
 // 纯函数状态归约:WS 事件 → ChatState。语义 1:1 移植 Flutter 版 reducer.dart
 // (seq 去重、乐观行转正、悬空工具卡收尾、RUN_IN_PROGRESS 回滚),UI 只读。
 
-export interface UserRow { kind: 'user'; content: string; pending: boolean }
-export interface TextRow { kind: 'text'; content: string }
+export interface UserRow { kind: 'user'; content: string; pending: boolean; createdAt?: string }
+export interface TextRow { kind: 'text'; content: string; createdAt?: string }
 export interface ThinkingRow { kind: 'thinking'; content: string }
 export interface ToolResult { content: string; isError: boolean }
 export interface ToolRow {
@@ -94,13 +94,13 @@ export function applyEvent(s: ChatState, ev: Record<string, unknown>): ChatState
         const content = String(ev.content ?? '');
         const rows = [...s.rows];
         const idx = rows.findIndex((r) => r.kind === 'user' && r.pending && r.content === content);
-        if (idx >= 0) rows[idx] = { kind: 'user', content, pending: false };
-        else rows.push({ kind: 'user', content, pending: false });
+        if (idx >= 0) rows[idx] = { kind: 'user', content, pending: false, createdAt: (ev.createdAt as string | undefined) ?? (rows[idx] as UserRow).createdAt };
+        else rows.push({ kind: 'user', content, pending: false, createdAt: ev.createdAt as string | undefined });
         return withState(s, { lastSeq: nextSeq, running: true, rows });
       }
       return withState(s, {
         lastSeq: nextSeq, running: true, clearStreamText: true,
-        rows: [...s.rows, { kind: 'text', content: String(ev.content ?? '') }],
+        rows: [...s.rows, { kind: 'text', content: String(ev.content ?? ''), createdAt: ev.createdAt as string | undefined }],
       });
     }
     case 'thinking':
@@ -190,9 +190,9 @@ export function applyReplay(s: ChatState, events: Record<string, unknown>[]): Ch
   return cur;
 }
 
-/** 本地乐观插入用户消息(不占 seq)。 */
+/** 本地乐观插入用户消息(不占 seq);createdAt 记本地时刻,对齐 Flutter 乐观行语义。 */
 export function applyLocalUser(s: ChatState, content: string): ChatState {
-  return withState(s, { running: true, rows: [...s.rows, { kind: 'user', content, pending: true }] });
+  return withState(s, { running: true, rows: [...s.rows, { kind: 'user', content, pending: true, createdAt: new Date().toISOString() }] });
 }
 
 /** 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。 */

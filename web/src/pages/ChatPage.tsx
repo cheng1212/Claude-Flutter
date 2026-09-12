@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from 'zustand';
-import type { ZStore } from '../lib/store';
+import { loadCreds, type ZStore } from '../lib/store';
+import { ZApi } from '../lib/api';
 import { ChatRowView } from '../components/rows';
 import { StreamingArea } from '../components/StreamingArea';
 import { PermissionCard } from '../components/PermissionCard';
 import { PlanPanel } from '../components/PlanPanel';
+import { TasksPanel } from '../components/TasksPanel';
 import { derivePlanSteps } from '../lib/planSteps';
 
 const MODES = [
@@ -24,7 +26,16 @@ export function ChatPage({ store, sessionId, onBack }: {
   const sessions = useStore(store, (s) => s.sessions);
   const modelGroups = useStore(store, (s) => s.modelGroups);
   const [input, setInput] = useState('');
-  const [picker, setPicker] = useState<'none' | 'model' | 'mode'>('none');
+  const [picker, setPicker] = useState<'none' | 'model' | 'mode' | 'tasks'>('none');
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
+  const api = useMemo(() => {
+    const c = loadCreds();
+    return c ? new ZApi(c.baseUrl, c.token) : null;
+  }, []);
 
   const session = sessions.find((s) => s.id === sessionId);
   const model = session?.model ?? 'default';
@@ -45,6 +56,26 @@ export function ChatPage({ store, sessionId, onBack }: {
     if (!input.trim()) return;
     store.getState().sendChat(input);
     setInput('');
+  };
+
+  /** 上传:分块+进度在 api 层;完成后把电脑上的路径追加进输入框,发不发由用户定。 */
+  const handleFiles = async (files: FileList | null) => {
+    if (!files?.length || !api) return;
+    setUploadErr(null);
+    for (const f of files) {
+      try {
+        setUploadPct(0);
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const res = await api.uploadFile(sessionId, f.name, bytes, (p) => setUploadPct(p));
+        setInput((prev) => (prev ? `${prev}\n[附件] ${res.path}` : `[附件] ${res.path}`));
+      } catch (e) {
+        setUploadErr(`上传失败(${f.name}): ${e instanceof Error ? e.message : String(e)}`);
+        break; // 一旦失败就停,避免连环报错
+      } finally {
+        setUploadPct(null);
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
@@ -75,6 +106,14 @@ export function ChatPage({ store, sessionId, onBack }: {
         />
       )}
 
+      {uploadErr && <div className="strip strip--error">{uploadErr}</div>}
+      {uploadPct !== null && (
+        <div className="strip strip--warn">正在上传 {Math.round(uploadPct * 100)}%…</div>
+      )}
+
+      {picker === 'tasks' && api && (
+        <TasksPanel api={api} sessionId={sessionId} onClose={() => setPicker('none')} />
+      )}
       {picker === 'model' && (
         <div className="picker">
           <div className="picker__title">选择模型</div>
@@ -129,6 +168,25 @@ export function ChatPage({ store, sessionId, onBack }: {
             <button type="button" className="chip" onClick={() => setPicker(picker === 'mode' ? 'none' : 'mode')}>
               ⛨ {MODES.find((m) => m.value === mode)?.label ?? mode}
             </button>
+            <button type="button" className="chip" onClick={() => setPicker(picker === 'tasks' ? 'none' : 'tasks')}>
+              ☑ 任务
+            </button>
+            <button
+              type="button"
+              className="chip"
+              disabled={uploadPct !== null}
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploadPct !== null ? `上传 ${Math.round(uploadPct * 100)}%` : '＋ 附件'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              aria-label="选择要上传的文件"
+              onChange={(e) => void handleFiles(e.target.files)}
+            />
           </div>
           {chat.running
             ? <button type="button" className="btn-stop" aria-label="停止" onClick={() => store.getState().abort()}>■ 停止</button>

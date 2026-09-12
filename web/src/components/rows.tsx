@@ -4,16 +4,25 @@ import { useState } from 'react';
 import type { ChatRow, ErrorRow, TextRow, ThinkingRow, UserRow } from '../lib/chatState';
 import { ToolCard } from './ToolCard';
 
+/** 本地时刻 → HH:mm(历史消息无 createdAt 就不显示,与 Flutter 行为一致)。 */
+function hhmm(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** 用户消息:右对齐;pending 半透明 + 发送中。 */
 export function UserBubble({ row }: { row: UserRow }) {
+  const t = hhmm(row.createdAt);
   return (
     <div className={`bubble-user${row.pending ? ' is-pending' : ''}`}>
       <div className="bubble-user__text">{row.content}</div>
-      {row.pending && (
+      {row.pending ? (
         <div className="bubble-user__pending">
           <span className="toolcard__spinner" aria-hidden /> 发送中
         </div>
-      )}
+      ) : t ? <span className="row-time mono">{t}</span> : null}
     </div>
   );
 }
@@ -21,9 +30,11 @@ export function UserBubble({ row }: { row: UserRow }) {
 /** 助手回复:markdown 渲染。 */
 export function AssistantBlock({ row }: { row: TextRow }) {
   if (!row.content.trim()) return null;
+  const t = hhmm(row.createdAt);
   return (
     <div className="md md--assistant">
       <Markdown remarkPlugins={[remarkGfm]}>{row.content}</Markdown>
+      {t ? <span className="row-time mono">{t}</span> : null}
     </div>
   );
 }

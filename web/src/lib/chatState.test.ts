@@ -197,4 +197,26 @@ describe('组合函数', () => {
     expect(s2.lastSeq).toBe(4);
     expect(s2.rows).toHaveLength(0);
   });
+  test('createdAt: 本地乐观行记录时刻,回显保留,助手行取事件值', () => {
+    let s = applyLocalUser(emptyChat(), '你好');
+    const u0 = s.rows[0];
+    if (u0.kind !== 'user') throw new Error('expect user row');
+    expect(typeof u0.createdAt).toBe('string');
+    const before = u0.createdAt;
+    // 服务器回显不带 createdAt:沿用本地时刻
+    s = applyEvent(s, { kind: 'text', role: 'user', content: '你好', seq: 1 });
+    const u1 = s.rows[0];
+    if (u1.kind !== 'user') throw new Error('expect user row');
+    expect(u1.pending).toBe(false);
+    expect(u1.createdAt).toBe(before);
+    // 助手行:取事件里的 createdAt(有则显,无则不显)
+    s = applyEvent(s, { kind: 'text', content: '回复', seq: 2, createdAt: '2026-09-13T08:30:00Z' });
+    const t = s.rows[1];
+    if (t.kind !== 'text') throw new Error('expect text row');
+    expect(t.createdAt).toBe('2026-09-13T08:30:00Z');
+    s = applyEvent(s, { kind: 'text', content: '回复2', seq: 3 });
+    const t2 = s.rows[2];
+    if (t2.kind !== 'text') throw new Error('expect text row');
+    expect(t2.createdAt).toBeUndefined();
+  });
 });
