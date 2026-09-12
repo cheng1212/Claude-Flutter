@@ -1053,8 +1053,7 @@ class _DiffView extends StatelessWidget {
                   children: [
                     for (final line in lines)
                       TextSpan(
-                          text: '$line
-',
+                          text: '$line\n',
                           style: TextStyle(
                               fontSize: 10.5,
                               height: 1.4,
