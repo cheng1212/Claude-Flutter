@@ -8,6 +8,7 @@ import { loadRoutes, resolveModel } from './routes.js';
 import { BackgroundRegistry } from './backgrounds.js';
 import { startUpstreamProxy } from './proxy/upstream-proxy.js';
 import { RunRegistry } from './runs/run-registry.js';
+import { startCronScheduler } from './cron-scheduler.js';
 import { SessionRuntime } from './protocol/sdk-client.js';
 
 const config = loadOrCreateConfig();
@@ -128,6 +129,11 @@ console.log(`[zcode-server] upstream relay proxy on http://127.0.0.1:${config.re
 console.log(`[zcode-server] listening on http://0.0.0.0:${config.port}`);
 await app.listen({ port: config.port, host: '0.0.0.0' });
 
+// cron 调度器:到点任务自动触发对应会话(程序化 chat.send 同管线)
+const cronScheduler = startCronScheduler(db, (sessionId, prompt) =>
+  gateway.triggerSession(sessionId, prompt),
+);
+
 // 本机会话导入在 listen 之后异步跑:不让手机连上来干等(会话多时全量解析要一会儿)。
 void (async () => {
   try {
@@ -148,5 +154,6 @@ const shutdown = (signal: string) => {
   for (const [, rt] of live) void rt.abort().catch(() => {});
   setTimeout(() => process.exit(0), 3000).unref();
 };
+cronScheduler.stop();
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

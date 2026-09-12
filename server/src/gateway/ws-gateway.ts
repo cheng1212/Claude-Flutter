@@ -34,6 +34,8 @@ export type WsGatewayHandle = {
   notify(payload: Record<string, unknown>): void;
   /** 最近一次 chat.send 的会话:上游代理的计时事件归到这里(个人服务器同时只跑一两个回合,足够准)。 */
   lastActiveSession(): string | null;
+  /** cron 调度器到点触发:程序化向会话发送 prompt(与 chat.send 同管线;运行中返回 false)。 */
+  triggerSession(sessionId: string, prompt: string): boolean;
 };
 
 type StateWs = WebSocket & { authed?: boolean; subs?: Set<string>; alive?: boolean };
@@ -314,7 +316,43 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
     });
   });
 
+  // cron 调度器到点触发(程序化 chat.send):与 ws 消息路径同一套
+  // seedSeq→begin→createRun→push(用户消息)→runtime.send;
+  // 返回 false = 会话不存在或正在运行(调度器跳过本轮)。
+  function triggerSession(sessionId: string, prompt: string): boolean {
+    if (!sessionId || deps.registry.isRunning(sessionId)) return false;
+    let runtime: RuntimeLike;
+    try {
+      runtime = deps.runtimeFor(sessionId, {});
+    } catch {
+      return false; // 会话不存在(cwd 无效等)
+    }
+    runtimes.set(sessionId, runtime);
+    ensureSub(sessionId);
+    deps.registry.seedSeq(sessionId, maxSeq(deps.db, sessionId));
+    deps.registry.begin(sessionId);
+    broadcastDirty(wss, sessionId);
+    try {
+      activeRuns.set(sessionId, { runId: createRun(deps.db, sessionId, null).id, usage: null });
+      deps.registry.push(sessionId, { kind: 'text', role: 'user', content: prompt });
+    } catch {
+      deps.registry.finish(sessionId, 1, false);
+      return false;
+    }
+    runtime.send(prompt).catch(() => {
+      deps.registry.finish(sessionId, 1, false);
+    }).finally(() => {
+      const last = deps.registry.lastEvent(sessionId);
+      if (last && last.kind === 'complete') deps.registry.clearRunning(sessionId);
+      else deps.registry.finish(sessionId, 1, false);
+    });
+    return true;
+  }
+
   return {
+    triggerSession(sessionId, prompt) {
+      return triggerSession(sessionId, prompt);
+    },
     notify(payload) {
       const sessionId = payload.sessionId as string | null | undefined;
       const data = JSON.stringify(payload);
