@@ -512,13 +512,36 @@ class _CodeBlockState extends State<_CodeBlock> {
 
 /// 用户消息:右侧气泡。纯文字 = ink 深色气泡;
 /// 带图片 = 白卡即气泡(无深色底/描边,参考 zremote),文字另起 ink 小气泡。
-class UserBubble extends StatelessWidget {
+class UserBubble extends StatefulWidget {
   final UserRow row;
 
   /// ISO 时间:气泡下方右侧显示 HH:mm(pending 发送中不显示)
   final String? createdAt;
 
   const UserBubble({super.key, required this.row, this.createdAt});
+
+  @override
+  State<UserBubble> createState() => _UserBubbleState();
+}
+
+class _UserBubbleState extends State<UserBubble> {
+  bool _copied = false;
+  Timer? _resetTimer;
+
+  void _copy() {
+    Clipboard.setData(ClipboardData(text: widget.row.content));
+    setState(() => _copied = true);
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
 
   static ShapeDecoration _inkDeco() => ShapeDecoration(
         color: ZT.ink,
@@ -549,13 +572,13 @@ class UserBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (row.content.isNotEmpty)
+          if (widget.row.content.isNotEmpty)
             SelectableText(
-              row.content,
+              widget.row.content,
               style: TextStyle(
                   fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
             ),
-          if (row.pending) ...[
+          if (widget.row.pending) ...[
             const SizedBox(height: 4),
             _sending(),
           ],
@@ -564,8 +587,10 @@ class UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImages = row.images.isNotEmpty;
-    final time = (!row.pending && createdAt != null) ? chatTimeLabel(createdAt) : '';
+    final hasImages = widget.row.images.isNotEmpty;
+    final time = (!widget.row.pending && widget.createdAt != null)
+        ? chatTimeLabel(widget.createdAt)
+        : '';
     Widget bubble = Container(
       constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.82),
@@ -577,17 +602,31 @@ class UserBubble extends StatelessWidget {
       return Align(
         alignment: Alignment.centerRight,
         child: Opacity(
-          opacity: row.pending ? 0.72 : 1,
+          opacity: widget.row.pending ? 0.72 : 1,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
               bubble,
-              if (time.isNotEmpty)
+              if (time.isNotEmpty || _copied)
                 Padding(
                   padding: const EdgeInsets.only(top: 3, right: 2),
-                  child: Text(time,
-                      style: TextStyle(fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    GestureDetector(
+                      onTap: _copy,
+                      child: Icon(
+                        _copied ? Icons.check_rounded : Icons.content_copy_rounded,
+                        size: 13,
+                        color: _copied ? ZT.aqua : ZT.inkFaint,
+                      ),
+                    ),
+                    if (time.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Text(time,
+                          style: TextStyle(
+                              fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
+                    ],
+                  ]),
                 ),
             ],
           ),
@@ -598,15 +637,15 @@ class UserBubble extends StatelessWidget {
     return Align(
       alignment: Alignment.centerRight,
       child: Opacity(
-        opacity: row.pending ? 0.72 : 1,
+        opacity: widget.row.pending ? 0.72 : 1,
         child: Container(
           margin: const EdgeInsets.only(top: 8, left: 44),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _UserImageCard(row.images),
-              if (row.content.isNotEmpty || row.pending) ...[
+              _UserImageCard(widget.row.images),
+              if (widget.row.content.isNotEmpty || widget.row.pending) ...[
                 const SizedBox(height: 6),
                 Container(
                   constraints: BoxConstraints(
