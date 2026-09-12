@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
@@ -144,6 +145,13 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
       builder: (context, _, _) => MaterialApp(
         title: 'zCode',
         navigatorKey: zcodeNavigatorKey,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+        locale: const Locale('zh', 'CN'),
         theme: ZT.theme(),
         home: !_ready
             ? Scaffold(backgroundColor: ZT.bg, body: SizedBox.shrink())
