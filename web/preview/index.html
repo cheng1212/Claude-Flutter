@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>zCode 皮肤选择 · 静态预览</title>
+<style>
+  /* 5 套调色板:与 src/theme/palettes.ts 逐字一致(从 app/lib/theme.dart 移植) */
+  :root{
+    --cream-bg:#FAF6EF; --cream-surface:#FFFFFF; --cream-surface-hi:#FFF8F0;
+    --cream-ink:#2B2118; --cream-ink-soft:#8A8275; --cream-ink-faint:#B9B1A4;
+    --cream-line:#EDE5D8; --cream-edge:#E2D7C6; --cream-primary:#E8590C;
+    --cream-primary-deep:#C74405; --cream-aqua:#4C8A7E; --cream-lemon:#E9A13B;
+    --cream-rose:#D65745; --cream-grape:#9B6FC9; --cream-on-ink:#FFFFFF;
+    --cream-radius:12px; --cream-border:1.3px;
+
+    --citrus-bg:#FFF6E9; --citrus-surface:#FFFCF5; --citrus-surface-hi:#FFF3DE;
+    --citrus-ink:#241C15; --citrus-ink-soft:#5C5044; --citrus-ink-faint:#7A6853;
+    --citrus-line:#E8DCC8; --citrus-edge:#241C15; --citrus-primary:#FF6B1A;
+    --citrus-primary-deep:#E05500; --citrus-aqua:#0FB5A3; --citrus-lemon:#FFC93C;
+    --citrus-rose:#E5484D; --citrus-grape:#7C5CFF; --citrus-on-ink:#FFF6E9;
+    --citrus-radius:14px; --citrus-border:1.6px;
+
+    --sticker-bg:#FFE9CC; --sticker-surface:#FFFCF5; --sticker-surface-hi:#FFF3DE;
+    --sticker-ink:#241C15; --sticker-ink-soft:#5C5044; --sticker-ink-faint:#7A6853;
+    --sticker-line:#E8DCC8; --sticker-edge:#241C15; --sticker-primary:#FF6B1A;
+    --sticker-primary-deep:#E05500; --sticker-aqua:#0FB5A3; --sticker-lemon:#FFC93C;
+    --sticker-rose:#E5484D; --sticker-grape:#7C5CFF; --sticker-on-ink:#FFF6E9;
+    --sticker-radius:16px; --sticker-border:2px;
+
+    --phosphor-bg:#08110D; --phosphor-surface:#0E1A14; --phosphor-surface-hi:#12241A;
+    --phosphor-ink:#D8FFE6; --phosphor-ink-soft:#7FB894; --phosphor-ink-faint:#4E7A60;
+    --phosphor-line:#1C3327; --phosphor-edge:#3BE08A; --phosphor-primary:#3BE08A;
+    --phosphor-primary-deep:#22B26A; --phosphor-aqua:#4FE3D0; --phosphor-lemon:#F2D24B;
+    --phosphor-rose:#FF6B7A; --phosphor-grape:#B58CFF; --phosphor-on-ink:#05100B;
+    --phosphor-radius:6px; --phosphor-border:1.2px;
+
+    --editorial-bg:#F7F4EE; --editorial-surface:#FFFDFA; --editorial-surface-hi:#F1EBE0;
+    --editorial-ink:#14110D; --editorial-ink-soft:#5A5245; --editorial-ink-faint:#8D8577;
+    --editorial-line:#DFD7C8; --editorial-edge:#14110D; --editorial-primary:#9E2B25;
+    --editorial-primary-deep:#7A1F1A; --editorial-aqua:#2F6B63; --editorial-lemon:#B8860B;
+    --editorial-rose:#9E2B25; --editorial-grape:#584B7A; --editorial-on-ink:#FFFDFA;
+    --editorial-radius:2px; --editorial-border:1px;
+
+    --sans:'Outfit','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --serif:'Fraunces','Songti SC',Georgia,serif;
+    --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:44px 26px 90px;
+    font-family:var(--sans);color:#241C15;
+    background:
+      radial-gradient(120% 70% at 8% -10%, rgba(255,107,26,.10), transparent 60%),
+      #FFF6E9;
+  }
+  .hd{max-width:1240px;margin:0 auto 34px;display:flex;gap:16px;align-items:flex-start}
+  .hd__mark{width:56px;height:56px;flex:none;display:grid;place-items:center;
+    border:1.6px solid #FF6B1A;border-radius:14px;background:rgba(255,107,26,.12);
+    box-shadow:4px 4px 0 #241C15;color:#FF6B1A;font:800 28px/1 var(--mono)}
+  h1{margin:0;font:900 40px/1.1 var(--sans);letter-spacing:-1.4px}
+  .hd p{margin:7px 0 0;max-width:64ch;color:#5C5044;font-size:13px;line-height:1.6}
+  .grid{max-width:1240px;margin:0 auto;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:22px}
+
+  /* 每张卡用局部变量作用域复用同一套结构 —— 与 Vue 版 scopeVars() 同思路 */
+  .card{
+    position:relative;overflow:hidden;cursor:pointer;
+    border:var(--c-border) solid var(--c-edge);border-radius:var(--c-radius);
+    background:var(--c-surface);box-shadow:var(--c-shadow);
+    transition:transform .14s ease,box-shadow .14s ease;
+  }
+  .card:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 0 #241C15}
+  .stage{height:240px;padding:14px;overflow:hidden;background-color:var(--c-bg);background-image:var(--c-atmos)}
+  .foot{display:flex;flex-direction:column;gap:9px;padding:13px 14px 14px;
+    border-top:1px solid var(--c-edge);background:var(--c-surface)}
+  .name{font:800 16px/1.2 var(--c-font-display,var(--sans));color:var(--c-ink)}
+  .blurb{font-size:11.5px;line-height:1.5;color:var(--c-ink-soft)}
+  .sws{display:flex;gap:5px}
+  .sws i{width:17px;height:17px;border-radius:4px;border:1px solid rgba(0,0,0,.18)}
+  .open{align-self:flex-start;padding:5px 11px;border:1px solid var(--c-edge);border-radius:99px;
+    background:transparent;color:var(--c-ink-soft);font:700 11.5px/1 var(--sans);
+    cursor:pointer;text-decoration:none}
+  .open:hover{color:var(--c-primary);border-color:var(--c-primary)}
+  .tag{position:absolute;top:10px;right:10px;padding:3px 9px;border-radius:99px;
+    background:#FF6B1A;color:#FFF6E9;font:800 10.5px/1 var(--sans)}
+
+  /* --- 缩略图内部:真实组件结构 --- */
+  .mini{display:flex;flex-direction:column;gap:7px;font-family:var(--c-font-body,var(--sans))}
+  .m-card{padding:9px 10px;border:var(--c-border) solid var(--c-edge);border-radius:var(--c-radius);
+    background:var(--c-surface);box-shadow:var(--c-shadow)}
+  .m-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .m-title{font-size:13px;font-weight:800;color:var(--c-ink)}
+  .m-pill{display:inline-flex;align-items:center;gap:4px;flex:none;padding:2px 7px;
+    border:1.2px solid currentColor;border-radius:99px;background:var(--c-surface);
+    color:var(--c-primary);font-size:10px;font-weight:800}
+  .m-dot{width:5px;height:5px;border-radius:50%;background:currentColor;
+    border:1px solid rgba(0,0,0,.35)}
+  .m-meta{margin-top:3px;color:var(--c-ink-faint);font:10px/1.4 var(--c-font-mono,var(--mono))}
+  .m-prev{margin-top:5px;color:var(--c-ink-soft);font-size:11px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .m-br{display:flex;justify-content:flex-end}
+  .m-user{max-width:84%;padding:6px 10px;border:var(--c-border) solid var(--c-edge);
+    border-radius:var(--c-radius);background:var(--c-primary);color:var(--c-on-ink);
+    font-size:11.5px;box-shadow:var(--c-shadow)}
+  .m-asst{max-width:88%;padding:7px 10px;border:var(--c-border) solid var(--c-edge);
+    border-radius:var(--c-radius);background:var(--c-surface);color:var(--c-ink);
+    font-size:11.5px;box-shadow:0 2px 10px -6px rgba(0,0,0,.35)}
+  .m-code{display:inline-block;margin-top:4px;padding:1px 5px;border-radius:4px;
+    background:var(--c-surface-hi);border:1px solid var(--c-line);color:var(--c-primary-deep);
+    font:10px/1.5 var(--c-font-mono,var(--mono))}
+  .m-tool{display:flex;align-items:center;gap:6px;padding:5px 9px;
+    border:1px dashed var(--c-edge);border-radius:calc(var(--c-radius) - 3px);
+    background:var(--c-surface-hi);color:var(--c-ink-soft);font-size:10.5px}
+  .m-tn{color:var(--c-aqua);font:700 10.5px/1 var(--c-font-mono,var(--mono))}
+  .m-ta{font:10.5px/1 var(--c-font-mono,var(--mono));opacity:.75;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .m-ok{width:6px;height:6px;flex:none;border-radius:50%;background:var(--c-aqua)}
+</style>
+</head>
+<body>
+  <div class="hd">
+    <div class="hd__mark">z</div>
+    <div>
+      <h1>选一套皮肤</h1>
+      <p>zCode · 浏览器端 —— 与 Flutter app 一比一对比。下面每张卡的缩略图都是<b>真实组件结构</b>,
+        只是换了一套设计 token,所以是所见即所得。点「看完整页」进单个主题的整页预览。</p>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+
+<script>
+  const P = [
+    { id:'citrus', label:'柑橘晨光', blurb:'移植 app 现役主题:墨线粗框 + 纯墨硬阴影,状态色当贴纸用。',
+      p:'citrus', cur:true },
+    { id:'sticker', label:'墨线贴纸', blurb:'柑橘加大号:更深的底 + 圆点纹理,2px 墨线 16 圆角。',
+      p:'sticker' },
+    { id:'cream', label:'原版奶油', blurb:'奶油底 + 焦糖橙,Framer 风干净留白,柔和双层阴影。',
+      p:'cream' },
+    { id:'phosphor', label:'磷光终端', blurb:'深色磷绿 + 扫描线,把「遥控 CLI」的语义直接做成界面。',
+      p:'phosphor' },
+    { id:'editorial', label:'编辑部', blurb:'杂志排印:高对比衬线 + 细金线 + 大留白,把长回复当版面读。',
+      p:'editorial' },
+  ];
+
+  // 每套主题的容器内联变量 + 阴影/氛围(与 palettes.ts 对应)
+  const EXTRA = {
+    cream:{ shadow:'0 14px 28px -18px rgba(232,89,12,.30), 0 4px 10px -6px rgba(232,89,12,.16)',
+      atmos:'radial-gradient(120% 80% at 12% -10%, rgba(232,89,12,.07), transparent 60%)',
+      fontDisplay:"'Fraunces','Songti SC',Georgia,serif", fontBody:"var(--sans)", fontMono:"var(--mono)" },
+    citrus:{ shadow:'4px 4px 0 0 var(--c-ink)',
+      atmos:'radial-gradient(130% 90% at 0% -20%, rgba(255,107,26,.10), transparent 62%)',
+      fontDisplay:"var(--sans)", fontBody:"var(--sans)", fontMono:"var(--mono)" },
+    sticker:{ shadow:'5px 5px 0 0 var(--c-ink)',
+      atmos:'radial-gradient(#E8B98A 1.1px, transparent 1.1px)',
+      fontDisplay:"var(--sans)", fontBody:"var(--sans)", fontMono:"var(--mono)" },
+    phosphor:{ shadow:'0 0 0 1px rgba(59,224,138,.18), 0 10px 30px -18px rgba(59,224,138,.55)',
+      atmos:'repeating-linear-gradient(0deg, rgba(59,224,138,.045) 0 1px, transparent 1px 3px), radial-gradient(120% 70% at 50% -20%, rgba(59,224,138,.14), transparent 60%)',
+      fontDisplay:"var(--mono)", fontBody:"var(--mono)", fontMono:"var(--mono)" },
+    editorial:{ shadow:'0 1px 0 0 var(--c-line), 0 18px 40px -32px rgba(20,17,13,.45)',
+      atmos:'linear-gradient(180deg, rgba(20,17,13,.035), transparent 22%)',
+      fontDisplay:"'Fraunces','Songti SC',Georgia,serif", fontBody:"'Fraunces','Songti SC',Georgia,serif", fontMono:"'IBM Plex Mono',var(--mono)" },
+  };
+
+  const SWATCH = ['primary','aqua','lemon','rose','grape'];
+
+  document.getElementById('grid').innerHTML = P.map(t => {
+    const e = EXTRA[t.p];
+    const v = `--c-bg:var(--${t.p}-bg);--c-surface:var(--${t.p}-surface);--c-surface-hi:var(--${t.p}-surface-hi);
+      --c-ink:var(--${t.p}-ink);--c-ink-soft:var(--${t.p}-ink-soft);--c-ink-faint:var(--${t.p}-ink-faint);
+      --c-line:var(--${t.p}-line);--c-edge:var(--${t.p}-edge);--c-primary:var(--${t.p}-primary);
+      --c-primary-deep:var(--${t.p}-primary-deep);--c-aqua:var(--${t.p}-aqua);--c-lemon:var(--${t.p}-lemon);
+      --c-rose:var(--${t.p}-rose);--c-grape:var(--${t.p}-grape);--c-on-ink:var(--${t.p}-on-ink);
+      --c-radius:var(--${t.p}-radius);--c-border:var(--${t.p}-border);
+      --c-shadow:${e.shadow};--c-atmos:${e.atmos};
+      --c-font-display:${e.fontDisplay};--c-font-body:${e.fontBody};--c-font-mono:${e.fontMono};`;
+
+    const sws = SWATCH.map(s => `<i style="background:var(--${t.p}-${s})"></i>`).join('');
+
+    return `
+    <article class="card" style="${v}">
+      <div class="stage">
+        <div class="mini">
+          <div class="m-card">
+            <div class="m-row">
+              <span class="m-title">重构 auth 中间件</span>
+              <span class="m-pill"><i class="m-dot"></i>运行中</span>
+            </div>
+            <div class="m-meta">zremote · claude-sonnet-4.5</div>
+            <div class="m-prev">看一下 server/src/http.ts 的鉴权钩子…</div>
+          </div>
+          <div class="m-br"><div class="m-user">把网关的 CORS 也一起改掉</div></div>
+          <div class="m-br"><div class="m-asst">好,我先读一下现有实现。
+            <code class="m-code">app.get('/api/sessions')</code></div></div>
+          <div class="m-tool"><i class="m-ok"></i><span class="m-tn">Read</span>
+            <span class="m-ta">server/src/http.ts</span></div>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="name">${t.label}</div>
+        <div class="blurb">${t.blurb}</div>
+        <div class="sws">${sws}</div>
+        <a class="open" href="#${t.id}">看完整页 →</a>
+      </div>
+      ${t.cur ? '<span class="tag">当前</span>' : ''}
+    </article>`;
+  }).join('');
+
+  // 「看完整页」跳到同目录下的单主题页(纯静态,双击可开)
+  document.querySelectorAll('.open').forEach(a => {
+    a.addEventListener('click', ev => {
+      ev.preventDefault();
+      location.href = 'theme-' + a.getAttribute('href').slice(1) + '.html';
+    });
+  });
+</script>
+</body>
+</html>
