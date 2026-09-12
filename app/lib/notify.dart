@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show Color;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 // 通知判定:哪些 WS 事件值得弹系统通知(仅 App 在后台时)。
 // 纯函数可单测;实际弹出由 lib/notify.dart 的插件封装执行。
@@ -23,16 +24,23 @@ String? notifyDecision({
 
 // ---------------------------------------------------------------- 插件封装
 /// 系统通知薄封装:初始化失败全程静默降级(不弹,不影响主流程)。
+/// 点击通知 → [onTap] 回调带 payload(会话 id),由 app 导航到对应会话。
 class Notify {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
   static int _idSeq = 1;
 
+  /// 点击通知的回调(payload = 通知附带的会话 id);main 里接线导航。
+  static void Function(String sessionId)? onTap;
+
   static Future<void> init() async {
     if (_ready) return;
     try {
       const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-      await _plugin.initialize(settings: const InitializationSettings(android: android));
+      await _plugin.initialize(
+        settings: const InitializationSettings(android: android),
+        onDidReceiveNotificationResponse: _onResponse,
+      );
       await _plugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
@@ -42,22 +50,41 @@ class Notify {
     }
   }
 
-  static void show(String title, String body) {
+  static void _onResponse(NotificationResponse resp) {
+    final payload = resp.payload;
+    if (payload != null && payload.isNotEmpty) onTap?.call(payload);
+  }
+
+  static void show(String title, String body, {String? sessionId, bool isError = false}) {
     if (!_ready) return;
     try {
+      // 错误走独立渠道(用户可按渠道关掉某一类,视觉也有区分)
+      final details = isError
+          ? NotificationDetails(
+              android: AndroidNotificationDetails(
+                'zcode_errors',
+                '会话错误',
+                channelDescription: '任务失败 / 执行错误',
+                importance: Importance.high,
+                priority: Priority.high,
+                color: const Color(0xFFE5484D),
+              ),
+            )
+          : const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'zcode_events',
+                '会话事件',
+                channelDescription: '任务完成 / 等待审批',
+                importance: Importance.high,
+                priority: Priority.high,
+              ),
+            );
       _plugin.show(
         id: _idSeq++,
         title: title,
         body: body,
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'zcode_events',
-            '会话事件',
-            channelDescription: '任务完成 / 出错 / 等待审批',
-            importance: Importance.high,
-            priority: Priority.high,
-          ),
-        ),
+        payload: sessionId,
+        notificationDetails: details,
       );
     } on Object {
       // 静默:通知失败不该影响任何主流程
