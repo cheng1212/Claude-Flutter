@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'ui/chat_page.dart';
 import 'state/zapp.dart';
 import 'theme.dart';
 import 'ui/login_page.dart';
@@ -24,6 +25,9 @@ class ZCodeApp extends StatefulWidget {
   @override
   State<ZCodeApp> createState() => _ZCodeAppState();
 }
+
+/// 全局导航 key:通知点击时从静态回调里拿 context 之外的导航能力。
+final zcodeNavigatorKey = GlobalKey<NavigatorState>();
 
 class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
   static const _kBase = 'zcode.baseUrl';
@@ -77,6 +81,13 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
       api: ZApi(baseUrl: base, token: token),
       socket: ZSocket(uri: ZApp.wsUriOf(base), token: token),
     );
+    // 通知点击 → 直达对应会话(通知 payload 带会话 id)
+    Notify.onTap = (sessionId) {
+      if (_app != app || !_ready) return;
+      Navigator.of(zcodeNavigatorKey.currentContext!).push(MaterialPageRoute(
+        builder: (_) => ChatPage(app: app, sessionId: sessionId),
+      ));
+    };
     setState(() {
       _app = app;
       _baseUrl = base;
@@ -132,6 +143,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
       valueListenable: ZThemeController.notifier,
       builder: (context, _, _) => MaterialApp(
         title: 'zCode',
+        navigatorKey: zcodeNavigatorKey,
         theme: ZT.theme(),
         home: !_ready
             ? Scaffold(backgroundColor: ZT.bg, body: SizedBox.shrink())
