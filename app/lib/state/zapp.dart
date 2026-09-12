@@ -504,6 +504,16 @@ class ZApp extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 上传文件到当前会话(电脑端 cwd/uploads/),返回 {显示名, 电脑路径}。
+  /// 失败抛错(调用方 toast)。
+  Future<({String name, String path})> uploadFile(
+      String fileName, List<int> bytes) async {
+    final sid = currentSessionId;
+    if (sid == null) throw Exception('未打开会话');
+    final path = await _api.uploadFile(sid, fileName, bytes);
+    return (name: fileName, path: path);
+  }
+
   /// 项目重命名:文件夹改名 + 其下会话 cwd 迁移;失败抛错(对话框提示)。
   Future<void> renameProject(String oldName, String newName) => _api.renameProject(oldName, newName);
 

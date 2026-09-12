@@ -7,6 +7,7 @@ import 'dart:io' show File;
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
@@ -52,6 +53,10 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
   final _pendingImages = ValueNotifier<List<String>>(const []); // data URI 列表
+
+  /// 已上传到电脑的附件(路径引用型):显示名 + 电脑上的绝对路径。
+  /// 发送时以文本路径随消息告诉 CLI(CLI 在本地可直接读),不走 base64。
+  final _pendingFiles = ValueNotifier<List<({String name, String path})>>(const []);
   final ImagePicker _picker = ImagePicker();
   final ScrollController _listCtrl = ScrollController(); // 「回到底部」药丸
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
@@ -143,6 +148,7 @@ class _ChatPageState extends State<ChatPage> {
     app.removeListener(_onApp);
     _input.dispose();
     _pendingImages.dispose();
+    _pendingFiles.dispose();
     _listCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -196,21 +202,97 @@ class _ChatPageState extends State<ChatPage> {
   // ---------------------------------------------------------------- 动作
 
   void _send() {
-    final text = _input.text.trim();
+    var text = _input.text.trim();
     final images = _pendingImages.value;
-    if (text.isEmpty && images.isEmpty) return;
+    final files = _pendingFiles.value;
+    if (text.isEmpty && images.isEmpty && files.isEmpty) return;
+    // 文件路径引用:CLI 在电脑本地,直接告诉它文件在哪即可读/处理
+    if (files.isNotEmpty) {
+      final refs = files.map((f) => '- ${f.name} → ${f.path}').join('\n');
+      text = text.isEmpty
+          ? '我上传了附件,路径如下:\n$refs\n请处理'
+          : '$text\n\n附件:\n$refs';
+    }
     _stopping = false; // 新回合开跑,停止盲区状态作废
     // 显式带上当前 model/权限模式/思考等级:热切换双保险(服务端本来也会读 DB 最新值)
     final ok = app.sendChat(text, model: _model, permissionMode: _mode, thinking: _thinking, images: images);
     if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
     _input.clear();
     _pendingImages.value = const [];
+    _pendingFiles.value = const [];
     HapticFeedback.lightImpact();
     FocusScope.of(context).unfocus(); // 发完收起键盘,别压着半屏看回复
   }
 
+  /// 附件入口弹层:拍照 / 相册 / 文件 三选一(点选即执行)。
+  Future<void> _showAttachSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined),
+            title: const Text('拍照', style: TextStyle(fontSize: 14)),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _pickImagesFromGallery(camera: true);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('从相册选择图片', style: TextStyle(fontSize: 14)),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _pickImagesFromGallery();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.folder_outlined),
+            title: const Text('上传文件(PDF/文档/任意)', style: TextStyle(fontSize: 14)),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _pickAndUploadFiles();
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// 文件选择(file_picker)→ 上传到电脑 → 以路径引用入待发列表。
+  Future<void> _pickAndUploadFiles() async {
+    const maxFiles = 4;
+    if (_pendingFiles.value.length >= maxFiles) {
+      if (mounted) showToast(context, '一次最多 $maxFiles 个文件');
+      return;
+    }
+    // 12.x: pickFiles 返回 List<PlatformFile>(非 null);逐个转 XFile
+    final result = await FilePicker.pickFiles();
+    final picked = [
+      for (final pf in result) pf.xFile,
+    ];
+    if (picked.isEmpty) return;
+    for (final f in picked.take(maxFiles - _pendingFiles.value.length)) {
+      try {
+        final r = await app.uploadFile(f.name, await f.readAsBytes());
+        if (mounted) {
+          final next = [..._pendingFiles.value, r];
+          _pendingFiles.value = next;
+          showToast(context, '已上传: ${r.name}');
+        }
+      } on Object catch (e) {
+        if (mounted) showToast(context, '${f.name} 上传失败: $e');
+      }
+    }
+  }
+
   /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
-  Future<void> _pickImage() async {
+  Future<void> _pickImagesFromGallery({bool camera = false}) async {
     const maxImages = 4;
     final remaining = maxImages - _pendingImages.value.length;
     if (remaining <= 0) {
@@ -219,8 +301,12 @@ class _ChatPageState extends State<ChatPage> {
     }
     try {
       // 拾取即压缩到 1280px/80:base64 要进 WS 消息体,原图又大又没必要
-      final picked =
-          await _picker.pickMultiImage(maxWidth: 1280, maxHeight: 1280, imageQuality: 80);
+      final picked = camera
+          ? await (_picker.pickImage(source: ImageSource.camera,
+                  maxWidth: 1280, maxHeight: 1280, imageQuality: 80))
+              .then((f) => f == null ? <XFile>[] : <XFile>[f])
+          : await _picker.pickMultiImage(
+              maxWidth: 1280, maxHeight: 1280, imageQuality: 80);
       if (picked.isEmpty) return;
       // 读字节+base64 丢 isolate:几张几 MB 的图在主线程编码会掉帧
       final uris = await compute(_encodeImagesJob, [for (final p in picked) p.path]);
@@ -1188,6 +1274,50 @@ class _ChatPageState extends State<ChatPage> {
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // 已选文件附件条:文件图标卡,点 X 移除
+        ValueListenableBuilder<List<({String name, String path})>>(
+          valueListenable: _pendingFiles,
+          builder: (context, files, _) {
+            if (files.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: files.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: ShapeDecoration(
+                      color: ZT.surface,
+                      shape: StadiumBorder(side: ZT.inkSide(w: 1.2)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.insert_drive_file_rounded, size: 15, color: ZT.aqua),
+                      const SizedBox(width: 6),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        child: Text(files[i].name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: ZT.ink)),
+                      ),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: () {
+                          final next = [...files]..removeAt(i);
+                          _pendingFiles.value = next;
+                        },
+                        child: Icon(Icons.close_rounded, size: 14, color: ZT.inkSoft),
+                      ),
+                    ]),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
         // 已选图片预览条:88px 缩略图,点图滑动预览,右上角 X 移除
         ValueListenableBuilder<List<String>>(
           valueListenable: _pendingImages,
@@ -1236,9 +1366,9 @@ class _ChatPageState extends State<ChatPage> {
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           // 添加图片按钮
           IconButton(
-            tooltip: '添加图片',
-            onPressed: _pickImage,
-            icon: Icon(Icons.image_outlined, size: 22, color: ZT.inkSoft),
+            tooltip: '添加附件(图片/拍照/文件)',
+            onPressed: _showAttachSheet,
+            icon: Icon(Icons.add_circle_outline_rounded, size: 24, color: ZT.inkSoft),
           ),
           Expanded(
             child: TextField(
@@ -1264,7 +1394,7 @@ class _ChatPageState extends State<ChatPage> {
                 // 断线时 running 可能是冻结的假象(complete 到不了):只认"在线且在跑"
                 canStop: chat.running && app.socket.state == ZSocketState.open,
                 stopping: _stopping && chat.running,
-                hasText: value.text.trim().isNotEmpty || images.isNotEmpty,
+                hasText: value.text.trim().isNotEmpty || images.isNotEmpty || _pendingFiles.value.isNotEmpty,
                 onSend: _send,
                 onStop: () {
                   HapticFeedback.mediumImpact();

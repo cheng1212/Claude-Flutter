@@ -169,7 +169,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   });
 
   // 文件上传(手机 → 电脑):存到会话 cwd 的 uploads/ 子目录,CLI 直接读本地文件。
-  // body 为文件原始二进制(application/octet-stream),文件名走 X-File-Name 头;
+  // body 为 JSON {fileName, dataB64}(base64,跨平台传输层友好);
   // 会话无 cwd 时自动创建 uploads-<sid8> 工作目录并回填会话(手机新建的会话 cwd 为 null)。
   app.post('/api/sessions/:id/files', async (req, reply) => {
     const id = (req.params as { id: string }).id;
@@ -178,13 +178,14 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
       .get(id) as { cwd: string | null } | undefined;
     if (!session) return reply.code(404).send({ error: '会话不存在' });
 
-    const rawName = String(req.headers['x-file-name'] ?? 'file');
+    const body = (req.body ?? {}) as { fileName?: unknown; dataB64?: unknown };
+    const rawName = String(body.fileName ?? 'file');
     const safeName = path.basename(rawName).replace(/[\/:*?"<>|]/g, '_') || 'file';
-    const body = req.body as Buffer | undefined;
-    if (!body || !Buffer.isBuffer(body) || body.length === 0) {
-      return reply.code(400).send({ error: '空文件' });
-    }
-    if (body.length > 50 * 1024 * 1024) {
+    const dataB64 = String(body.dataB64 ?? '');
+    if (!dataB64) return reply.code(400).send({ error: '空文件' });
+    const buf = Buffer.from(dataB64, 'base64');
+    if (buf.length === 0) return reply.code(400).send({ error: '空文件' });
+    if (buf.length > 50 * 1024 * 1024) {
       return reply.code(413).send({ error: '文件超过 50MB 上限' });
     }
 
@@ -198,8 +199,8 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     }
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(dir, `${Date.now()}_${safeName}`);
-    fs.writeFileSync(target, body);
-    return { ok: true, path: target, fileName: safeName, size: body.length };
+    fs.writeFileSync(target, buf);
+    return { ok: true, path: target, fileName: safeName, size: buf.length };
   });
 
   app.get('/api/sessions/:id/messages', async (req) => {
