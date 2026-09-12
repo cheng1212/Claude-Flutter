@@ -96,6 +96,10 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     app.addListener(_onApp);
     app.openSession(widget.sessionId);
+    // 定时任务徽标进页面拉一次即可;放 build 里会随每帧重绘反复打接口
+    app.crons(sessionId: widget.sessionId).then((list) {
+      if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
+    });
   }
 
   @override
@@ -680,9 +684,6 @@ class _ChatPageState extends State<ChatPage> {
     final planOn = _stickyPlan != null || derivePlanSteps(chat.rows) != null;
     final subsOn = deriveSubagents(chat.rows).isNotEmpty;
     final bgOn = deriveBackgrounds(chat.rows).isNotEmpty;
-    app.crons(sessionId: widget.sessionId).then((list) {
-      if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
-    });
     return Scaffold(
       backgroundColor: ZT.bg,
       appBar: AppBar(
