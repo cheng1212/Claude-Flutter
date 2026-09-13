@@ -63,6 +63,8 @@ class UsageModelView {
   final int outputTokens;
   final int requestCount;
   final double share;
+  final int cacheReadInputTokens;
+  final double cacheHitRate;
 
   UsageModelView({
     required this.modelId,
@@ -71,18 +73,25 @@ class UsageModelView {
     required this.outputTokens,
     required this.requestCount,
     required this.share,
+    this.cacheReadInputTokens = 0,
+    this.cacheHitRate = 0,
   });
 
   factory UsageModelView.fromMap(Map<String, dynamic> m) {
     int i(Object? v) => v is num ? v.toInt() : 0;
     double d(Object? v) => v is num ? v.toDouble() : 0;
+    final inputTokens = i(m['inputTokens']);
+    final cacheRead = i(m['cacheReadInputTokens']);
     return UsageModelView(
       modelId: '${m['modelId'] ?? ''}',
       totalTokens: i(m['totalTokens']),
-      inputTokens: i(m['inputTokens']),
+      inputTokens: inputTokens,
       outputTokens: i(m['outputTokens']),
       requestCount: i(m['requestCount']),
       share: d(m['share']),
+      cacheReadInputTokens: cacheRead,
+      // 服务端给了就直用;老服务端没这字段时按同口径本地算
+      cacheHitRate: m['cacheHitRate'] != null ? d(m['cacheHitRate']) : (inputTokens > 0 ? cacheRead / inputTokens : 0),
     );
   }
 }

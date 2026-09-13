@@ -484,6 +484,10 @@ class _UsagePageState extends State<UsagePage> {
           if (m.totalTokens > 0) m,
       ];
     }
+    // daily 不含缓存读(服务端按天只带输入/输出),切片路径给不出真实命中率:
+    // 命中率取服务端该模型的整体值(口径一致,好过瞎算),请求数按出现天数近似。
+    final serverRate = {for (final m in view.models) m.modelId: m.cacheHitRate};
+    final serverCacheRead = {for (final m in view.models) m.modelId: m.cacheReadInputTokens};
     final perModel = <String, ({int total, int input, int output, int requests})>{};
     for (final d in slice.daily) {
       for (final m in d.models) {
@@ -506,6 +510,8 @@ class _UsagePageState extends State<UsagePage> {
           outputTokens: e.value.output,
           requestCount: e.value.requests,
           share: slice.totalTokens > 0 ? e.value.total / slice.totalTokens : 0,
+          cacheReadInputTokens: serverCacheRead[e.key] ?? 0,
+          cacheHitRate: serverRate[e.key] ?? 0,
         ),
     ]..sort((a, b) => b.totalTokens.compareTo(a.totalTokens));
     return list;
@@ -532,7 +538,9 @@ class _UsagePageState extends State<UsagePage> {
         ),
       ]),
       const SizedBox(height: 4),
-      Text('输入 ${formatTokens(m.inputTokens)} · 输出 ${formatTokens(m.outputTokens)} · ${formatTokens(m.requestCount.toDouble())} 次请求',
+      Text(
+          '输入 ${formatTokens(m.inputTokens)} · 输出 ${formatTokens(m.outputTokens)} · '
+          '${formatTokens(m.requestCount.toDouble())} 次请求 · 缓存命中 ${(m.cacheHitRate * 100).toStringAsFixed(1)}%',
           style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
       const SizedBox(height: 5),
       Container(

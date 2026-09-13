@@ -262,11 +262,19 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     return sessionUsageSummary(deps.db, (req.params as { id: string }).id);
   });
 
-  // 全局用量聚合(runs 表):?range=7d|30d|all(默认 7d)→ 总览/按模型/按日×模型
+  // 全局用量聚合(runs 表):?range=today|1d|7d|30d|all(默认 7d)→ 总览/按模型/按日×模型
+  // 边界用**自然日**:7d = 今天 00:00 往前数 7 天(含今天),today = 今天 00:00 起。
+  // 原实现是滚动 168 小时——卡片写「近 7 天」、图例从 9月7日 起,口径对不上用户直觉。
   app.get('/api/usage', async (req) => {
     const range = String((req.query as Record<string, unknown>).range ?? '7d');
-    const days = range === 'all' ? 0 : range === '30d' ? 30 : 7;
-    const since = days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : null;
+    const days = range === 'all' ? 0 : range === 'today' ? 1 : range === '30d' ? 30 : range === '1d' ? 1 : 7;
+    let since: string | null = null;
+    if (days > 0) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0); // 今天 00:00(服务器本地时区)
+      d.setDate(d.getDate() - (days - 1)); // 含今天:7d = 今天 + 前 6 天
+      since = d.toISOString();
+    }
     return { range, generatedAt: new Date().toISOString(), ...usageStats(deps.db, since) };
   });
 }
