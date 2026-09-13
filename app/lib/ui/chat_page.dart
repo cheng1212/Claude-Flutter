@@ -1340,6 +1340,10 @@ class _ChatPageState extends State<ChatPage> {
     // "新行"同时建动画,而流式每秒重建几十次 → 动画反复重启,整屏 opacity 长期接近 0
     // = 白屏(用户实测;日志里 rows 正常增长、无异常,所以不是数据问题)。
     // 单次增长超过 kMaxFreshRows 就认定是换底/加载:水位直接对齐,一行都不播。
+    // 停止盲区复位:回合一旦落定(complete/error/abort 任一到达),乐观的"停止中"
+    // 必须清掉。原来只在发送新消息时复位 —— 于是回合自然结束后再开新一轮,
+    // 按钮一上来就是「停止中…」转圈且禁用(onTap 为 null),按不动(实测"停不掉")。
+    if (_stopping && !chat.running) _stopping = false;
     final anim = advanceAnimWatermark(
         current: _animatedUpTo, rowCount: rows.length, loading: app.historyLoading);
     final freshFrom = anim.freshFrom;
