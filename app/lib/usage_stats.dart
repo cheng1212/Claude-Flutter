@@ -202,8 +202,13 @@ extension UsageRangeLabel on UsageRangeChoice {
         UsageRangeChoice.all => '全部',
       };
 
-  /// 应向服务端拉的 range(今天/3 天拉 7d,客户端精筛)。
+  /// 应向服务端拉的 range。
+  ///
+  /// 「今天」直接问服务端要 today(自然日窗口):客户端从 7d 切片只影响按日图表,
+  /// 而模型明细/命中率这些**服务端聚合字段**会跟着 7d 走 —— 实测「筛了今天,
+  /// 明细却列出 6 个模型(今天只用了 2 个)」。3 天没有对应服务端口径,仍取 7d 客户端切。
   String get serverRange => switch (this) {
+        UsageRangeChoice.today => 'today',
         UsageRangeChoice.thirtyDays => '30d',
         UsageRangeChoice.all => 'all',
         _ => '7d',
