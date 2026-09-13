@@ -26,6 +26,38 @@ describe('transformMessage · 上下文占用', () => {
     expect(transformMessage({ type: 'stream_event', event: { type: 'message_start' } })).toEqual([]);
   });
 
+  it('assistant 消息带 usage 也产 context_usage(第二来源,与 message_start 互为兜底)', () => {
+    const out = transformMessage({
+      type: 'assistant',
+      message: {
+        role: 'assistant', content: [{ type: 'text', text: '好' }],
+        usage: { input_tokens: 100, cache_read_input_tokens: 2000, cache_creation_input_tokens: 5, output_tokens: 1 },
+      },
+    });
+    expect(out[0]).toEqual({ kind: 'context_usage', contextTokens: 2105 });
+    expect(out[1]).toMatchObject({ kind: 'text', content: '好' });
+  });
+
+  it('子代理的 assistant.usage 同样不计入主会话', () => {
+    const out = transformMessage({
+      type: 'assistant', parent_tool_use_id: 'toolu_x',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 999 } },
+    });
+    expect(out.some((e) => e.kind === 'context_usage')).toBe(false);
+  });
+
+  it('assistant 无 usage / usage 全 0 时不产事件', () => {
+    const noUsage = transformMessage({
+      type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }] },
+    });
+    expect(noUsage.some((e) => e.kind === 'context_usage')).toBe(false);
+    const zero = transformMessage({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: { output_tokens: 3 } },
+    });
+    expect(zero.some((e) => e.kind === 'context_usage')).toBe(false);
+  });
+
   it('compact_boundary → context_compacted(带压缩前后 token 与触发方式)', () => {
     const out = transformMessage({
       type: 'system', subtype: 'compact_boundary',

@@ -384,9 +384,15 @@ export class SessionRuntime {
               // CLI 僵死由强裁兜底。原实现此处直接 break,partial 全部蒸发。
               for (const event of transformMessage(raw)) {
                 if (event.kind === 'tool_use') continue;
+                // 实时上下文占用照记(中断路径同样需要:实测漏了这步 → 被中断的回合
+                // 落库的 usage 没有 contextTokens,面板显示回退到旧口径的越界值)
+                if (event.kind === 'context_usage') this.lastContextTokens = event.contextTokens;
                 if (event.kind === 'complete') {
                   emitTerminal(event.exitCode, true);
                   continue;
+                }
+                if (event.kind === 'usage' && this.lastContextTokens > 0) {
+                  (event as { contextTokens?: number }).contextTokens = this.lastContextTokens;
                 }
                 this.opts.emit(event);
               }
