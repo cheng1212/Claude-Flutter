@@ -586,8 +586,10 @@ class _ChatPageState extends State<ChatPage> {
                 final composition = (agg?['composition'] as List?) ?? const [];
                 final tools = (agg?['tools'] as List?) ?? const [];
                 final runs = (agg?['runs'] as num?)?.toInt() ?? 0;
-                // 上下文占用:WS 实时优先;没跑过这轮就退回 REST 里最近一次快照
-                final liveCtx = u?.contextTokens ?? 0;
+                // 上下文占用:实时(message_start)优先 → 上一轮落库的真实值 →
+                // REST 里最近一次快照。口径是"最近一次 API 请求的 prompt 大小",
+                // 不是整轮累计,所以不会出现 >100% 的越界值。
+                final liveCtx = chat.effectiveContextTokens;
                 final ctxTokens = liveCtx > 0
                     ? liveCtx
                     : ((last?['contextTokens'] as num?)?.toInt() ?? 0);
@@ -606,62 +608,82 @@ class _ChatPageState extends State<ChatPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                       Row(children: [
-                        Icon(Icons.query_stats_rounded, size: 18, color: ZT.aqua),
-                        SizedBox(width: 8),
-                        Text('用量',
+                        Icon(Icons.query_stats_rounded, size: 17, color: ZT.aqua),
+                        const SizedBox(width: 8),
+                        Text('用量信息',
                             style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w900)),
+                                fontSize: 15.5, fontWeight: FontWeight.w900, color: ZT.ink)),
+                        const Spacer(),
+                        _compactButton(),
                       ]),
                       const SizedBox(height: 12),
-                      // —— 上下文:当前窗口占用 + 缓存命中 ——
-                      _usageSection('上下文(最近一轮)', [
-                        if (ctxTokens > 0)
-                          _usageBar(
-                            '窗口占用',
-                            ctxWindow > 0
-                                ? '${_fmtTokens(ctxTokens)} / ${_fmtTokens(ctxWindow)}'
-                                    ' (${(ctxTokens / ctxWindow * 100).toStringAsFixed(1)}%)'
-                                : '${_fmtTokens(ctxTokens)} tokens',
-                            ctxWindow > 0
-                                ? (ctxTokens / ctxWindow).clamp(0.0, 1.0)
-                                : null,
+                      // —— 上下文:大环形窗口占用 + 三项指标(参考稿布局)——
+                      _usageSection('用量统计', [
+                        Row(children: [
+                          _usageRing(ctxTokens, ctxWindow),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(children: [
+                              _statLine(Icons.layers_rounded, ZT.aqua, '上下文',
+                                  ctxWindow > 0
+                                      ? '${_fmtTokens(ctxTokens)} / ${_fmtTokens(ctxWindow)}'
+                                      : _fmtTokens(ctxTokens)),
+                              _statLine(Icons.bolt_rounded, ZT.lemon, '缓存命中率',
+                                  hitRate != null ? '${(hitRate * 100).toStringAsFixed(1)}%' : '—'),
+                              _statLine(Icons.upload_rounded, ZT.grape, '单轮输出上限',
+                                  (u?.maxOutputTokens ?? 0) > 0 ? _fmtTokens(u!.maxOutputTokens) : '—'),
+                            ]),
                           ),
-                        if (hitRate != null)
-                          _usageRow('缓存命中率', '${(hitRate * 100).toStringAsFixed(1)}%'),
-                        if ((u?.maxOutputTokens ?? 0) > 0)
-                          _usageRow('单轮输出上限', _fmtTokens(u!.maxOutputTokens)),
+                        ]),
                         if (ctxTokens == 0)
                           Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            padding: const EdgeInsets.only(top: 8),
                             child: Text('还没有用量数据;发一条消息跑完一轮后这里会有完整统计。',
-                                style: TextStyle(
-                                    fontSize: 12.5, color: ZT.inkFaint)),
+                                style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
+                          ),
+                        if (app.lastCompact != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                                '上次压缩 ${_fmtTokens(app.lastCompact!.pre)} → '
+                                '${_fmtTokens(app.lastCompact!.post)}'
+                                '(${app.lastCompact!.trigger == 'auto' ? '自动' : '手动'})',
+                                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.aqua)),
                           ),
                       ]),
                       // —— 最近一轮(WS 实时)——
                       if (u != null)
-                        _usageSection('最近一轮', [
-                          _usageRow('输入',
-                              '${_fmtTokens(u.inputTokens)}(缓存读 ${_fmtTokens(u.cacheReadInputTokens)} / 写 ${_fmtTokens(u.cacheCreationInputTokens)})'),
-                          _usageRow('输出', _fmtTokens(u.outputTokens)),
-                          if (u.numTurns > 0) _usageRow('轮次', '${u.numTurns}'),
-                          _usageRow('耗时', u.durationMs >= 1000
-                              ? '${(u.durationMs / 1000).toStringAsFixed(1)} s'
-                              : '${u.durationMs} ms'),
-                          _usageRow('费用', '\$${u.totalCostUsd.toStringAsFixed(4)}'),
+                        _usageSection('最近一轮详情', [
+                          _statGrid([
+                            (Icons.login_rounded, ZT.aqua, '输入', _fmtTokens(u.inputTokens),
+                                '缓存读 ${_fmtTokens(u.cacheReadInputTokens)} / 写 ${_fmtTokens(u.cacheCreationInputTokens)}'),
+                            (Icons.logout_rounded, ZT.aqua, '输出', _fmtTokens(u.outputTokens), null),
+                            (Icons.repeat_rounded, ZT.grape, '轮次',
+                                u.numTurns > 0 ? '${u.numTurns}' : '—', null),
+                            (Icons.timer_outlined, ZT.lemon, '耗时',
+                                u.durationMs >= 1000
+                                    ? '${(u.durationMs / 1000).toStringAsFixed(1)}s'
+                                    : '${u.durationMs}ms',
+                                null),
+                            (Icons.attach_money_rounded, ZT.rose, '费用',
+                                '\$${u.totalCostUsd.toStringAsFixed(4)}', null),
+                          ]),
                         ]),
                       // —— 累计(REST 聚合)——
                       if (runs > 0)
-                        _usageSection('累计($runs 轮)', [
-                          _usageRow('输入合计',
-                              '${_fmtTokens((totals['inputTokens'] as num?)?.toInt() ?? 0)}(缓存读 ${_fmtTokens((totals['cacheReadInputTokens'] as num?)?.toInt() ?? 0)})'),
-                          _usageRow('输出合计',
-                              _fmtTokens((totals['outputTokens'] as num?)?.toInt() ?? 0)),
-                          _usageRow('费用合计',
-                              '\$${((totals['costUsd'] as num?) ?? 0).toStringAsFixed(4)}'),
-                          if (((totals['durationMs'] as num?)?.toInt() ?? 0) > 0)
-                            _usageRow('耗时合计',
-                                '${((totals['durationMs'] as num?)!.toInt() / 1000).toStringAsFixed(0)} s'),
+                        _usageSection('累计统计($runs 轮)', [
+                          _statGrid([
+                            (Icons.login_rounded, ZT.aqua, '输入合计',
+                                _fmtTokens((totals['inputTokens'] as num?)?.toInt() ?? 0),
+                                '缓存读 ${_fmtTokens((totals['cacheReadInputTokens'] as num?)?.toInt() ?? 0)}'),
+                            (Icons.logout_rounded, ZT.aqua, '输出合计',
+                                _fmtTokens((totals['outputTokens'] as num?)?.toInt() ?? 0), null),
+                            (Icons.attach_money_rounded, ZT.rose, '费用合计',
+                                '\$${((totals['costUsd'] as num?) ?? 0).toStringAsFixed(4)}', null),
+                            (Icons.timer_outlined, ZT.lemon, '耗时合计',
+                                '${(((totals['durationMs'] as num?)?.toInt() ?? 0) / 1000).toStringAsFixed(0)}s',
+                                null),
+                          ]),
                         ]),
                       // —— 构成:哪类消息占了多少(按字符量估算)——
                       if (composition.isNotEmpty)
@@ -678,13 +700,31 @@ class _ChatPageState extends State<ChatPage> {
                                         .clamp(0.0, 1.0)
                                     : null,
                               ),
-                          if (tools.isNotEmpty)
-                            _usageRow(
-                                '工具',
-                                tools
-                                    .map((t) =>
-                                        '${t['toolName']}×${t['count']}')
-                                    .join(' · ')),
+                        ]),
+                      // —— 工具使用明细:一行一枚小chip ——
+                      if (tools.isNotEmpty)
+                        _usageSection('工具使用明细(共 ${tools.length} 项)', [
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final t in tools)
+                                if (t is Map)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 4),
+                                    decoration: ShapeDecoration(
+                                      color: ZT.surface,
+                                      shape: StadiumBorder(
+                                          side: BorderSide(width: 1.1, color: ZT.edge)),
+                                    ),
+                                    child: Text('${t['toolName']} ×${t['count']}',
+                                        style: TextStyle(
+                                            fontSize: 11, color: ZT.inkSoft,
+                                            fontFamily: ZT.mono)),
+                                  ),
+                            ],
+                          ),
                         ]),
                     ]),
                   ),
@@ -707,6 +747,190 @@ class _ChatPageState extends State<ChatPage> {
   };
 
   String _fmtTokens(int n) => fmtTokens(n); // 按量级自适应单位(K/M/G),规则见 session_utils.fmtTokens
+
+  /// 手动压缩上下文:确认 → 发 /compact → 按钮转圈 → 收到压缩边界后回执。
+  /// 反馈分三段(点击/进行中/完成),不让人对着一个没动静的按钮猜。
+  Widget _compactButton() {
+    final busy = app.compacting;
+    return GestureDetector(
+      onTap: busy ? null : () => _confirmCompact(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: ShapeDecoration(
+          color: busy ? ZT.line : ZT.primary,
+          shape: StadiumBorder(
+              side: BorderSide(width: 1.4, color: busy ? ZT.edge : ZT.primary)),
+          shadows: busy ? null : ZT.hard(dx: 2, dy: 2),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (busy)
+            SizedBox(
+              width: 12, height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.8, color: ZT.inkSoft),
+            )
+          else
+            Icon(Icons.compress_rounded, size: 13, color: ZT.onInk),
+          const SizedBox(width: 5),
+          Text(busy ? '压缩中…' : '压缩上下文',
+              style: TextStyle(
+                  fontSize: 11.5, fontWeight: FontWeight.w800,
+                  color: busy ? ZT.inkSoft : ZT.onInk)),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _confirmCompact() async {
+    final ctx = chat.effectiveContextTokens;
+    final win = chat.usage?.contextWindow ?? 0;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx2) => AlertDialog(
+        backgroundColor: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: BorderSide(color: ZT.edge, width: 1.4),
+        ),
+        title: Text('压缩上下文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: ZT.ink)),
+        content: Text(
+          win > 0 && ctx > 0
+              ? '当前占用约 ${_fmtTokens(ctx)} / ${_fmtTokens(win)}。\n\n'
+                  '压缩会把前面的对话总结成摘要,腾出空间继续干活。摘要会替代原文进入后续上下文,细节可能丢失。'
+              : '压缩会把前面的对话总结成摘要,腾出空间继续干活。\n\n摘要会替代原文进入后续上下文,细节可能丢失。',
+          style: TextStyle(fontSize: 13.5, height: 1.5, color: ZT.inkSoft),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx2, false),
+            child: Text('取消', style: TextStyle(fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx2, true),
+            child: Text('开始压缩', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final before = app.lastCompact;
+    await app.compactContext();
+    if (!mounted) return;
+    showToast(context, app.error != null ? app.error! : '正在压缩上下文,完成后会提示…');
+    // 压缩是异步的(CLI 要跑一会儿):轮询等结果,拿到就回执
+    unawaited(_awaitCompact(before));
+  }
+
+  /// 等压缩结果(最多 60 秒),完成时给百分比式回执。
+  Future<void> _awaitCompact(Object? before) async {
+    for (var i = 0; i < 120; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      if (!app.compacting) {
+        final c = app.lastCompact;
+        if (c != null && !identical(c, before)) {
+          final saved = c.pre - c.post;
+          showToast(context,
+              '上下文已压缩:${_fmtTokens(c.pre)} → ${_fmtTokens(c.post)}'
+              '${saved > 0 ? '(省下 ${_fmtTokens(saved)})' : ''}');
+        }
+        return;
+      }
+    }
+  }
+
+  /// 大环形窗口占用:中间百分比,超 85% 变红提醒该压缩了。
+  Widget _usageRing(int ctxTokens, int ctxWindow) {
+    final frac = ctxWindow > 0 ? (ctxTokens / ctxWindow).clamp(0.0, 1.0) : 0.0;
+    final pct = ctxWindow > 0 ? (ctxTokens / ctxWindow * 100) : 0.0;
+    final color = frac > 0.85 ? ZT.rose : (frac > 0.6 ? ZT.lemon : ZT.aqua);
+    return SizedBox(
+      width: 96,
+      height: 96,
+      child: Stack(alignment: Alignment.center, children: [
+        SizedBox(
+          width: 96,
+          height: 96,
+          child: CircularProgressIndicator(
+            value: frac,
+            strokeWidth: 9,
+            strokeCap: StrokeCap.round,
+            backgroundColor: ZT.edge,
+            valueColor: AlwaysStoppedAnimation(color),
+          ),
+        ),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(ctxTokens > 0 ? '${pct.toStringAsFixed(pct >= 100 ? 0 : 1)}%' : '—',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: ZT.ink)),
+          Text('窗口占用',
+              style: TextStyle(fontSize: 10, color: ZT.inkFaint)),
+        ]),
+      ]),
+    );
+  }
+
+  /// 指标行(图标 + 标签 + 值),用在环图右侧。
+  Widget _statLine(IconData icon, Color color, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+        const Spacer(),
+        Text(value,
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: ZT.ink)),
+      ]),
+    );
+  }
+
+  /// 指标网格:每行 2 个,小卡片(参考稿的网格观感,但适配窄屏)。
+  Widget _statGrid(List<(IconData, Color, String, String, String?)> items) {
+    final rows = <Widget>[];
+    for (var i = 0; i < items.length; i += 2) {
+      final a = items[i];
+      final b = i + 1 < items.length ? items[i + 1] : null;
+      rows.add(Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: _statTile(a)),
+          const SizedBox(width: 6),
+          Expanded(child: b == null ? const SizedBox.shrink() : _statTile(b)),
+        ]),
+      ));
+    }
+    return Column(children: rows);
+  }
+
+  Widget _statTile((IconData, Color, String, String, String?) t) {
+    final (icon, color, label, value, sub) = t;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: ShapeDecoration(
+        color: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(width: 1.1, color: ZT.edge),
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+        ]),
+        const SizedBox(height: 2),
+        Text(value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: ZT.ink)),
+        if (sub != null)
+          Text(sub,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9.5, color: ZT.inkFaint)),
+      ]),
+    );
+  }
 
   Widget _usageSection(String title, List<Widget> rows) {
     return Padding(
@@ -747,22 +971,6 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
         ],
-      ]),
-    );
-  }
-
-  Widget _usageRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(children: [
-        Text(label, style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
-        const Spacer(),
-        Flexible(
-          child: Text(value,
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w800, color: ZT.aqua)),
-        ),
       ]),
     );
   }

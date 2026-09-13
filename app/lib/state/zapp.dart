@@ -200,6 +200,20 @@ class ZApp extends ChangeNotifier {
       });
       return;
     }
+    if (kind == 'context_compacted') {
+      // 压缩边界(manual = 本端点按钮,auto = CLI 自己压的):解锁按钮并记下省了多少
+      final sid = ev['sessionId'] as String?;
+      compacting = false;
+      if (sid != null && sid == currentSessionId) {
+        lastCompact = (
+          pre: (ev['preTokens'] as num?)?.toInt() ?? 0,
+          post: (ev['postTokens'] as num?)?.toInt() ?? 0,
+          trigger: '${ev['trigger'] ?? 'manual'}',
+        );
+      }
+      notifyListeners();
+      return;
+    }
     if (kind == 'upstream_status') {
       // 上游中转代理的计时广播:同样是控制事件,只落到当前会话的瞬态相位上,
       // 供静默期骨架行显示"已转发上游"真状态;无 seq、不补发,断了就退回本地猜。
@@ -424,6 +438,8 @@ class ZApp extends ChangeNotifier {
       pendingPermission: fresh.pendingPermission,
       upstreamPhase: fresh.upstreamPhase,
       upstreamAt: fresh.upstreamAt,
+      // 实时上下文占用来自瞬态事件(不落库),重建拿不到 → 保留会话当前值
+      liveContextTokens: live.liveContextTokens,
     );
   }
 
@@ -487,6 +503,10 @@ class ZApp extends ChangeNotifier {
         streamingThinking: s.streamingThinking,
         usage: s.usage,
         pendingPermission: req,
+        // 这几个是瞬态/本地态,只换审批卡不该把它们丢掉
+        upstreamPhase: s.upstreamPhase,
+        upstreamAt: s.upstreamAt,
+        liveContextTokens: s.liveContextTokens,
       );
 
   /// 消息行 meta → 出站事件(可能存成 JSON 字符串或已是 Map)。
@@ -551,6 +571,43 @@ class ZApp extends ChangeNotifier {
   /// 让服务器自我重启:server 先回 202 再拉起新实例并退出,之后连接会断几秒,
   /// 由既有 WS 自动重连恢复。抛错 = 压根没送出去(如旧版 server 无此接口)。
   Future<void> restartServer() => _api.restartServer();
+
+  // ---------------------------------------------------------------- 上下文压缩
+
+  /// 压缩中(UI 按钮转圈用);完成/超时/失败都会复位。
+  bool compacting = false;
+
+  /// 最近一次压缩结果(pre → post tokens),供 UI 显示"省了多少"。
+  ({int pre, int post, String trigger})? lastCompact;
+
+  /// 手动压缩上下文:发 CLI 的 `/compact` 指令,压缩完成由 context_compacted 事件回报。
+  /// 回合进行中不让压(CLI 那一刻在处理别的),先提示等这一轮结束。
+  Future<void> compactContext() async {
+    final sid = currentSessionId;
+    if (sid == null || compacting) return;
+    if (chat.running) {
+      error = '正在回复中,等这一轮结束再压缩上下文';
+      notifyListeners();
+      return;
+    }
+    compacting = true;
+    notifyListeners();
+    try {
+      _socket.sendChat(sid, '/compact');
+    } on Object catch (e) {
+      compacting = false;
+      error = '压缩请求没发出去:$e';
+      notifyListeners();
+      return;
+    }
+    // 兜底:CLI 不认这个命令时不会有 compact_boundary,别让按钮永远转圈
+    Timer(const Duration(seconds: 60), () {
+      if (_disposed || !compacting) return;
+      compacting = false;
+      error = '压缩没有回应(CLI 可能不支持该命令)';
+      notifyListeners();
+    });
+  }
 
   Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
     await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode, archived: archived, tags: tags, cwd: cwd);

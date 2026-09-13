@@ -81,6 +81,10 @@ class UsageInfo {
   final int numTurns;
   final int contextWindow;
   final int maxOutputTokens;
+
+  /// 真实上下文占用(server 侧取自本轮最后一次 API 请求的 prompt 大小)。
+  /// 0 = 旧数据没有该字段,此时退回累计口径估算(contextTokensFallback)。
+  final int contextTokensExact;
   const UsageInfo({
     required this.inputTokens,
     required this.outputTokens,
@@ -91,10 +95,14 @@ class UsageInfo {
     this.numTurns = 0,
     this.contextWindow = 0,
     this.maxOutputTokens = 0,
+    this.contextTokensExact = 0,
   });
 
-  /// 上一轮的上下文占用 ≈ 输入 + 缓存读 + 缓存写(result 时的 prompt 就是全部历史)。
-  int get contextTokens => inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+  /// 上一轮的上下文占用:优先用 server 给的真实值(单次请求 prompt);
+  /// 没有才退回「输入 + 缓存读 + 缓存写」——那是**整轮累计**,一轮里多次工具调用
+  /// 会相加,算出来会超过窗口(实测 601%),只当作历史数据的兜底。
+  int get contextTokens =>
+      contextTokensExact > 0 ? contextTokensExact : inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
 
   /// 缓存命中率:缓存读 / (输入 + 缓存读 + 缓存写)。
   double get cacheHitRate {
@@ -125,6 +133,10 @@ class ChatState {
   final String? upstreamPhase;
   final DateTime? upstreamAt; // 事件到达的本地时刻,骨架行据此走秒
 
+  /// 回复途中的实时上下文占用(瞬态,来自 context_usage):
+  /// 上一次 API 请求的 prompt 大小,比等回合结束再更新更即时;0 = 还没收到。
+  final int liveContextTokens;
+
   const ChatState({
     this.rows = const [],
     this.lastSeq = 0,
@@ -135,10 +147,18 @@ class ChatState {
     this.pendingPermission,
     this.upstreamPhase,
     this.upstreamAt,
+    this.liveContextTokens = 0,
   });
+
+  /// 展示用的上下文占用:实时值优先,其次上一轮落库的真实值,最后才是旧口径估算。
+  int get effectiveContextTokens {
+    if (liveContextTokens > 0) return liveContextTokens;
+    final u = usage;
+    return u == null ? 0 : u.contextTokens;
+  }
 }
 
-ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false, String? upstreamPhase, bool clearUpstream = false}) {
+ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false, String? upstreamPhase, bool clearUpstream = false, int? liveContextTokens, bool clearLiveContext = false}) {
   return ChatState(
     rows: rows ?? s.rows,
     lastSeq: lastSeq ?? s.lastSeq,
@@ -149,6 +169,7 @@ ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, 
     pendingPermission: clearPermission ? null : (pendingPermission ?? s.pendingPermission),
     upstreamPhase: clearUpstream ? null : (upstreamPhase ?? s.upstreamPhase),
     upstreamAt: clearUpstream || upstreamPhase == null ? (clearUpstream ? null : s.upstreamAt) : DateTime.now(),
+    liveContextTokens: clearLiveContext ? 0 : (liveContextTokens ?? s.liveContextTokens),
   );
 }
 
@@ -292,7 +313,13 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         numTurns: (ev['numTurns'] as num?)?.toInt() ?? 0,
         contextWindow: (ev['contextWindow'] as num?)?.toInt() ?? 0,
         maxOutputTokens: (ev['maxOutputTokens'] as num?)?.toInt() ?? 0,
+        contextTokensExact: (ev['contextTokens'] as num?)?.toInt() ?? 0,
       ));
+    case 'context_usage':
+      // 瞬态(无 seq):回复途中实时刷新上下文占用,不落库不参与去重
+      final ctx = (ev['contextTokens'] as num?)?.toInt() ?? 0;
+      if (ctx <= 0) return s;
+      return _with(s, liveContextTokens: ctx);
     case 'complete':
       // 收尾:还没拿到 tool_result 的工具卡就地落定(命令被打断,结果永远不会来)。
       // 不收尾的话卡片永久转圈、走秒不停,看起来就是"卡住了"。

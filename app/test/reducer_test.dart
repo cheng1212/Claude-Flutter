@@ -5,6 +5,48 @@ Map<String, dynamic> ev(String kind, {int? seq, Map<String, dynamic>? extra}) =>
     {'kind': kind, 'seq': ?seq, ...?extra};
 
 void main() {
+  group('上下文占用口径', () {
+    test('usage 带 contextTokens(真实值)时优先用它,不用整轮累计', () {
+      // 整轮累计 6M(多次工具调用相加),真实上下文只有 300K
+      final s = applyEvent(const ChatState(), {
+        'kind': 'usage', 'seq': 1,
+        'inputTokens': 5000000, 'outputTokens': 1000,
+        'cacheReadInputTokens': 1000000, 'cacheCreationInputTokens': 0,
+        'totalCostUsd': 1.0, 'durationMs': 1000, 'numTurns': 12,
+        'contextWindow': 1000000, 'maxOutputTokens': 32000,
+        'contextTokens': 300000,
+      });
+      expect(s.usage!.contextTokens, 300000);
+      expect(s.usage!.contextTokensExact, 300000);
+    });
+
+    test('旧数据无 contextTokens 时退回累计口径(历史兼容)', () {
+      final s = applyEvent(const ChatState(), {
+        'kind': 'usage', 'seq': 1,
+        'inputTokens': 100, 'outputTokens': 50,
+        'cacheReadInputTokens': 200, 'cacheCreationInputTokens': 0,
+        'totalCostUsd': 0, 'durationMs': 1, 'numTurns': 1,
+        'contextWindow': 1000000, 'maxOutputTokens': 100,
+      });
+      expect(s.usage!.contextTokens, 300);
+    });
+
+    test('context_usage 实时刷新,优先于落库值;有效值取 max', () {
+      var s = applyEvent(const ChatState(), {
+        'kind': 'usage', 'seq': 1, 'inputTokens': 10, 'outputTokens': 5,
+        'totalCostUsd': 0, 'durationMs': 1, 'numTurns': 1,
+        'contextWindow': 1000, 'maxOutputTokens': 10, 'contextTokens': 300,
+      });
+      expect(s.effectiveContextTokens, 300);
+      // 回复途中的实时值(无 seq 瞬态事件)
+      s = applyEvent(s, {'kind': 'context_usage', 'contextTokens': 512});
+      expect(s.effectiveContextTokens, 512);
+      // 0 值忽略(不把已知占用清成 0)
+      s = applyEvent(s, {'kind': 'context_usage', 'contextTokens': 0});
+      expect(s.effectiveContextTokens, 512);
+    });
+  });
+
   test('stream_delta 累积到流缓冲,text 落定后清空流缓冲并成行', () {
     var s = const ChatState();
     s = applyEvent(s, ev('stream_delta', seq: 1, extra: {'content': '你好'}));

@@ -6,9 +6,18 @@ import 'package:zcode_app/theme.dart';
 
 void main() {
   tearDown(() {
-    // ZT 调色板是全局静态,每个用例结束回退默认,避免串扰。
-    ZThemeController.use(ZTheme.cream);
-    ZThemeController.notifier.value = ZTheme.cream;
+    // ZT 调色板是全局静态,每个用例结束回退默认(唯一可见主题),避免串扰。
+    ZThemeController.use(ZTheme.citrus);
+    ZThemeController.notifier.value = ZTheme.citrus;
+  });
+
+  group('只保留柑橘晨光', () {
+    test('可见主题只有 citrus;cream/sticker 已隐藏(调色板代码留档)', () {
+      expect(kVisibleThemes, {ZTheme.citrus});
+      // 隐藏 ≠ 删除:调色板仍在,paletteOf 仍能解析(存档迁移/未来恢复都用得上)
+      expect(ZThemeController.paletteOf(ZTheme.cream), same(kZCream));
+      expect(ZThemeController.paletteOf(ZTheme.sticker), same(kZSticker));
+    });
   });
 
   group('柑橘晨光调色板(zremote 移植)', () {
@@ -152,22 +161,27 @@ void main() {
       expect(p.getString('zcode.theme'), 'citrus');
     });
 
-    test('load() 读回存档;未知名/缺档回退 cream', () async {
+    test('load() 读回存档;隐藏主题/未知名/缺档一律归到柑橘', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{'zcode.theme': 'citrus'});
       await ZThemeController.load();
       expect(ZT.palette, same(kZCitrus));
 
+      // 隐藏主题:旧存档里存的 cream/sticker 不能再把隐藏皮肤带回来
       SharedPreferences.setMockInitialValues(<String, Object>{'zcode.theme': 'sticker'});
       await ZThemeController.load();
-      expect(ZT.palette, same(kZSticker), reason: '新增主题也要能持久化读回');
+      expect(ZT.palette, same(kZCitrus), reason: '已隐藏主题归到柑橘');
+
+      SharedPreferences.setMockInitialValues(<String, Object>{'zcode.theme': 'cream'});
+      await ZThemeController.load();
+      expect(ZT.palette, same(kZCitrus));
 
       SharedPreferences.setMockInitialValues(<String, Object>{'zcode.theme': 'hacker-dark'});
       await ZThemeController.load();
-      expect(ZT.palette, same(kZCream), reason: '未知名回退 cream,不崩');
+      expect(ZT.palette, same(kZCitrus), reason: '未知名回退柑橘,不崩');
 
       SharedPreferences.setMockInitialValues(<String, Object>{});
       await ZThemeController.load();
-      expect(ZT.palette, same(kZCream));
+      expect(ZT.palette, same(kZCitrus));
     });
   });
 }
