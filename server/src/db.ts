@@ -493,7 +493,14 @@ export type UsageStatsAgg = {
     toolCallCount: number; activeDays: number; currentStreakDays: number; peakDayTokens: number;
     favoriteModel: string;
   };
-  models: { modelId: string; totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number; share: number }[];
+  models: {
+    modelId: string; totalTokens: number; inputTokens: number; outputTokens: number;
+    requestCount: number; share: number;
+    /** 缓存读 token(命中率分子) */
+    cacheReadInputTokens: number;
+    /** 缓存命中率 = 缓存读 / 输入侧(输入+缓存读+缓存写);无输入侧为 0 */
+    cacheHitRate: number;
+  }[];
   daily: { date: string; models: { modelId: string; totalTokens: number; inputTokens: number; outputTokens: number }[] }[];
 };
 
@@ -516,7 +523,7 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
     { model: string | null; usage: string | null; started_at: string; session_id: string }[];
 
   const sessions = new Set<string>();
-  const perModel = new Map<string, { totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number }>();
+  const perModel = new Map<string, { totalTokens: number; inputTokens: number; outputTokens: number; requestCount: number; cacheRead: number }>();
   const dailyMap = new Map<string, Map<string, { totalTokens: number; inputTokens: number; outputTokens: number }>>();
   let inputRaw = 0, outputTokens = 0, cacheRead = 0, cacheCreation = 0, totalTurns = 0;
 
@@ -533,12 +540,13 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
     totalTurns += u.numTurns ?? 0;
 
     const model = r.model ?? 'unknown';
-    const acc = perModel.get(model) ?? { totalTokens: 0, inputTokens: 0, outputTokens: 0, requestCount: 0 };
+    const acc = perModel.get(model) ?? { totalTokens: 0, inputTokens: 0, outputTokens: 0, requestCount: 0, cacheRead: 0 };
     const dayTotal = inTok + cr + cc + outTok;
     acc.totalTokens += dayTotal;
     acc.inputTokens += inTok + cr + cc;
     acc.outputTokens += outTok;
     acc.requestCount += 1;
+    acc.cacheRead += cr;
     perModel.set(model, acc);
 
     const day = _localDay(r.started_at);
@@ -555,7 +563,16 @@ export function usageStats(db: Db, sinceIso: string | null): UsageStatsAgg {
   const inputTokens = inputRaw + cacheRead + cacheCreation;
   const totalTokens = inputTokens + outputTokens;
   const models = [...perModel.entries()]
-    .map(([modelId, a]) => ({ modelId, ...a, share: totalTokens > 0 ? a.totalTokens / totalTokens : 0 }))
+    .map(([modelId, a]) => ({
+      modelId,
+      totalTokens: a.totalTokens,
+      inputTokens: a.inputTokens,
+      outputTokens: a.outputTokens,
+      requestCount: a.requestCount,
+      cacheReadInputTokens: a.cacheRead,
+      cacheHitRate: a.inputTokens > 0 ? a.cacheRead / a.inputTokens : 0,
+      share: totalTokens > 0 ? a.totalTokens / totalTokens : 0,
+    }))
     .sort((a, b) => b.totalTokens - a.totalTokens);
   const daily = [...dailyMap.entries()]
     .map(([date, m]) => ({

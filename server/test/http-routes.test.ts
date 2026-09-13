@@ -252,6 +252,67 @@ describe('REST · 会话管理增强', () => {
   });
 });
 
+describe('REST · 用量', () => {
+  it('GET /api/usage 按自然日过滤(含今天),模型明细带缓存命中率', async () => {
+    const db = openDb(':memory:');
+    const { createRun: mkRun, finishRun: endRun } = await import('../src/db.js');
+    const s = createSession(db, { title: '用量' });
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+
+    // 今天:deepseek-flash 一条(输入 100 + 缓存读 300 + 输出 50)
+    const today = mkRun(db, s.id, 'deepseek-flash');
+    endRun(db, today.id, {
+      status: 'success',
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 300, cacheCreationInputTokens: 0, numTurns: 1 },
+    });
+    // 昨天(仍落在 7d 自然日窗口内)
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    y.setHours(12, 0, 0, 0);
+    const yRun = mkRun(db, s.id, 'glm-5.3-flash');
+    db.prepare('UPDATE runs SET started_at=? WHERE id=?').run(y.toISOString(), yRun.id);
+    endRun(db, yRun.id, {
+      status: 'success',
+      usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, numTurns: 1 },
+    });
+    // 8 天前:7d 窗口外
+    const old = new Date();
+    old.setDate(old.getDate() - 8);
+    old.setHours(12, 0, 0, 0);
+    const oRun = mkRun(db, s.id, 'nemotron-3-ultra');
+    db.prepare('UPDATE runs SET started_at=? WHERE id=?').run(old.toISOString(), oRun.id);
+    endRun(db, oRun.id, {
+      status: 'success',
+      usage: { inputTokens: 9999, outputTokens: 9999, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, numTurns: 1 },
+    });
+
+    const week = (await app.inject({ method: 'GET', url: '/api/usage?range=7d', headers: H })).json() as {
+      models: { modelId: string; cacheHitRate: number; cacheReadInputTokens: number }[];
+      summary: { totalTokens: number };
+    };
+    const ids = week.models.map((m) => m.modelId);
+    expect(ids).toContain('deepseek-flash');
+    expect(ids).toContain('glm-5.3-flash');
+    expect(ids).not.toContain('nemotron-3-ultra'); // 8 天前被自然日窗口挡掉
+    const ds = week.models.find((m) => m.modelId === 'deepseek-flash')!;
+    expect(ds.cacheReadInputTokens).toBe(300);
+    expect(ds.cacheHitRate).toBeCloseTo(300 / 400, 5);
+
+    // today:只有今天的模型
+    const day = (await app.inject({ method: 'GET', url: '/api/usage?range=today', headers: H })).json() as {
+      models: { modelId: string }[];
+    };
+    expect(day.models.map((m) => m.modelId)).toEqual(['deepseek-flash']);
+
+    // all:全都回来
+    const all = (await app.inject({ method: 'GET', url: '/api/usage?range=all', headers: H })).json() as {
+      models: { modelId: string }[];
+    };
+    expect(all.models.map((m) => m.modelId)).toContain('nemotron-3-ultra');
+    await app.close();
+  });
+});
+
 describe('REST · 定时任务', () => {
   it('GET /api/crons 支持 ?session= 过滤(会话弹层/快捷条只取本会话)', async () => {
     const db = openDb(':memory:');

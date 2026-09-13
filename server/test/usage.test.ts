@@ -41,6 +41,21 @@ describe('usageStats · 全局用量聚合', () => {
     expect(agg.summary.peakDayTokens).toBe(795);
   });
 
+  it('每个模型带缓存命中率(缓存读 / 输入侧);无输入侧为 0', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: 's' });
+    const r1 = createRun(db, s.id, 'deepseek-flash');
+    finishRun(db, r1.id, { status: 'success', usage: usage(100, 50, 300, 0) });
+    const r2 = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, r2.id, { status: 'success', usage: usage(0, 20) }); // 无输入侧
+    const agg = usageStats(db, null);
+    const ds = agg.models.find((m) => m.modelId === 'deepseek-flash')!;
+    expect(ds.cacheReadInputTokens).toBe(300);
+    expect(ds.cacheHitRate).toBeCloseTo(300 / 400, 5); // 300 / (100+300)
+    const glm = agg.models.find((m) => m.modelId === 'glm-5.3-flash')!;
+    expect(glm.cacheHitRate).toBe(0);
+  });
+
   it('无 usage 的 run 不计入;sinceIso(未来时间)过滤后为空', () => {
     const db = openDb(':memory:');
     const s = createSession(db, { title: 's' });

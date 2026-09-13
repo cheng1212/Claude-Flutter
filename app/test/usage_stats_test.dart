@@ -50,6 +50,40 @@ void main() {
     });
   });
 
+  group('模型明细 · 缓存命中率', () {
+    test('服务端给了 cacheHitRate/cacheReadInputTokens 就直接用', () {
+      final v = UsageStatsView.fromMap({
+        'range': '7d',
+        'summary': {'totalTokens': 10},
+        'models': [
+          {
+            'modelId': 'deepseek-flash', 'totalTokens': 450, 'inputTokens': 400, 'outputTokens': 50,
+            'requestCount': 1, 'share': 1.0,
+            'cacheReadInputTokens': 300, 'cacheHitRate': 0.75,
+          },
+        ],
+        'daily': [],
+      });
+      final m = v.models.single;
+      expect(m.cacheReadInputTokens, 300);
+      expect(m.cacheHitRate, closeTo(0.75, 1e-9));
+    });
+
+    test('老服务端无该字段:按同口径本地兜算(缓存读/输入侧),无输入侧为 0', () {
+      final v = UsageStatsView.fromMap({
+        'range': '7d',
+        'summary': {'totalTokens': 10},
+        'models': [
+          {'modelId': 'a', 'totalTokens': 400, 'inputTokens': 400, 'outputTokens': 0, 'requestCount': 1, 'share': 1.0, 'cacheReadInputTokens': 300},
+          {'modelId': 'b', 'totalTokens': 5, 'inputTokens': 0, 'outputTokens': 5, 'requestCount': 1, 'share': 0.0},
+        ],
+        'daily': [],
+      });
+      expect(v.models[0].cacheHitRate, closeTo(0.75, 1e-9));
+      expect(v.models[1].cacheHitRate, 0);
+    });
+  });
+
   group('formatTokens', () {
     test('亿/万/原样三档', () {
       expect(formatTokens(1560000000), '15.6亿');
