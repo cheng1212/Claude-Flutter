@@ -90,6 +90,27 @@ void main() {
     expect(steps.map((s) => s.content).toList(), ['第一步', '第二步']);
   });
 
+  test('TaskUpdate deleted → 从面板移除(不是显示成未勾选)', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '要留下的'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '垃圾测试条目'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '2', 'status': 'deleted'}),
+    ];
+    final steps = derivePlanSteps(rows)!;
+    expect(steps.map((s) => s.content).toList(), ['要留下的'],
+        reason: 'deleted 的任务必须消失,不能留着当未执行项');
+  });
+
+  test('全部删完 → 计划为空,面板收起', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '甲'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '乙'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'deleted'}),
+      _tool('TaskUpdate', {'taskId': '2', 'status': 'deleted'}),
+    ];
+    expect(derivePlanSteps(rows), isNull);
+  });
+
   test('TaskList 空快照 → 清空计划(面板收起)', () {
     final rows = <ChatRow>[
       _tool('TaskCreate', {'subject': '做完了的事'}, result: '{"id":"1"}'),
