@@ -33,20 +33,31 @@ export function restartPlan(opts: {
   };
 }
 
-/** 拉起新实例并立即脱钩。返回新进程 pid(仅用于日志)。 */
+/**
+ * 拉起新实例并立即脱钩。返回新进程 pid(仅用于日志)。
+ *
+ * 日志文件打不开**不能**让重启失败:实测旧进程的 stdout 正被重定向到同一文件时,
+ * `openSync(...,'a')` 会 EBUSY,原来直接抛出 → spawn 失败 → 重启按钮点了没反应
+ * (用户实测)。降级为不落日志(stdio ignore),重启本身照做。
+ */
 export function spawnRestart(plan: RestartPlan): number | undefined {
-  const fd = fs.openSync(plan.logFile, 'a');
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(plan.logFile, 'a');
+  } catch {
+    fd = null; // 被占用/无权限:放弃这行日志,不放弃重启
+  }
   try {
     const child = spawn(plan.cmd, plan.args, {
       cwd: plan.cwd,
       detached: true, // 独立进程组:父进程退出不牵连
-      stdio: ['ignore', fd, fd],
+      stdio: ['ignore', fd ?? 'ignore', fd ?? 'ignore'],
       windowsHide: true,
       env: { ...process.env },
     });
     child.unref();
     return child.pid;
   } finally {
-    fs.closeSync(fd); // 关掉父进程这侧的句柄副本,别拽着新进程的输出
+    if (fd !== null) fs.closeSync(fd); // 关掉父进程这侧的句柄副本,别拽着新进程的输出
   }
 }

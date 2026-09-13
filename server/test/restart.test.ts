@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { restartPlan } from '../src/restart.js';
+import { restartPlan, spawnRestart } from '../src/restart.js';
 
 describe('restartPlan · 自我重启命令推导', () => {
   it('复现当前启动方式:execPath + argv[1..] + 原 cwd', () => {
@@ -34,5 +37,21 @@ describe('restartPlan · 自我重启命令推导', () => {
       logFile: 'log.txt',
     });
     expect(plan.args).toEqual(['dist/index.js']);
+  });
+
+  it('日志文件打不开也不能让重启失败(EBUSY 降级)', () => {
+    // 用一个目录当"日志文件":openSync 必失败(实测旧进程 stdout 占着日志时会 EBUSY)
+    const dirAsLog = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-restart-'));
+    const plan = restartPlan({
+      execPath: process.execPath,
+      argv: [process.execPath, '-e', 'process.exit(0)'],
+      cwd: process.cwd(),
+      logFile: dirAsLog, // 目录 → 打不开
+    });
+    // 关键:不抛异常(spawn 仍执行),且返回 pid
+    expect(() => spawnRestart(plan)).not.toThrow();
+    const pid = spawnRestart(plan);
+    expect(typeof pid === 'number' || pid === undefined).toBe(true);
+    fs.rmSync(dirAsLog, { recursive: true, force: true });
   });
 });
