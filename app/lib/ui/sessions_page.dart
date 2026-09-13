@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../debug_log.dart';
 import '../notify.dart';
 import '../session_utils.dart';
 import '../state/zapp.dart';
@@ -1335,6 +1336,20 @@ class _SessionsPageState extends State<SessionsPage> {
               _settingsRow('连接状态', link),
               _settingsRow('会话数', '${app.sessions.length}'),
               _settingsRow('模型数', '${app.models.length}'),
+              InkWell(
+                onTap: () => _showDiagnosticLog(context),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(children: [
+                    Icon(Icons.bug_report_outlined, size: 16, color: ZT.aqua),
+                    const SizedBox(width: 8),
+                    Text('诊断日志', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: ZT.ink)),
+                    const Spacer(),
+                    Text('卡死/白屏时点这里复制',
+                        style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+                  ]),
+                ),
+              ),
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -1440,6 +1455,55 @@ class _SessionsPageState extends State<SessionsPage> {
         const Spacer(),
         Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.ink)),
       ]),
+    );
+  }
+
+  /// 诊断日志查看:最近 800 条事件元数据(卡死/白屏/丢消息现场取证),
+  /// 一键复制,贴回来即可定位;不记任何消息内容。
+  Future<void> _showDiagnosticLog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: BorderSide(color: ZT.edge, width: 1.4),
+        ),
+        title: Text('诊断日志(最近 ${ZLog.kMax} 条)',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: ZT.ink)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 380,
+          child: Container(
+            decoration: BoxDecoration(
+              color: ZT.bg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: ZT.line),
+            ),
+            padding: const EdgeInsets.all(8),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                ZLog.dump(),
+                style: TextStyle(fontSize: 9.5, height: 1.35, fontFamily: ZT.mono, color: ZT.ink),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => ZLog.clear(),
+            child: Text('清空', style: TextStyle(color: ZT.inkSoft, fontWeight: FontWeight.w700)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: ZLog.dump()));
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              if (context.mounted) showToast(context, '诊断日志已复制,贴给开发即可');
+            },
+            child: Text('复制全部', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+        ],
+      ),
     );
   }
 }

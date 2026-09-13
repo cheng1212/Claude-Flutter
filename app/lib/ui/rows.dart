@@ -267,6 +267,10 @@ String balanceFences(String src) {
 /// [streaming] 为 true 时(回复还在吐字)重排节流到 200ms 一帧——长回复尾部
 /// 全量 parse 是 O(n),每个 delta 都重排会打满 UI 线程;流式结束翻 false 时
 /// 绕过节流立即终渲染,不丢尾字。
+///
+/// 流式期间只渲染尾部 [kStreamingTailChars] 字:全文 parse/布局随字数线性变贵,
+/// 实测几千字后单次重排就能把主线程卡住数百毫秒(adb logcat「Skipped 277 frames」
+/// =「回复过程中卡死」的根因)。头部折叠成一行提示,落定后完整渲染一次。
 class MemoMarkdown extends StatefulWidget {
   final String text;
   final TextStyle? baseStyle;
@@ -279,6 +283,9 @@ class MemoMarkdown extends StatefulWidget {
 
   /// 测试观察点:真实发生 Markdown parse 的次数(缓存命中不计数)。
   static int parseCount = 0;
+
+  /// 流式期间渲染的尾部字符数上限:parse 成本被钉死在常数级。
+  static const int kStreamingTailChars = 3000;
 
   @override
   State<MemoMarkdown> createState() => _MemoMarkdownState();
@@ -328,8 +335,20 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
     _built = widget.text;
     _lastBuildAtMs = MemoMarkdown.nowMs();
     MemoMarkdown.parseCount++;
-    _cached = MarkdownBody(
-      data: widget.streaming ? balanceFences(widget.text) : widget.text,
+    var data = widget.text;
+    Widget? headHint;
+    if (widget.streaming && widget.text.length > MemoMarkdown.kStreamingTailChars) {
+      // 只喂尾部给 Markdown:parse/布局成本与总字数解耦(「回复时卡死」修复)
+      final hidden = widget.text.length - MemoMarkdown.kStreamingTailChars;
+      headHint = Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text('… 前文 $hidden 字已收起,回复结束后显示全文',
+            style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+      );
+      data = widget.text.substring(widget.text.length - MemoMarkdown.kStreamingTailChars);
+    }
+    final body = MarkdownBody(
+      data: widget.streaming ? balanceFences(data) : data,
       selectable: true,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
@@ -395,6 +414,9 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
         ),
       ),
     );
+    _cached = headHint == null
+        ? body
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [headHint, body]);
     return _cached!;
   }
 }

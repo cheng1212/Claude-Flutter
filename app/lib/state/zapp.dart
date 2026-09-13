@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../api.dart';
+import '../debug_log.dart';
 import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
@@ -116,8 +117,34 @@ class ZApp extends ChangeNotifier {
   }
 
   void _bind() {
-    _socket.onChanged = notifyListeners;
+    _socket.onChanged = () {
+      if (_socket.state != _lastWsState) {
+        _lastWsState = _socket.state;
+        ZLog.i('ws', 'state=${_socket.state}${_socket.failure == null ? '' : ' fail=${_socket.failure}'}');
+      }
+      notifyListeners();
+    };
     _sub = _socket.events.listen(_onEvent);
+  }
+
+  ZSocketState? _lastWsState;
+  Timer? _blankWatchdog;
+
+  /// 白屏看门狗布防:回合在跑但 rows 为空才上 2s 定时器,持续存在则留证
+  /// (「回复中列表全白」现场);无事发生不留挂起定时器(测试不炸 !timersPending)。
+  void _armBlankWatchdog() {
+    if (_blankWatchdog != null || _disposed) return;
+    if (currentSessionId == null || !chat.running || chat.rows.isNotEmpty) return;
+    _blankWatchdog = Timer(const Duration(seconds: 2), () {
+      _blankWatchdog = null;
+      if (_disposed) return;
+      if (currentSessionId != null && chat.running && chat.rows.isEmpty) {
+        ZLog.w('blank',
+            'rows=0 while running! hl=$historyLoading ws=${_socket.state} lastSeq=${chat.lastSeq} backfill=${_backfill != null}',
+            dedupeKey: 'blank-$currentSessionId');
+        _armBlankWatchdog(); // 还白着:继续盯
+      }
+    });
   }
 
   void _unbind(ZSocket s) {
@@ -131,6 +158,7 @@ class ZApp extends ChangeNotifier {
     _retry?.cancel();
     _sessionsDirtyTimer?.cancel();
     _pendDeltaTimer?.cancel();
+    _blankWatchdog?.cancel();
     _sub?.cancel();
     _socket.onChanged = null;
     unawaited(_socket.close());
@@ -196,11 +224,13 @@ class ZApp extends ChangeNotifier {
     }
     _flushDeltas(); // 非 delta 事件先冲掉在途 delta,保住顺序(终态 text 必须落在残余 delta 之后)
     chat = applyEvent(chat, ev);
+    ZLog.i('ev', '$kind seq=${ev['seq']} rows=${chat.rows.length} lastSeq=${chat.lastSeq} running=${chat.running}');
     _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
     if (kind == 'complete') {
       unawaited(_loadSessions(silent: true));
       _maybeAutoConsume(); // 回合落定:自动消化队首(开关开 + 队列非空才真的推)
     }
+    _armBlankWatchdog();
     notifyListeners();
   }
 
@@ -229,6 +259,7 @@ class ZApp extends ChangeNotifier {
     _pendDeltaText = '';
     _pendDeltaThinking = '';
     _pendDeltaSeq = null;
+    ZLog.i('delta', 'flush text+${text.length} think+${thinking.length} seq=$seq');
     var changed = false;
     if (thinking.isNotEmpty) {
       chat = applyEvent(chat, {'kind': 'thinking_delta', 'content': thinking, 'seq': ?seq});
@@ -238,7 +269,10 @@ class ZApp extends ChangeNotifier {
       chat = applyEvent(chat, {'kind': 'stream_delta', 'content': text, 'seq': ?seq});
       changed = true;
     }
-    if (changed) notifyListeners();
+    if (changed) {
+      _armBlankWatchdog();
+      notifyListeners();
+    }
   }
 
   /// 丢弃在途 delta(切会话):旧会话的瞬时流式尾巴不该落进新会话。
@@ -299,10 +333,12 @@ class ZApp extends ChangeNotifier {
     _backfill = null;
     final bf = _Backfill(id);
     _backfill = bf; // 先挂缓冲再拉取:补齐窗口内到达的 WS 事件留底,换底重放不丢
+    ZLog.i('open', 'openSession $id (token=$token)');
     notifyListeners();
     try {
       final first = await _api.messages(id, limit: 500, offset: 0);
       if (token != _openToken) return;
+      ZLog.i('open', 'first page rows=${first.messages.length} total=${first.total}');
       final (headEvents, maxSeq) = _histEvents(first);
       // 首屏即并入留底的实时事件:REST 读取发生在落库/回显之前时,窗口内到达的
       // 回显消息只存在于 bf.extra——不并进来就会被下面这行 `chat = st` 整体覆盖,
@@ -313,6 +349,7 @@ class ZApp extends ChangeNotifier {
       }
       chat = st;
       historyLoading = false;
+      _armBlankWatchdog();
       notifyListeners();
       // 行号才是权威锚:meta 里的 seq 是服务器事件流编号,可能来自旧进程的
       // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
@@ -342,6 +379,7 @@ class ZApp extends ChangeNotifier {
       }
       if (token != _openToken || _backfill != bf) return;
       _backfill = null;
+      ZLog.i('open', 'swap rows=${full.rows.length} lastSeq=${full.lastSeq}');
       if (currentSessionId == id) {
         // 换底不能把 subscribed/实时事件已设定的 running 冲掉:保留它,
         // 重建本身不推断 running(_replay 已归零),实时态只由 subscribed/终态事件驱动。
@@ -364,6 +402,7 @@ class ZApp extends ChangeNotifier {
       _backfill = null;
       historyLoading = false;
       error = '$e';
+      ZLog.e('open', 'openSession $id 失败: $e(rows 保持空,等用户重试)');
       notifyListeners();
     }
   }

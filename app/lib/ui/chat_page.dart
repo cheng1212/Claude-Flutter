@@ -13,6 +13,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
+import '../debug_log.dart';
 import '../panel_utils.dart';
 import '../session_utils.dart';
 import '../state/reducer.dart';
@@ -164,6 +165,7 @@ class _ChatPageState extends State<ChatPage> {
       final delta = pos.maxScrollExtent - before;
       // 只补增长(内容往下加);缩小(面板收起)让视口自然扩大,不回拉
       if (delta <= 1 || pos.userScrollDirection != ScrollDirection.idle) return;
+      ZLog.i('scroll', 'comp +${delta.toStringAsFixed(0)}px off=${pos.pixels.toStringAsFixed(0)}');
       _listCtrl.jumpTo(math.min(pos.pixels + delta, pos.maxScrollExtent));
     });
   }
