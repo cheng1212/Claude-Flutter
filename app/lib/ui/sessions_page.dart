@@ -1506,7 +1506,8 @@ class _SessionsPageState extends State<SessionsPage> {
       child: Row(children: [
         Text('主题', style: TextStyle(fontSize: 12.5, color: ZT.inkFaint)),
         const Spacer(),
-        for (final t in ZTheme.values)
+        // 只列可见主题(当前仅柑橘晨光):cream/sticker 已隐藏,选择器不再出现
+        for (final t in ZTheme.values.where(kVisibleThemes.contains))
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: InkWell(

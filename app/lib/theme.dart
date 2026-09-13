@@ -6,6 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// sticker = 墨线贴纸(方案 A:柑橘加大号)。
 enum ZTheme { cream, citrus, sticker }
 
+/// **只保留柑橘晨光**:cream/sticker 已隐藏(调色板代码留档,选择器不再列出,
+/// 存档里的旧值启动时归到 citrus)。后续 UI 调整只针对 citrus 做。
+const Set<ZTheme> kVisibleThemes = {ZTheme.citrus};
+
 extension ZThemeLabel on ZTheme {
   String get label => switch (this) {
         ZTheme.cream => '原版奶油',
@@ -147,13 +151,15 @@ const ZPalette kZSticker = ZPalette(
 class ZThemeController {
   ZThemeController._();
 
-  static final ValueNotifier<ZTheme> notifier = ValueNotifier<ZTheme>(ZTheme.cream);
+  static final ValueNotifier<ZTheme> notifier = ValueNotifier<ZTheme>(ZTheme.citrus);
   static const _kTheme = 'zcode.theme';
 
-  /// 启动时读回持久化主题;存档损坏/未知名回退 cream。
+  /// 启动时读回持久化主题。存档损坏/未知主题/已隐藏主题(cream/sticker)
+  /// 一律归到柑橘——只留一套皮肤,免得旧存档把隐藏主题又带回来。
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();
-    final t = ZTheme.values.asNameMap()[p.getString(_kTheme)] ?? ZTheme.cream;
+    final stored = ZTheme.values.asNameMap()[p.getString(_kTheme)];
+    final t = (stored != null && kVisibleThemes.contains(stored)) ? stored : ZTheme.citrus;
     use(t);
     notifier.value = t;
   }
@@ -180,7 +186,7 @@ class ZThemeController {
 /// 历史上是 static const(明快奶油单主题),为支持双主题改成 getter——
 /// 调用点写法不变,但 const 上下文里引用 ZT.* 的地方要摘掉 const。
 abstract final class ZT {
-  static ZPalette _palette = kZCream;
+  static ZPalette _palette = kZCitrus; // 唯一皮肤:柑橘晨光
   static ZPalette get palette => _palette;
 
   // ---- palette -----------------------------------------------------------
