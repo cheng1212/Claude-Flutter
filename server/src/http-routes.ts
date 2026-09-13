@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted, usageStats, getCron, setCronStatus, resetCron, listCronRuns, recordCronRun } from './db.js';
 import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts, isTranscriptActive } from './local-sessions.js';
@@ -278,6 +279,70 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     const target = path.join(dir, `${Date.now()}_${safeName}`);
     fs.writeFileSync(target, buf);
     return { ok: true, path: target, fileName: safeName, size: buf.length };
+  });
+
+  // ── 分块上传(大文件真分块:每块独立请求可重试;tmp 缓冲按序组装)──
+  const uploadRoot = path.join(os.tmpdir(), 'zcode-upload-chunks');
+  fs.mkdirSync(uploadRoot, { recursive: true });
+  const UPLOAD_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+  app.post('/api/sessions/:id/upload/init', async (req, reply) => {
+    const body = (req.body ?? {}) as { fileName?: unknown; totalChunks?: unknown };
+    const totalChunks = Number(body.totalChunks);
+    if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 4096) {
+      return reply.code(400).send({ error: 'totalChunks 非法(1..4096)' });
+    }
+    const uploadId = `${Date.now().toString(36)}-${randomBytes(6).toString('hex')}`;
+    fs.mkdirSync(path.join(uploadRoot, uploadId), { recursive: true });
+    fs.writeFileSync(
+      path.join(uploadRoot, uploadId, 'meta.json'),
+      JSON.stringify({ fileName: sanitizeFileName(String(body.fileName ?? 'file')), totalChunks }),
+    );
+    return { uploadId, have: [] as number[] };
+  });
+
+  app.post('/api/sessions/:id/upload/:uploadId/:index', async (req, reply) => {
+    const { uploadId, index } = req.params as { uploadId: string; index: string };
+    if (!UPLOAD_ID_RE.test(uploadId) || !/^\d+$/.test(index)) return reply.code(400).send({ error: '参数非法' });
+    if (!fs.existsSync(path.join(uploadRoot, uploadId, 'meta.json'))) return reply.code(404).send({ error: 'upload 不存在' });
+    const raw = req.body;
+    if (!Buffer.isBuffer(raw) || raw.length === 0) return reply.code(400).send({ error: '空块' });
+    fs.writeFileSync(path.join(uploadRoot, uploadId, `chunk-${Number(index)}`), raw);
+    return { ok: true, index: Number(index) };
+  });
+
+  app.post('/api/sessions/:id/upload/:uploadId/complete', async (req, reply) => {
+    const { uploadId, id } = req.params as { uploadId: string; id: string };
+    if (!UPLOAD_ID_RE.test(uploadId)) return reply.code(400).send({ error: '参数非法' });
+    const dir = path.join(uploadRoot, uploadId);
+    let meta: { fileName: string; totalChunks: number };
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')) as { fileName: string; totalChunks: number };
+    } catch {
+      return reply.code(404).send({ error: 'upload 不存在' });
+    }
+    for (let i = 0; i < meta.totalChunks; i++) {
+      if (!fs.existsSync(path.join(dir, `chunk-${i}`))) return reply.code(400).send({ error: `缺块 ${i}` });
+    }
+    const session = deps.db
+      .prepare('SELECT cwd FROM sessions WHERE id=?')
+      .get(id) as { cwd: string | null } | undefined;
+    if (!session) return reply.code(404).send({ error: '会话不存在' });
+    let outDir: string;
+    if (session.cwd) {
+      outDir = path.join(session.cwd, 'uploads');
+    } else {
+      outDir = path.join(deps.projectsRoot ?? path.join(os.homedir(), 'zcode-projects'), `uploads-${id.slice(0, 8)}`);
+      fs.mkdirSync(outDir, { recursive: true });
+      deps.db.prepare('UPDATE sessions SET cwd=? WHERE id=?').run(outDir, id);
+    }
+    fs.mkdirSync(outDir, { recursive: true });
+    const target = path.join(outDir, `${Date.now()}_${meta.fileName}`);
+    for (let i = 0; i < meta.totalChunks; i++) {
+      fs.appendFileSync(target, fs.readFileSync(path.join(dir, `chunk-${i}`)));
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { ok: true, path: target, fileName: meta.fileName, size: fs.statSync(target).size };
   });
 
   app.get('/api/sessions/:id/messages', async (req) => {

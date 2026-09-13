@@ -56,11 +56,11 @@ try {
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const app = fastify();
-  // 文件上传:二进制 body 由手机端直传(文件名走 X-File-Name 头),按 buffer 原样收
+  // 文件上传:二进制 body(分块上传 octet-stream)按 buffer 原样收
   app.addContentTypeParser(
     'application/octet-stream',
     { parseAs: 'buffer' },
-    (_req, _body, done) => done(null),
+    (_req, body, done) => done(null, body),
   );
   // CORS:浏览器端 Flutter Web 跨域访问;必须先于鉴权钩子注册,OPTIONS 免鉴权短路。
   app.addHook('onRequest', async (req, reply) => {

@@ -148,14 +148,51 @@ export class ZApi {
   }
 
   /**
-   * 上传文件到会话(cwd/uploads/):分块 base64 + 进度(0~1)。
-   * 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位。
-   * 网络错误/5xx 自动重试 2 次(0.8s/1.6s 退避,对齐 app uploadFile 语义);4xx 不重试。
+   * 上传文件到会话(cwd/uploads/)。
+   * ≤6MB:base64 JSON 单请求(低开销);>6MB:真分块——init/chunk/complete,
+   * 每块独立 octet-stream 请求 + 逐块重试(0.8s/1.6s 退避),进度按块数。
+   * 业界对照见 docs/qa-plan-20260914.md E 节(tus/S3 类方案对个人工具过重,自建轻量分块)。
    */
   async uploadFile(
     sessionId: string, fileName: string, bytes: Uint8Array, onProgress?: (p: number) => void,
   ): Promise<{ path: string; fileName: string }> {
-    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块,与 app/lib/api.dart 同参
+    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块,必须为 3 的倍数(base64 对齐)
+    const total = Math.max(1, Math.ceil(bytes.length / chunk));
+
+    if (bytes.length > chunk * 8) {
+      const init = await this.call<{ uploadId: string; have: number[] }>(
+        'POST', `/api/sessions/${sessionId}/upload/init`,
+        { fileName, totalChunks: total },
+      );
+      const have = new Set(init.have ?? []);
+      for (let i = 0; i < total; i++) {
+        if (have.has(i)) continue; // 断点续传:服务端已收的块跳过
+        let attempt = 0;
+        for (;;) {
+          try {
+            const res = await this.f(
+              `${this.baseUrl}/api/sessions/${sessionId}/upload/${init.uploadId}/${i}`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/octet-stream' },
+                body: bytes.subarray(i * chunk, Math.min((i + 1) * chunk, bytes.length)) as unknown as BodyInit,
+              },
+            );
+            if (!res.ok) throw new ApiError(`块 ${i} 上传失败: ${res.status}`, res.status);
+            break;
+          } catch (e) {
+            const status = e instanceof ApiError ? e.status : undefined;
+            if ((typeof status === 'number' && status < 500) || attempt >= 2) throw e;
+            await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+            attempt++;
+          }
+        }
+        onProgress?.((i + 1) / total);
+      }
+      return this.call('POST', `/api/sessions/${sessionId}/upload/${init.uploadId}/complete`);
+    }
+
+    // 小文件:分块 base64 JSON 单请求(编码进度);块长必须是 3 的倍数(base64 对齐)
     let done = 0;
     let dataB64 = '';
     while (done < bytes.length) {
