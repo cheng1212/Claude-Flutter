@@ -28,6 +28,7 @@
    - app：`cd D:\zcode-dev\app && D:\flutter\bin\flutter.bat analyze && D:\flutter\bin\flutter.bat test`
 4. **合入**：`git checkout develop && git merge --no-ff feature/<主题>`
 5. **发布**：`git checkout master && git merge --no-ff develop` → 打 tag `v<版本>` → 重启 server（5190/5191）→ 需要时构建 APK 发布（见交接文档）
+   - **版本号纪律**：每次发版 `app/pubspec.yaml` 的 `version: X.Y.Z+build` 必须**同时递增**（语义化 X.Y.Z + 递增 build 号），不允许同版本号重复发包；版本号在 app 汉堡菜单底部可见（package_info_plus 读取）
 6. **备份**：`git push backup --all --tags`
 
 ## 禁止

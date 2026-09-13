@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../debug_log.dart';
 import '../notify.dart';
@@ -685,6 +686,18 @@ class _SessionsPageState extends State<SessionsPage> {
                 Navigator.pop(context);
                 _restartServer();
               },
+            ),
+            const Divider(height: 16),
+            // 版本号:读 pubspec version(每次发版必递增,见 AGENTS.md 发版规范)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 2, 12, 6),
+              child: FutureBuilder<PackageInfo>(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, snap) => Text(
+                  'zCode v${snap.data?.version ?? '…'} (build ${snap.data?.buildNumber ?? '…'})',
+                  style: TextStyle(fontSize: 11.5, color: ZT.inkFaint, fontFamily: ZT.mono),
+                ),
+              ),
             ),
           ]),
         ),
