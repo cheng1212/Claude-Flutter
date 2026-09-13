@@ -839,10 +839,16 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 大环形窗口占用:中间百分比,超 85% 变红提醒该压缩了。
+  /// 上下文**不可能超过窗口**,所以 >100% 一定是旧口径(整轮累计)的历史数据 ——
+  /// 这时显示「待更新」而不是 965% 这种吓人又无意义的数字,跑完新一轮自动变准。
   Widget _usageRing(int ctxTokens, int ctxWindow) {
-    final frac = ctxWindow > 0 ? (ctxTokens / ctxWindow).clamp(0.0, 1.0) : 0.0;
-    final pct = ctxWindow > 0 ? (ctxTokens / ctxWindow * 100) : 0.0;
-    final color = frac > 0.85 ? ZT.rose : (frac > 0.6 ? ZT.lemon : ZT.aqua);
+    final rawFrac = ctxWindow > 0 ? ctxTokens / ctxWindow : 0.0;
+    final stale = rawFrac > 1.0;
+    final frac = rawFrac.clamp(0.0, 1.0);
+    final pct = rawFrac * 100;
+    final color = stale
+        ? ZT.inkFaint
+        : (frac > 0.85 ? ZT.rose : (frac > 0.6 ? ZT.lemon : ZT.aqua));
     return SizedBox(
       width: 96,
       height: 96,
@@ -851,7 +857,7 @@ class _ChatPageState extends State<ChatPage> {
           width: 96,
           height: 96,
           child: CircularProgressIndicator(
-            value: frac,
+            value: stale ? 0 : frac,
             strokeWidth: 9,
             strokeCap: StrokeCap.round,
             backgroundColor: ZT.edge,
@@ -859,10 +865,16 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
         Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(ctxTokens > 0 ? '${pct.toStringAsFixed(pct >= 100 ? 0 : 1)}%' : '—',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: ZT.ink)),
-          Text('窗口占用',
-              style: TextStyle(fontSize: 10, color: ZT.inkFaint)),
+          Text(
+              stale
+                  ? '待更新'
+                  : (ctxTokens > 0 ? '${pct.toStringAsFixed(pct >= 100 ? 0 : 1)}%' : '—'),
+              style: TextStyle(
+                  fontSize: stale ? 12 : 17,
+                  fontWeight: FontWeight.w900,
+                  color: stale ? ZT.inkFaint : ZT.ink)),
+          Text(stale ? '跑一轮后变准' : '窗口占用',
+              style: TextStyle(fontSize: stale ? 8.5 : 10, color: ZT.inkFaint)),
         ]),
       ]),
     );
