@@ -362,7 +362,7 @@ void main() {
   test('实时事件归约进 chat;complete 后刷新会话列表', () async {
     await openEmpty();
     channel.serverPush({'kind': 'stream_delta', 'seq': 1, 'sessionId': 's1', 'content': 'he'});
-    await pump();
+    await pump(const Duration(milliseconds: 60)); // 40ms 合帧窗走完才上屏
     expect(app.chat.streamingText, 'he');
     channel.serverPush(
         {'kind': 'text', 'role': 'assistant', 'content': 'hello', 'seq': 2, 'sessionId': 's1'});
@@ -448,6 +448,45 @@ void main() {
     await pump();
     expect((app.chat.rows.single as UserRow).content, 'q');
     expect(app.chat.lastSeq, 2);
+  });
+
+  test('delta 合帧:50 条 stream_delta 只 notify 一次,内容无损', () async {
+    await openEmpty();
+    var notifies = 0;
+    void listener() => notifies++;
+    app.addListener(listener);
+    for (var i = 0; i < 50; i++) {
+      channel.serverPush({'kind': 'stream_delta', 'content': '字$i', 'seq': 10 + i, 'sessionId': 's1'});
+    }
+    expect(app.chat.streamingText, isNull, reason: '缓冲期内不上屏');
+    expect(notifies, 0, reason: 'delta 不逐条 notify');
+    await pump(const Duration(milliseconds: 60)); // 40ms 合帧窗走完
+    expect(app.chat.streamingText, [for (var i = 0; i < 50; i++) '字$i'].join());
+    expect(app.chat.lastSeq, 59, reason: '合帧取最大 seq');
+    expect(notifies, 1, reason: '整页重建与 chunk 频率脱钩');
+    app.removeListener(listener);
+  });
+
+  test('delta 合帧:complete 先于残余 delta 到达时,flush 先落、终态后落(残字不复活)', () async {
+    await openEmpty();
+    channel.serverPush({'kind': 'stream_delta', 'content': '残', 'seq': 5, 'sessionId': 's1'});
+    channel.serverPush({'kind': 'complete', 'seq': 6, 'sessionId': 's1'}); // 不等 40ms 窗
+    await pump();
+    expect(app.chat.running, isFalse);
+    expect(app.chat.streamingText, isNull, reason: '残余 delta 必须在 complete 之前 flush 掉,否则定稿后又冒残字');
+  });
+
+  test('切会话丢弃旧会话在途 delta(不污染新会话)', () async {
+    await openEmpty();
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => {'messages': <Map>[], 'total': 0},
+        };
+    channel.serverPush({'kind': 'stream_delta', 'content': '旧尾巴', 'seq': 9, 'sessionId': 's1'});
+    await app.openSession('s2'); // 不等 40ms 窗就切走
+    await pump(const Duration(milliseconds: 60));
+    expect(app.chat.streamingText, isNull, reason: '旧会话的流式尾巴不得落进新会话');
   });
 
   test('createSession 建完拉列表并返回会话行', () async {
