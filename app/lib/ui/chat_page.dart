@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
 import '../chat_scroll_anchor.dart';
+import '../core/motion.dart';
 import '../debug_log.dart';
 import '../panel_utils.dart';
 import '../session_utils.dart';
@@ -328,7 +329,7 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => _animatingToBottom = true);
     try {
       await _listCtrl.animateTo(0,
-          duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic);
+          duration: kDurPage, curve: kCurveOut);
     } on Object catch (e) {
       ZLog.w('scroll', 'animateTo 失败: $e', dedupeKey: 'toBottom');
     } finally {
@@ -1460,7 +1461,7 @@ class _ChatPageState extends State<ChatPage> {
           if (i < rows.length - freshFrom) {
             return TweenAnimationBuilder<double>(
               tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 180),
+              duration: kDurNormal,
               curve: Curves.easeOutCubic,
               builder: (context, t, child) => Opacity(
                 opacity: t,
