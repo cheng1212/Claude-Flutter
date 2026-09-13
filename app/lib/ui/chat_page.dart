@@ -572,7 +572,7 @@ class _ChatPageState extends State<ChatPage> {
     // 分组数据还没拉到就现拉一次
     if (app.modelGroups.isEmpty) {
       try {
-        app.modelGroups = await app.apiGroups();
+        await app.apiGroups();
       } on Object {
         // 拉不到就退回一级平铺
       }

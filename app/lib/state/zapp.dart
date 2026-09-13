@@ -9,6 +9,7 @@ import '../debug_log.dart';
 import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
+import 'slices/models_slice.dart';
 import 'slices/queue_slice.dart';
 
 export 'slices/queue_slice.dart' show QueuedMessage;
@@ -50,8 +51,15 @@ class ZApp extends ChangeNotifier {
   /// 打开会话的代际令牌:快速切换/重开时,旧打开流程的后续阶段全部作废。
   int _openToken = 0;
 
-  List<String> models = const [];
-  List<Map<String, dynamic>> modelGroups = const [];
+  /// 模型列表切片(T4 第二刀):状态在 slice,以下 getter 保持 UI 零改动。
+  late final ModelsSlice modelsSlice = ModelsSlice(
+    onChanged: notifyListeners,
+    onError: (msg) => error = msg,
+    fetchModels: () => _api.models(),
+    fetchModelGroups: () => _api.modelGroups(),
+  );
+  List<String> get models => modelsSlice.models;
+  List<Map<String, dynamic>> get modelGroups => modelsSlice.modelGroups;
   List<Map<String, dynamic>> sessions = const [];
 
   /// 首次会话列表拉取完成(成败皆置):页面据此区分「加载中」与「真空空如也」
@@ -90,7 +98,7 @@ class ZApp extends ChangeNotifier {
         if (!_disposed) bootstrap();
       });
     }
-    await _loadModels();
+    await modelsSlice.load();
     await _loadSessions();
     notifyListeners();
   }
@@ -306,21 +314,10 @@ class ZApp extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 会话
 
-  Future<void> _loadModels() async {
-    try {
-      models = await _api.models();
-      modelGroups = await _api.modelGroups();
-    } on Object catch (e) {
-      error = '$e';
-    }
-  }
+
 
   /// 选择器打开时的兜底重拉,成功后刷新状态。
-  Future<List<Map<String, dynamic>>> apiGroups() async {
-    modelGroups = await _api.modelGroups();
-    notifyListeners();
-    return modelGroups;
-  }
+  Future<List<Map<String, dynamic>>> apiGroups() => modelsSlice.reloadGroups();
 
   Future<void> _loadSessions({bool silent = false}) async {
     try {
