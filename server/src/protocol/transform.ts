@@ -11,9 +11,20 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
     : undefined;
 
   if (type === 'assistant') {
-    const content = (msg.message as AnyRecord | undefined)?.content;
+    const m = msg.message as AnyRecord | undefined;
+    const content = m?.content;
     if (!Array.isArray(content)) return [];
     const out: ProtocolEvent[] = [];
+    // 第二来源(实测 message_start 之外 assistant 消息也带 usage):每条 assistant
+    // 消息 = 一次 API 响应,其 usage 的 prompt 大小同样是真实上下文占用。
+    // 两条来源互为兜底,谁先到用谁;同值重复发无害(app 覆盖同值不闪)。
+    const u = m?.usage as AnyRecord | undefined;
+    if (u && !parentToolUseId) {
+      const ctx = Number(u.input_tokens ?? 0)
+        + Number(u.cache_read_input_tokens ?? 0)
+        + Number(u.cache_creation_input_tokens ?? 0);
+      if (ctx > 0) out.push({ kind: 'context_usage', contextTokens: ctx });
+    }
     for (const block of content) {
       const b = block as AnyRecord;
       if (b.type === 'text' && typeof b.text === 'string' && b.text) {
