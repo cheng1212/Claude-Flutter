@@ -58,7 +58,7 @@ function toWire(event: OutboundEvent): OutboundEvent {
 
 // 这些 kind 一律落 messages(带行号 seq),保证 registry seq 与 DB seq 严格 lockstep;
 // session_created 额外回填 sessions 表。落库与 WS 订阅解耦(见 ensureSub 常驻订阅)。
-const PERSIST_KINDS = new Set(['text', 'thinking', 'tool_use', 'tool_result', 'error', 'usage', 'complete', 'session_created']);
+const PERSIST_KINDS = new Set(['text', 'thinking', 'tool_use', 'tool_result', 'error', 'usage', 'complete', 'session_created', 'context_compacted']);
 
 function send(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));

@@ -125,6 +125,8 @@ export class SessionRuntime {
   private aborted = false;
   private turnGen = 0; // 回合代数:强裁定时器不误伤下一轮
   private forceTurnFinish: (() => void) | null = null;
+  /** 最近一次 API 请求的 prompt 大小 = 真实上下文占用(压缩后会自己变小) */
+  private lastContextTokens = 0;
 
   constructor(private opts: RuntimeOptions) {
     this.queryFn = opts.queryFn ?? (defaultQuery as unknown as QueryFn);
@@ -394,9 +396,14 @@ export class SessionRuntime {
             for (const event of events) {
               if (event.kind === 'tool_use') this.openTools.add(event.toolId);
               else if (event.kind === 'tool_result') this.openTools.delete(event.toolId);
+              // 记下真实上下文占用(每次 API 请求的 prompt 大小),回合末随 usage 落库
+              if (event.kind === 'context_usage') this.lastContextTokens = event.contextTokens;
               // 手机端气泡显示时间用:发射时刻即内容产生时刻(近似)
               if (['text', 'thinking', 'tool_use', 'tool_result', 'error'].includes(event.kind)) {
                 (event as { createdAt?: string }).createdAt = new Date().toISOString();
+              }
+              if (event.kind === 'usage' && this.lastContextTokens > 0) {
+                (event as { contextTokens?: number }).contextTokens = this.lastContextTokens;
               }
               if (event.kind === 'complete') emitTerminal(event.exitCode, event.aborted);
               else this.opts.emit(event);

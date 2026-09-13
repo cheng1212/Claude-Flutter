@@ -9,7 +9,7 @@ const BUFFER_CAP = 1000;
 // seq 只发给可持久化事件,保证 registry seq 与 messages 表 seq 严格同步——
 // 否则海量 delta 会把 seq 灌到天文数字,与 REST 重建出的 DB 行号分家,
 // 前端按 seq 去重会把新事件全部静默丢弃(界面冻结在旧内容)。
-const EPHEMERAL_KINDS = new Set(['stream_delta', 'thinking_delta']);
+const EPHEMERAL_KINDS = new Set(['stream_delta', 'thinking_delta', 'context_usage']);
 
 /** 每会话事件编号 + 环形缓冲。seq 跨 run 单调递增,重连按 afterSeq 补发。 */
 export class RunRegistry {

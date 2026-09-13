@@ -32,6 +32,25 @@ export type ProtocolEvent =
     /** 主模型上下文窗口大小(tokens);SDK 未给时为 0 */
     contextWindow: number;
     maxOutputTokens: number;
+    /**
+     * **真实上下文占用** = 本轮最后一次 API 调用的 prompt 大小
+     * (input + cache_read + cache_creation)。上面那几个 inputTokens 是整轮累计
+     * (一轮内多次工具调用会相加),拿它当上下文会算出 601% 这种越界值。
+     */
+    contextTokens?: number;
+    parentToolUseId?: string;
+  }
+  /**
+   * 每次 API 请求的真实 prompt 大小(流式 message_start 带),瞬态事件:
+   * 不占 seq、不落库,只用于回复途中实时显示上下文占用涨到多少。
+   */
+  | { kind: 'context_usage'; contextTokens: number; parentToolUseId?: string }
+  /** 上下文压缩完成(CLI 的 compact_boundary):manual = 用户点按钮,auto = CLI 自动 */
+  | {
+    kind: 'context_compacted';
+    trigger: 'manual' | 'auto';
+    preTokens: number;
+    postTokens: number;
     parentToolUseId?: string;
   }
   | { kind: 'complete'; exitCode: number; aborted: boolean; parentToolUseId?: string }

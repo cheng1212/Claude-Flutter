@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { openDb, createSession, createRun, finishRun, usageStats } from '../src/db.js';
+import { openDb, createSession, createRun, finishRun, usageStats, sessionUsageSummary } from '../src/db.js';
 
 const usage = (input: number, output: number, cacheRead = 0, cacheCreation = 0, numTurns = 1) => ({
   inputTokens: input,
@@ -54,6 +54,29 @@ describe('usageStats · 全局用量聚合', () => {
     expect(ds.cacheHitRate).toBeCloseTo(300 / 400, 5); // 300 / (100+300)
     const glm = agg.models.find((m) => m.modelId === 'glm-5.3-flash')!;
     expect(glm.cacheHitRate).toBe(0);
+  });
+
+  it('上下文占用优先用 contextTokens(真实值),旧数据缺字段才退回累计口径', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: 's' });
+    // 新数据:整轮累计 6M,但真实上下文只有 300K(最后一次请求的 prompt)
+    const r1 = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, r1.id, {
+      status: 'success',
+      usage: { ...usage(5_000_000, 1000, 1_000_000, 0), contextTokens: 300_000, contextWindow: 1_000_000 },
+    });
+    const sum = sessionUsageSummary(db, s.id);
+    expect(sum.last?.contextTokens).toBe(300_000);
+    expect(sum.last?.contextWindow).toBe(1_000_000);
+    // 累计仍是累计(整轮相加),与上面的"真实上下文"是两个口径
+    expect(sum.totals.inputTokens).toBe(5_000_000);
+    expect(sum.totals.cacheReadInputTokens).toBe(1_000_000);
+
+    // 旧数据(无 contextTokens):退回累计口径
+    const s2 = createSession(db, { title: 'old' });
+    const r2 = createRun(db, s2.id, 'glm-5.3-flash');
+    finishRun(db, r2.id, { status: 'success', usage: usage(100, 50, 200, 0) });
+    expect(sessionUsageSummary(db, s2.id).last?.contextTokens).toBe(300);
   });
 
   it('无 usage 的 run 不计入;sinceIso(未来时间)过滤后为空', () => {
