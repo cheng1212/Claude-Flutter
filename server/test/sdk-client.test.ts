@@ -311,6 +311,27 @@ describe('SessionRuntime', () => {
     expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: false });
   });
 
+  it('interrupt 挂起永不返回:abort 不被堵死,release/强裁照常落定回合', async () => {
+    const { events, emit } = collector();
+    const queryFn: QueryFn = () => {
+      // 真实世界的僵死形态:interrupt 回执走 CLI 控制通道,CLI 挂死时永远不来
+      const gen = (async function* (): AsyncGenerator<Record<string, unknown>> {
+        await new Promise<void>(() => {});
+      })();
+      (gen as unknown as { interrupt: () => Promise<void> }).interrupt = () => new Promise<void>(() => {});
+      return gen as unknown as QueryInstance;
+    };
+    const runtime = new SessionRuntime({
+      ...base, appSessionId: 'a5b', emit, queryFn,
+      interruptAckMs: 20, abortForceDelayMs: 30,
+    });
+    const turn = runtime.send('卡死且 interrupt 挂起');
+    await settle();
+    await runtime.abort(); // interrupt 挂起 20ms 放行 → 30ms 强裁
+    await turn; // 不挂死:abort 链不再被一个挂起的 interrupt 堵死
+    expect(events.filter((e) => e.kind === 'complete').at(-1)).toMatchObject({ aborted: true });
+  });
+
   it('静默看门狗:整轮无输出超时 → error + 自动中断落定', async () => {
     const { events, emit } = collector();
     const queryFn: QueryFn = () => {

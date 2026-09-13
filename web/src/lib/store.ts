@@ -330,7 +330,12 @@ export function createZStore(deps: {
       abort() {
         const sid = get().currentSessionId;
         if (!sid) return;
-        try { socket.abort(sid); } catch { /* 未连接:重连后再说 */ }
+        try {
+          socket.abort(sid);
+        } catch {
+          // 未连接(重连中)按停止:静默吞掉会让用户以为「按了没效果」,明说
+          set({ error: '停止失败:连接未就绪(正在自动重连),请稍后再按' });
+        }
       },
 
       answerPermission(requestId, allow, message = '') {

@@ -61,6 +61,8 @@ export type RuntimeOptions = {
   approvalTimeoutMs?: number;
   /** abort 强裁延迟:CLI 僵死时 interrupt/release 都解冻不了回合,等这么久后强判终态 */
   abortForceDelayMs?: number;
+  /** interrupt 回执超时:CLI 控制通道挂死时最多等这么久就放行后续 release/强裁 */
+  interruptAckMs?: number;
   /** 复制会话:providerSessionId 为 fork 起点,首轮 init 回传的独立新 id 会回填并发 session_created */
   forkSession?: boolean;
   /** 子代理模型约束:配置后,本会话派 Agent/Task 一律强制用此模型(防挑贵模型) */
@@ -152,9 +154,14 @@ export class SessionRuntime {
     for (const p of this.pending.values()) p.resolve({ allow: false, message: 'aborted' });
     this.pending.clear();
     try {
-      await this.currentInstance?.interrupt?.();
+      // interrupt 的回执走 CLI 控制通道:CLI 僵死时这个 await 会挂起——
+      // 绝不能让它堵死后面的 release/强裁(那才是保证回合落定的两步)。
+      await Promise.race([
+        this.currentInstance?.interrupt?.(),
+        new Promise<void>((r) => setTimeout(r, this.opts.interruptAckMs ?? 2000)),
+      ]);
     } catch {
-      // 进程已退出,忽略
+      // 进程已退出/中断被拒,忽略
     }
     this.release?.();
     // 强裁兜底:若 interrupt/release 都没能让回合结束(进程僵死),runtime.send 的

@@ -131,6 +131,15 @@ describe('createZStore', () => {
     expect(store.getState().notice).toBeNull();
   });
 
+  test('abort while socket down sets honest error instead of silent swallow', async () => {
+    const { socket, store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    await store.getState().openSession('s1');
+    socket.abort = vi.fn(() => { throw new Error('未连接'); });
+    store.getState().abort();
+    expect(store.getState().error).toContain('停止失败');
+  });
+
   test('connect failure sets error and retries until success', async () => {
     const { socket, store } = setup();
     let attempts = 0;
