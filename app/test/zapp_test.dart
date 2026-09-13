@@ -44,6 +44,17 @@ class FakeChannel implements ZChannel {
 
 Future<void> pump([Duration d = const Duration(milliseconds: 2)]) => Future.delayed(d);
 
+// 造一页历史:beforeSeq 为空 = 最新一页(1200 起往回 limit 条);否则取比它更旧的一页
+Map<String, dynamic> historyPage(String? beforeSeqRaw, int limit) {
+  final beforeSeq = beforeSeqRaw == null ? null : int.tryParse(beforeSeqRaw);
+  final high = beforeSeq != null ? beforeSeq - 1 : 1200;
+  final msgs = <Map>[];
+  for (var s = high; s > high - limit && s >= 1; s--) {
+    msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
+  }
+  return {'messages': msgs, 'total': 1200};
+}
+
 void main() {
   late FakeHttp http;
   late FakeChannel channel;
@@ -86,39 +97,23 @@ void main() {
     expect(app.sessions.single['id'], 's1');
   });
 
-  test('openSession 首屏:最新一页到齐即上屏,不等全量分页', () async {
+  test('openSession 首屏:只等最新一页(100 条)即上屏,不后台翻页', () async {
     await openEmpty();
-    final gate = Completer<void>();
-    // 真实 API 语义:seq 1..1200,offset=0 返回最新 500(seq 1200..701),
-    // beforeSeq 返回"比它更旧"的一页。首屏只等第一页,老消息后台按锚点补齐。
-    Map<String, dynamic> pageFor({int? beforeSeq, int? offset}) {
-      final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
-      final msgs = <Map>[];
-      for (var s = high; s > high - 500 && s >= 1; s--) {
-        msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
-      }
-      return {'messages': msgs, 'total': 1200};
-    }
-
+    // 真实 API 语义:seq 1..1200,offset=0 返回最新 100 条(seq 1200..1101)。
+    // 更旧的不再自动拉 —— 用户滑到最旧端才按需取(见 loadOlder 用例)。
     http.responder = (c) {
       if (c.path.startsWith('/api/sessions/s1/messages')) {
-        final q = Uri.parse(c.path).queryParameters;
-        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
-        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
-        final page = pageFor(beforeSeq: beforeSeq, offset: offset);
-        final isFirst = beforeSeq == null;
-        return isFirst ? page : gate.future.then((_) => page);
+        return historyPage(Uri.parse(c.path).queryParameters['beforeSeq'], 100);
       }
       return null;
     };
-    final opening = app.openSession('s1');
-    await pump(const Duration(milliseconds: 20));
-    expect(app.historyLoading, isFalse, reason: '首屏只等最新一页,老消息后台补');
-    expect(app.chat.rows.length, 500);
-    expect((app.chat.rows.first as TextRow).content, 'm701'); // 最新一页的最小 seq
-    gate.complete();
-    await opening;
-    expect(app.chat.rows.length, 1200, reason: '补齐换底后全量在列');
+    await app.openSession('s1');
+    await pump();
+    expect(app.historyLoading, isFalse, reason: '首屏只等最新一页');
+    expect(app.chat.rows.length, 100, reason: '默认只加载 100 条(用户要求,够日常看)');
+    expect((app.chat.rows.first as TextRow).content, 'm1101'); // 这一页的最小 seq
+    expect((app.chat.rows.last as TextRow).content, 'm1200'); // 最新
+    expect(app.chat.hasMoreOlder, isTrue, reason: '标记还有更旧的,等滑到顶再取');
   });
 
   test('backgrounds:server 统一任务列表透传;失败返回空', () async {
@@ -140,32 +135,57 @@ void main() {
     expect(await app.backgrounds('s1'), isEmpty);
   });
 
-  test('openSession 补齐窗口内到达的 WS 事件,换底不吞', () async {
+
+  test('openSession 只拉首屏一页 + 标记还有更旧的(不再后台狂翻页)', () async {
+    await openEmpty();
+    var messageCalls = 0;
+    final gate = Completer<void>();
+    http.responder = (c) {
+      if (c.path.startsWith('/api/sessions/s1/messages')) {
+        messageCalls += 1;
+        return gate.future.then((_) => historyPage(null, 100));
+      }
+      return null;
+    };
+    final opening = app.openSession('s1');
+    await pump();
+    // 首屏请求在途时,窗口内到达一条 live 事件:必须并入,不能被首屏覆盖丢掉
+    channel.serverPush({'kind': 'text', 'role': 'assistant', 'seq': 1201, 'sessionId': 's1', 'content': 'live'});
+    await pump();
+    gate.complete();
+    await opening;
+    await pump();
+    expect(app.historyLoading, isFalse);
+    final texts = [for (final r in app.chat.rows) if (r is TextRow) r.content];
+    expect(texts.last, 'live', reason: '首屏并入窗口内 WS 事件,不丢');
+    expect(texts.length, 101, reason: '100 条首屏 + 1 条 live');
+    expect(app.chat.hasMoreOlder, isTrue, reason: 'total 1200 > 已加载,标记还有更旧的');
+    expect(app.chat.oldestSeq, 1101, reason: '记下最旧 seq 当按需加载的锚点');
+    expect(messageCalls, 1, reason: '打开会话只发一次请求 —— 不再后台翻十几页(大会话白屏根因)');
+  });
+
+  test('loadOlder:滑到最旧端按需拉更旧一页,接到最前面且锚点前移', () async {
     await openEmpty();
     http.responder = (c) {
       if (c.path.startsWith('/api/sessions/s1/messages')) {
         final q = Uri.parse(c.path).queryParameters;
-        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
-        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
-        final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
-        // 首轮补齐(比最新页更旧)时,窗口内到达一条 live 事件,换底必须不吞
-        if (beforeSeq == 701) {
-          channel.serverPush({'kind': 'text', 'role': 'assistant', 'seq': 1201, 'sessionId': 's1', 'content': 'live'});
-        }
-        final msgs = <Map>[];
-        for (var s = high; s > high - 500 && s >= 1; s--) {
-          msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
-        }
-        return {'messages': msgs, 'total': 1200};
+        return historyPage(q['beforeSeq'], 100);
       }
       return null;
     };
     await app.openSession('s1');
     await pump();
-    expect(app.historyLoading, isFalse);
-    final texts = [for (final r in app.chat.rows) if (r is TextRow) r.content];
-    expect(texts.length, 1201, reason: '1200 条 REST + 1 条补齐窗口内 WS 到达的 live 消息,换底不能丢');
-    expect(texts.last, 'live');
+    final firstOldest = app.chat.oldestSeq;
+    expect(app.chat.rows.length, 100);
+    expect(app.chat.hasMoreOlder, isTrue);
+
+    await app.loadOlder();
+    await pump();
+    expect(app.chat.rows.length, 200, reason: '又接上一页');
+    expect(app.chat.oldestSeq, lessThan(firstOldest), reason: '锚点前移');
+    expect((app.chat.rows.first as TextRow).content, 'm1001',
+        reason: '更旧的行接在最前面(rows 旧→新;这一页最旧是 1001)');
+    expect((app.chat.rows.last as TextRow).content, 'm1200', reason: '新的仍在最后');
   });
 
   test('bug#4 刷新丢自己消息:回显先于 REST 到达,单页也不能丢', () async {
@@ -227,36 +247,32 @@ void main() {
     expect(app.chat.lastSeq, 2);
   });
 
-  test('bug#4 换底保留 running:补齐期间实时开跑不被 REST 换底冲掉', () async {
+  test('按需加载期间实时开跑不被冲掉(running 只由实时事件驱动)', () async {
     await openEmpty();
     final gate = Completer<void>();
-    // 多页会话:首屏立刻上屏,翻页窗口内服务器广播"开跑",换底不能把 running 冲回 false
     http.responder = (c) {
       if (c.path.startsWith('/api/sessions/s1/messages')) {
         final q = Uri.parse(c.path).queryParameters;
-        final beforeSeq = q['beforeSeq'] == null ? null : int.parse(q['beforeSeq']!);
-        final offset = q['offset'] == null ? null : int.parse(q['offset']!);
-        final high = beforeSeq != null ? beforeSeq - 1 : 1200 - (offset ?? 0);
-        final msgs = <Map>[];
-        for (var s = high; s > high - 500 && s >= 1; s--) {
-          msgs.add({'seq': s, 'role': 'user', 'meta': {'kind': 'text', 'role': 'assistant', 'seq': s, 'content': 'm$s'}});
-        }
-        final page = {'messages': msgs, 'total': 1200};
-        return beforeSeq == null ? page : gate.future.then((_) => page);
+        final page = historyPage(q['beforeSeq'], 100);
+        return q['beforeSeq'] == null ? page : gate.future.then((_) => page);
       }
       return null;
     };
-    final opening = app.openSession('s1');
-    await pump(const Duration(milliseconds: 20));
-    expect(app.historyLoading, isFalse, reason: '首屏已上屏,正在后台补齐');
+    await app.openSession('s1');
+    await pump();
+    expect(app.historyLoading, isFalse);
     channel.serverPush({'kind': 'subscribed', 'sessionId': 's1', 'isProcessing': true});
     await pump();
-    expect(app.chat.running, isTrue, reason: '实时 subscribed 已置运行中');
+    expect(app.chat.running, isTrue, reason: '实时 subscribed 置运行中');
+    // 加载更旧一页期间,回合开跑的实时态不能被整块替换冲掉
+    final loading = app.loadOlder();
+    await pump();
     gate.complete();
-    await opening;
-    expect(app.chat.rows.length, 1200);
+    await loading;
+    await pump();
+    expect(app.chat.rows.length, 200, reason: '更旧一页接上了');
     expect(app.chat.running, isTrue,
-        reason: '换底重建不推断 running,但必须保留实时已置位的 running(否则按钮从 STOP 变回发送)');
+        reason: 'running 只由实时事件驱动,加载历史不得把它冲回 false(否则按钮从 STOP 变回发送)');
   });
 
   test('sessions_dirty:250ms 防抖合并成一次列表刷新;控制帧不进 reducer', () async {
