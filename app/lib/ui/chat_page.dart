@@ -498,8 +498,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 文件选择(file_picker)→ 上传到电脑 → 以路径引用入待发列表。
+  /// 上限 9(对齐 zremote:一次最多带 9 个图片/文件)。
   Future<void> _pickAndUploadFiles() async {
-    const maxFiles = 4;
+    const maxFiles = 9;
     if (_pendingFiles.value.length >= maxFiles) {
       if (mounted) showToast(context, '一次最多 $maxFiles 个文件');
       return;
@@ -524,9 +525,9 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
+  /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 9 张,单张 ≤ 5MB)。
   Future<void> _pickImagesFromGallery({bool camera = false}) async {
-    const maxImages = 4;
+    const maxImages = 9;
     final remaining = maxImages - _pendingImages.value.length;
     if (remaining <= 0) {
       if (mounted) showToast(context, '一次最多 $maxImages 张');
@@ -1998,7 +1999,7 @@ class _ChatPageState extends State<ChatPage> {
             );
           },
         ),
-        // 已选图片预览条:88px 缩略图,点图滑动预览,右上角 X 移除
+        // 已选图片预览条:64px 小缩略图(对齐 zremote),点图滑动预览,右上角 X 移除
         ValueListenableBuilder<List<String>>(
           valueListenable: _pendingImages,
           builder: (context, images, _) {
@@ -2006,17 +2007,17 @@ class _ChatPageState extends State<ChatPage> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: SizedBox(
-                height: 88,
+                height: 64,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: images.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 6),
                   itemBuilder: (context, i) => Stack(children: [
                     GestureDetector(
                       onTap: () => showChatImageViewer(context, images, initialIndex: i),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: chatImageThumb(images[i], size: 88),
+                        borderRadius: BorderRadius.circular(8),
+                        child: chatImageThumb(images[i], size: 64),
                       ),
                     ),
                     Positioned(
