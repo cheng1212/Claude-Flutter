@@ -143,6 +143,12 @@ class ZApp extends ChangeNotifier {
             'rows=0 while running! hl=$historyLoading ws=${_socket.state} lastSeq=${chat.lastSeq} backfill=${_backfill != null}',
             dedupeKey: 'blank-$currentSessionId');
         _armBlankWatchdog(); // 还白着:继续盯
+      } else if (currentSessionId != null && chat.running && chat.rows.length > 50) {
+        // 行数不少却看着空:多半是渲染/滚动位置问题(实测白屏时 rows 有 6617 条),
+        // 记一条低频样本(60s 一次),下次能直接看出是"没数据"还是"画不出来"。
+        ZLog.w('blank',
+            'rows=${chat.rows.length} 但界面可能空白(渲染侧);ws=${_socket.state} lastSeq=${chat.lastSeq}',
+            dedupeKey: 'blank-render');
       }
     });
   }
@@ -477,9 +483,12 @@ class ZApp extends ChangeNotifier {
   ChatState _replay(List<Map<String, dynamic>> events, int maxSeq) {
     events.sort((a, b) =>
         ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
+    // 共用行缓冲:重建一个 8000 行的会话原来是 O(n²)(每行复制整表),打开要卡几秒
+    // (实测 swap 比首屏晚 4.8 秒)。走 sink 后是 O(n)。
+    final sink = <ChatRow>[];
     var st = const ChatState();
     for (final e in events) {
-      st = applyEvent(st, e);
+      st = applyEvent(st, e, sink: sink);
     }
     // 重建一律从"空闲"起步;真实 running 由随后到达的 subscribed/实时事件设定。
     return ChatState(

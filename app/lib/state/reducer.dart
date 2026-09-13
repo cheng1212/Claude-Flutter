@@ -202,8 +202,18 @@ List<ChatRow> _closeDanglingTools(List<ChatRow> rows) {
   return changed ? next : rows;
 }
 
+/// 批量归约的行缓冲:传了 [sink] 就复用它,否则复制一份。
+///
+/// 为什么需要:`_replay` 要把成百上千条历史事件依次归约,原实现每加一行都
+/// `[...s.rows, row]` 复制整个列表 —— 8000 行就是 8000 次全量复制(O(n²),
+/// 约 3200 万次元素搬移),打开大会话要卡几秒(实测:swap 比首屏晚 4.8 秒)。
+/// 批量路径共用一个可变列表后是 O(n)。
+/// 单事件路径(sink = null)语义不变:仍然是"复制后改",ChatState 依旧不可变。
+List<ChatRow> _rowsInto(ChatState s, List<ChatRow>? sink) => sink ?? [...s.rows];
+
 /// 单事件归约;seq <= lastSeq 的事件丢弃(重连去重)。
-ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
+/// [sink] 仅批量路径(_replay)传,见 _rowsInto 的说明。
+ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}) {
   final kind = ev['kind'] as String? ?? '';
   final seq = ev['seq'] as int?;
   if (seq != null && seq <= s.lastSeq && kind != 'permission_request') return s;
@@ -224,7 +234,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         final imageCount = (ev['imageCount'] as num?)?.toInt() ?? 0;
         final historyImages = (ev['images'] as List?)?.whereType<String>().toList();
         if (content.isEmpty && imageCount > 0) content = '[图片] ×$imageCount';
-        final rows = [...s.rows];
+        final rows = _rowsInto(s, sink);
         final idx = rows.indexWhere((r) => r is UserRow && r.pending && r.content == content);
         if (idx >= 0) {
           final pendingRow = rows[idx] as UserRow;
@@ -234,21 +244,24 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         }
         return _with(s, lastSeq: nextSeq, running: true, rows: rows);
       }
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, TextRow(ev['content'] as String? ?? '', createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String())], clearStreamText: true);
+      return _with(s, lastSeq: nextSeq, running: true, clearStreamText: true, rows: _rowsInto(s, sink)
+        ..add(TextRow(ev['content'] as String? ?? '', createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String())));
     case 'thinking':
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ThinkingRow(ev['content'] as String? ?? '')], clearStreamThinking: true);
+      return _with(s, lastSeq: nextSeq, running: true, clearStreamThinking: true, rows: _rowsInto(s, sink)
+        ..add(ThinkingRow(ev['content'] as String? ?? '')));
     case 'tool_use':
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ToolRow(
-        toolId: ev['toolId'] as String? ?? '',
-        toolName: ev['toolName'] as String? ?? '',
-        toolInput: (ev['toolInput'] as Map?)?.cast<String, dynamic>() ?? const {},
-        startedAt: DateTime.now(),
-        parentToolUseId: ev['parentToolUseId'] as String?,
-      )]);
+      return _with(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
+        ..add(ToolRow(
+          toolId: ev['toolId'] as String? ?? '',
+          toolName: ev['toolName'] as String? ?? '',
+          toolInput: (ev['toolInput'] as Map?)?.cast<String, dynamic>() ?? const {},
+          startedAt: DateTime.now(),
+          parentToolUseId: ev['parentToolUseId'] as String?,
+        )));
     case 'tool_result':
       final toolId = ev['toolId'] as String? ?? '';
       final result = ToolResult(content: ev['content'] as String? ?? '', isError: ev['isError'] as bool? ?? false);
-      final rows = [...s.rows];
+      final rows = _rowsInto(s, sink);
       // 也匹配被中断标记收尾的卡:重连时 subscribed(false) 先到、replay 后到,
       // 卡已被收尾;放宽匹配,迟到的真结果才能覆盖占位标记。
       final idx = rows.lastIndexWhere((r) =>
@@ -274,12 +287,13 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       ));
     case 'task_started':
       // 后台任务/子代理:复用工具卡渲染(走秒计时直接继承),complete 后收尾
-      return _with(s, lastSeq: nextSeq, running: true, rows: [...s.rows, ToolRow(
-        toolId: ev['taskId'] as String? ?? '',
-        toolName: ev['taskType'] == 'local_agent' ? '子任务' : '后台任务',
-        toolInput: {'description': ev['description'] as String? ?? ''},
-        startedAt: DateTime.now(),
-      )]);
+      return _with(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
+        ..add(ToolRow(
+          toolId: ev['taskId'] as String? ?? '',
+          toolName: ev['taskType'] == 'local_agent' ? '子任务' : '后台任务',
+          toolInput: {'description': ev['description'] as String? ?? ''},
+          startedAt: DateTime.now(),
+        )));
     case 'task_complete':
       final taskId = ev['taskId'] as String? ?? '';
       final status = ev['status'] as String? ?? 'completed';
@@ -288,7 +302,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
         content: summary.isEmpty ? '[后台任务 $status]' : summary,
         isError: status != 'completed',
       );
-      final rows = [...s.rows];
+      final rows = _rowsInto(s, sink);
       // 放宽匹配:后台任务跑得比回合久时,complete 已把卡片收尾成中断占位,迟到的真结果要盖回来
       final idx = rows.lastIndexWhere((r) =>
           r is ToolRow && r.toolId == taskId && (r.result == null || r.result?.content == kInterruptedToolMark));
@@ -337,7 +351,8 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev) {
       }
       // 已知可恢复的中断提示(服务重启打断/看门狗自动中断)视觉降噪:中性而非红
       final neutral = content.contains('打断了上一轮') || content.startsWith('回合超过');
-      return _with(s, lastSeq: nextSeq, running: false, clearUpstream: true, rows: [...s.rows, ErrorRow(content, neutral: neutral)]);
+      return _with(s, lastSeq: nextSeq, running: false, clearUpstream: true,
+          rows: _rowsInto(s, sink)..add(ErrorRow(content, neutral: neutral)));
     case 'subscribed':
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
       // 紧跟的 replay(全部 ≤ 指针)会被 seq 去重整批丢弃,界面冻结在旧内容。
@@ -400,10 +415,13 @@ List<({ChatRow row, int index, String roleLabel, String content})> searchChatRow
 }
 
 /// 重连补发:一批事件按序灌入(applyEvent 自带 seq 去重)。
+/// 批量路径共用行缓冲(见 _rowsInto):重连补发几百条时不再逐条复制整个列表。
 ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
+  if (events.isEmpty) return s;
+  final sink = <ChatRow>[...s.rows];
   var cur = s;
   for (final ev in events) {
-    cur = applyEvent(cur, ev);
+    cur = applyEvent(cur, ev, sink: sink);
   }
   return cur;
 }

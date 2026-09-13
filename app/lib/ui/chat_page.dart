@@ -30,6 +30,30 @@ import 'rows.dart';
 /// 对应恰好 ≤5MB 字符,再留余量取整 3MB。
 const int kMaxImageBytes = 3 * 1024 * 1024;
 
+/// 单帧行数增长超过这个量,就认定是"换底/加载"而不是"逐条新增":不播入场动画。
+/// 阈值取 30:正常流式/工具事件一次只加 1~3 行,远超 30 的跳变必是批量替换。
+const int kMaxFreshRows = 30;
+
+/// 入场动画水位推进。返回 [freshFrom](水位起点,只有它之前的行播动画)
+/// 与推进后的 [watermark]。
+///
+/// 为什么要有这个函数:换底时 rows 会一次性暴涨(实测 500 → 6617),若还按旧水位算,
+/// 几千行被当成"新行"同时建动画;流式每秒重建几十次 → 动画反复重启 → 整屏 opacity
+/// 长期接近 0 = **白屏**(而且数据是好的,看门狗不报 rows=0,极难定位)。
+/// 抽出纯函数便于回归。
+({int freshFrom, int watermark}) advanceAnimWatermark({
+  required int current,
+  required int rowCount,
+  required bool loading,
+}) {
+  var wm = current;
+  if (loading && rowCount > wm) wm = rowCount; // 历史加载中:不播
+  if (rowCount > wm + kMaxFreshRows) wm = rowCount; // 跳变(换底):不播
+  final freshFrom = wm.clamp(0, rowCount);
+  if (rowCount > wm) wm = rowCount;
+  return (freshFrom: freshFrom, watermark: wm);
+}
+
 /// 「算在底部」的容差(reverse 列表 offset ≤ 此值)。比「回到底部」药丸的显隐阈值
 /// (60px)小得多:药丸是"明显滚开了"才提示,而锁位补偿要覆盖"只滚了一点点看历史"
 /// 的常见情形——阈值取大就会漏补偿,表现成内容被一点点推走。
@@ -1288,10 +1312,15 @@ class _ChatPageState extends State<ChatPage> {
     final plan = derivePlanSteps(rows);
     final planIdx = rows.length;
     final headIdx = rows.length + 1;
-    // 行入场动画水位:历史换底/会话切换时水位对齐行数(不播);仅新增行播一次(规格四 180ms)
-    if (app.historyLoading && rows.length > _animatedUpTo) _animatedUpTo = rows.length;
-    final freshFrom = _animatedUpTo.clamp(0, rows.length);
-    if (rows.length > _animatedUpTo) _animatedUpTo = rows.length;
+    // 行入场动画水位:只有"逐条增长"才播 180ms 淡入。
+    // ⚠️ 换底/加载时 rows 会一次性暴涨(实测 500 → 6617):按旧水位算,几千行被当成
+    // "新行"同时建动画,而流式每秒重建几十次 → 动画反复重启,整屏 opacity 长期接近 0
+    // = 白屏(用户实测;日志里 rows 正常增长、无异常,所以不是数据问题)。
+    // 单次增长超过 kMaxFreshRows 就认定是换底/加载:水位直接对齐,一行都不播。
+    final anim = advanceAnimWatermark(
+        current: _animatedUpTo, rowCount: rows.length, loading: app.historyLoading);
+    final freshFrom = anim.freshFrom;
+    _animatedUpTo = anim.watermark;
 
     return ListView.builder(
       reverse: true,
