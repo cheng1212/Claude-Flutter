@@ -52,6 +52,7 @@ const app = await buildApp({
   db,
   routesPath: config.routesPath,
   publicDir: config.publicDir,
+  webDir: config.webDir,
   projectsRoot: config.projectsRoot,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),

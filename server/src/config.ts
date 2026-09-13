@@ -11,6 +11,8 @@ export type ServerConfig = {
   dataDir: string;
   routesPath: string;
   publicDir: string;
+  /** web 端构建产物目录:非空则挂 SPA 静态托管(根路径直接出 web 登录页) */
+  webDir: string;
   /** 项目文件夹总目录:子文件夹 = 项目,新建/移动会话从这里选 */
   projectsRoot: string;
   bgCeilingMs: number;
@@ -48,6 +50,7 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
     port: Number(process.env.ZCODE_PORT) || 5190,
     relayPort: Number(process.env.ZCODE_RELAY_PORT) || 5191,
     dataDir,
+    webDir: process.env.ZCODE_WEB_DIR ?? path.join(dataDir, 'web'),
     routesPath: process.env.ZCODE_CLAUDE_ROUTES_PATH
       ?? path.join(os.homedir(), 'litellm', 'claude-routes.json'),
     publicDir,

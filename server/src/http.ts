@@ -24,6 +24,8 @@ export type AppOptions = {
   isAwaiting?: (sessionId: string) => boolean;
   /** 在跑会话数(注入):health 暴露,手机端诊断"连的是不是旧进程" */
   runningCount?: () => number;
+  /** web 端构建产物目录(dist):非空则挂 SPA 静态托管,根路径直接出 web 登录页 */
+  webDir?: string;
 };
 
 // /download 只认安全文件名:杜绝路径穿越(../、反斜杠、隐藏文件)
@@ -87,6 +89,42 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   }
   if (opts.db && opts.routesPath) {
     registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot });
+  }
+  if (opts.webDir) {
+    // SPA 静态托管:非 /api 的 GET → webDir 下文件,未命中回 index.html(前端路由刷新不 404)。
+    // 壳页面无密钥免鉴权;数据全在 /api(token 保护)。必须注册在 API 路由之后,不遮任何接口。
+    const MIME: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
+      '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+      '.json': 'application/json', '.woff2': 'font/woff2', '.map': 'application/json',
+    };
+    const webRoot = path.join(opts.webDir, '');
+    const sendIndex = (reply: import('fastify').FastifyReply) => {
+      const file = path.join(webRoot, 'index.html');
+      try {
+        reply.header('Content-Length', fs.statSync(file).size);
+        return reply.type('text/html; charset=utf-8').send(fs.createReadStream(file));
+      } catch {
+        return reply.code(404).send({ error: 'web 构建产物不存在(ZCODE_WEB_DIR)' });
+      }
+    };
+    app.get('/*', async (req, reply) => {
+      const pathname = decodeURIComponent(req.url.split('?')[0] ?? '/');
+      const rel = pathname.replace(/^\/+/, '') || 'index.html';
+      const file = path.join(webRoot, rel);
+      // 穿越防护:归约后必须仍落在 webDir 内,越界一律 404
+      if (!file.startsWith(webRoot)) return reply.code(404).send({ error: 'not found' });
+      let st: fs.Stats;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        return sendIndex(reply); // SPA fallback:前端路由刷新不 404
+      }
+      if (!st.isFile()) return sendIndex(reply);
+      reply.header('Content-Length', st.size);
+      reply.type(MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream');
+      return reply.send(fs.createReadStream(file));
+    });
   }
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/') || req.url.startsWith('/api/health')) return;
