@@ -1273,6 +1273,10 @@ List<PlanStep>? deriveTaskSteps(List<ChatRow> rows) {
     }
   }
   if (order.isEmpty) return null;
+  // 整组完成 → 收起面板(用户规则):一组计划是围绕一件事的完整过程,全做完这件事
+  // 就结束了,没必要继续摆着;下一个工作创建新计划时再重新出现。
+  final allCompleted = order.every((id) => byId[id]!.status == 'completed');
+  if (allCompleted) return null;
   return [for (final id in order) PlanStep(content: byId[id]!.subject, status: byId[id]!.status)];
 }
 
