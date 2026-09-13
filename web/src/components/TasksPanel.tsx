@@ -14,7 +14,7 @@ function timeLabel(iso: string): string {
   return `${t.getMonth() + 1}/${t.getDate()}`;
 }
 
-/** 任务面板:子代理 / 后台任务 / 定时任务 三区(对齐 Flutter tasks_sheet)。 */
+/** 任务面板:子代理 / 后台任务 / 定时任务 三区(对齐 Flutter tasks_sheet);子代理可展开只读转录。 */
 export function TasksPanel({ api, sessionId, onClose }: {
   api: ZApi; sessionId: string; onClose: () => void;
 }) {
@@ -22,6 +22,9 @@ export function TasksPanel({ api, sessionId, onClose }: {
   const [bgs, setBgs] = useState<Row[]>([]);
   const [crons, setCrons] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<Row[]>([]);
+  const [loadingT, setLoadingT] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -44,6 +47,19 @@ export function TasksPanel({ api, sessionId, onClose }: {
     void reload();
   };
 
+  /** 展开/收起子代理只读转录(点击同名行收起)。 */
+  const toggleTranscript = async (agentId: string) => {
+    if (expanded === agentId) { setExpanded(null); setTranscript([]); return; }
+    setExpanded(agentId);
+    setTranscript([]);
+    setLoadingT(true);
+    try {
+      setTranscript(await api.subagentMessages(sessionId, agentId).catch(() => []));
+    } finally {
+      setLoadingT(false);
+    }
+  };
+
   return (
     <div className="picker tasks" role="region" aria-label="任务面板">
       <div className="tasks__bar">
@@ -56,13 +72,36 @@ export function TasksPanel({ api, sessionId, onClose }: {
 
       <div className="picker__group">子代理({subs.length})</div>
       {subs.length === 0 && <div className="tasks__empty">本会话还没有子代理</div>}
-      {subs.map((a, i) => (
-        <div key={s(a.agentId) || i} className="tasks__row">
-          <span className="tasks__name">{s(a.description) || s(a.agentId) || '子代理'}</span>
-          {s(a.agentType) && <em className="tag tag--model mono">{s(a.agentType)}</em>}
-          <span className="session-row__time">{timeLabel(s(a.updatedAt))}</span>
-        </div>
-      ))}
+      {subs.map((a, i) => {
+        const agentId = s(a.agentId) || String(i);
+        return (
+          <div key={agentId}>
+            <button
+              type="button"
+              className={`tasks__row tasks__row--clickable${expanded === agentId ? ' is-open' : ''}`}
+              onClick={() => void toggleTranscript(agentId)}
+              title="点击查看只读转录"
+            >
+              <span className="tasks__name">{s(a.description) || s(a.agentId) || '子代理'}</span>
+              {s(a.agentType) && <em className="tag tag--model mono">{s(a.agentType)}</em>}
+              <span className="session-row__time">{timeLabel(s(a.updatedAt))}</span>
+              <span className="toolcard__chev">{expanded === agentId ? '▾' : '▸'}</span>
+            </button>
+            {expanded === agentId && (
+              <div className="tasks__transcript">
+                {loadingT && <div className="tasks__empty">转录加载中…</div>}
+                {!loadingT && transcript.length === 0 && <div className="tasks__empty">转录为空或不可读</div>}
+                {transcript.map((m, j) => (
+                  <div key={j} className="tasks__msg">
+                    <em className={`tag ${s(m.role) === 'user' ? 'tag--local' : 'tag--model'}`}>{s(m.role) || s(m.kind)}</em>
+                    <span className="tasks__msg-text">{s(m.content).slice(0, 400) || '(空)'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       <div className="picker__group">后台任务({bgs.length})</div>
       {bgs.length === 0 && <div className="tasks__empty">没有后台任务</div>}

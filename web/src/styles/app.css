@@ -788,3 +788,12 @@
 }
 .load-older:hover:not(:disabled) { border-color: var(--z-primary); color: var(--z-primary-deep); }
 .load-older:disabled { opacity: 0.6; cursor: default; }
+
+/* 任务面板:子代理行可点击展开转录 */
+.tasks__row--clickable { width: 100%; text-align: left; font-family: var(--z-font-body); cursor: pointer; }
+.tasks__row--clickable:hover { border-color: var(--z-primary); }
+.tasks__row--clickable.is-open { border-color: var(--z-primary); background: color-mix(in srgb, var(--z-primary) 6%, var(--z-bg)); }
+.tasks__transcript { margin: 4px 0 6px; padding: 6px 8px; border-left: 3px solid var(--z-line); display: flex; flex-direction: column; gap: 5px; max-height: 260px; overflow-y: auto; background: var(--z-bg); border-radius: 0 var(--z-radius) var(--z-radius) 0; }
+.tasks__msg { display: flex; align-items: flex-start; gap: 6px; }
+.tasks__msg .tag { flex: none; margin-top: 1px; }
+.tasks__msg-text { font-size: 11.5px; line-height: 1.5; color: var(--z-ink-soft); white-space: pre-wrap; word-break: break-word; min-width: 0; }
