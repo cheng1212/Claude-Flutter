@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { attachWsGateway } from './gateway/ws-gateway.js';
 import { openDb, failStaleRuns } from './db.js';
 import { loadOrCreateConfig } from './config.js';
@@ -13,6 +14,15 @@ import { SessionRuntime } from './protocol/sdk-client.js';
 import { restartPlan, spawnRestart } from './restart.js';
 
 const config = loadOrCreateConfig();
+
+// 启动自证:入口文件的真实所在目录。入口是相对路径(src/index.ts)+ 错误 cwd 时,
+// 会静默加载另一棵树的旧代码,而命令行里的 tsx 路径还可能被 junction 伪装成
+// "看起来对"的那棵(踩过两次)。这行 + /api/health 的 sourceDir 让真相一眼可见。
+const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const STARTED_AT = new Date().toISOString();
+console.log(`[zcode-server] source: ${SOURCE_DIR}`);
+console.log(`[zcode-server] cwd: ${process.cwd()} (pid ${process.pid})`);
+
 const db = openDb(path.join(config.dataDir, 'zcode.db'));
 const staleRuns = failStaleRuns(db);
 if (staleRuns > 0) console.log(`[zcode-server] marked ${staleRuns} stale run(s) as interrupted`);
@@ -55,6 +65,8 @@ const app = await buildApp({
   publicDir: config.publicDir,
   webDir: config.webDir,
   projectsRoot: config.projectsRoot,
+  sourceDir: SOURCE_DIR,
+  startedAt: STARTED_AT,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),
   backgrounds: (sessionId) => backgrounds.list(sessionId),

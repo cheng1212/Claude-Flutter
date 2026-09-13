@@ -16,6 +16,10 @@ export type AppOptions = {
   onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void;
   /** app 点「重启服务器」:拉起新实例并退出(index 侧实现,不传则接口回 501) */
   onRestart?: () => void;
+  /** 实际源码目录(index 侧用 import.meta.url 推出):/api/health 暴露,用于自证跑的是哪棵树 */
+  sourceDir?: string;
+  /** 进程启动时刻(ISO),同健康检查暴露 */
+  startedAt?: string;
   /** 会话是否在跑(注入 registry.isRunning):列表接口据此标"运行中"徽章 */
   isRunning?: (sessionId: string) => boolean;
   /** 后台任务列表(注入 BackgroundRegistry.list):/api/sessions/:id/backgrounds */
@@ -69,6 +73,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     version: SERVER_VERSION,
     uptimeSec: Math.round(process.uptime()),
     runningSessions: opts.runningCount?.() ?? 0,
+    // 启动自证:实际加载的源码目录/进程/启动时刻。排查"改完没生效"时,
+    // 一眼就能看出跑的是哪棵树——踩过两次的坑(相对路径 src/index.ts + 错误 cwd
+    // 会静默加载另一棵树的旧代码,命令行路径还会被 junction 伪装)。
+    sourceDir: opts.sourceDir ?? '',
+    cwd: process.cwd(),
+    pid: process.pid,
+    startedAt: opts.startedAt ?? '',
   }));
   if (opts.publicDir) {
     // 不在 /api/ 前缀下 → 鉴权钩子放行;手机浏览器直接打开链接即可下载
