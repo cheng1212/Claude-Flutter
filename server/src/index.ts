@@ -100,6 +100,8 @@ const app = await buildApp({
   // app 点「重启服务器」:拉起脱离进程树的新实例,再走优雅停机退出。
   // gateway 还没建(声明在后面),所以重启动作走闭包引用,调用时已初始化。
   onRestart: () => { void restartSelf(); },
+  // 定时任务「立即运行」:复用 gateway 的程序化触发(与到点触发同一条管线)
+  triggerSession: (sessionId, prompt) => gateway.triggerSession(sessionId, prompt),
 }); // buildApp 内部已挂 REST
 
 const gateway = attachWsGateway(app.server, {

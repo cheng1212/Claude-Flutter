@@ -7,7 +7,7 @@
 // - 会话正在运行 → 跳过本轮(下轮扫描再试,避免打断当前回合);
 // - 扫描周期 30s:分钟粒度的 cron 语义下足够及时,且开销可忽略。
 import type { Db } from './db.js';
-import { listCrons, markCronDeleted } from './db.js';
+import { listCrons, markCronDeleted, recordCronRun } from './db.js';
 import { nextFire } from './cron.js';
 
 export type CronTrigger = (sessionId: string, prompt: string) => boolean;
@@ -25,8 +25,13 @@ export function startCronScheduler(db: Db, trigger: CronTrigger, tickMs = 30_000
         if (last >= fire) continue; // 这一分钟已触发过
         firedUntil.set(r.id, fire);
         if (trigger(r.session_id, r.prompt)) {
+          recordCronRun(db, r.id, r.session_id, 'success');
           console.log(`[zcode-server] cron fired: session=${r.session_id.slice(0, 8)} ${r.cron}`);
           if (r.recurring === 0) markCronDeleted(db, r.id); // 一次性任务触发即完成
+        } else {
+          // 会话在跑(不打断当前回合)或会话不可用:记一笔但不计入"已跑次数"
+          recordCronRun(db, r.id, r.session_id, 'skipped', '会话在运行或不可用,本轮跳过');
+          console.log(`[zcode-server] cron skipped: session=${r.session_id.slice(0, 8)} ${r.cron}`);
         }
       }
     } catch (e) {

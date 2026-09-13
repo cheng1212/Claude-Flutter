@@ -80,8 +80,13 @@ class ZApi {
   }
 
   /// 定时任务列表(active,含 next_fire)。
-  Future<List<Map<String, dynamic>>> crons({String? sessionId}) async {
-    final res = await _call('GET', sessionId == null ? '/api/crons' : '/api/crons?session=$sessionId', null);
+  /// 定时任务列表;includePaused = 连暂停中的一起拿(管理面板要看全量)。
+  Future<List<Map<String, dynamic>>> crons({String? sessionId, bool includePaused = false}) async {
+    final q = <String>[
+      if (sessionId != null) 'session=${Uri.encodeComponent(sessionId)}',
+      if (includePaused) 'paused=1',
+    ];
+    final res = await _call('GET', '/api/crons${q.isEmpty ? '' : '?${q.join('&')}'}', null);
     final list = res is Map ? res['crons'] : null;
     if (list is List) return [for (final c in list) (c as Map).cast<String, dynamic>()];
     return const [];
@@ -90,6 +95,29 @@ class ZApi {
   /// 删除定时任务(标记删除)。
   Future<void> deleteCron(String id) async {
     await _call('DELETE', '/api/crons/$id', null);
+  }
+
+  /// 启用/暂停定时任务(面板开关)。
+  Future<void> setCronActive(String id, {required bool active}) async {
+    await _call('PATCH', '/api/crons/$id', {'status': active ? 'active' : 'paused'});
+  }
+
+  /// 立即运行一次(不等 cron 到点)。会话在跑时 server 回 409,由调用方提示。
+  Future<void> runCronNow(String id) async {
+    await _call('POST', '/api/crons/$id/run', const <String, dynamic>{});
+  }
+
+  /// 重启任务:次数/上次结果清零,重新计时。
+  Future<void> restartCron(String id) async {
+    await _call('POST', '/api/crons/$id/restart', const <String, dynamic>{});
+  }
+
+  /// 执行历史(最近 30 条,倒序)。
+  Future<List<Map<String, dynamic>>> cronRuns(String id) async {
+    final res = await _call('GET', '/api/crons/$id/runs', null);
+    final list = res is Map ? res['runs'] : null;
+    if (list is List) return [for (final r in list) (r as Map).cast<String, dynamic>()];
+    return const [];
   }
 
   /// 项目文件夹:总目录 + 其下项目名列表。
