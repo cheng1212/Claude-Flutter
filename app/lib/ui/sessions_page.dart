@@ -1658,6 +1658,18 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
   String _projectLabel = '默认';
 
   @override
+  void initState() {
+    super.initState();
+    // 模型友好名来自分组接口:没拉过就补一次,否则下拉只能显示原始 id,
+    // 和聊天页那个切换弹层对不上(用户反馈的"两处模型列表不一样")。
+    if (widget.app.modelGroups.isEmpty) {
+      widget.app.apiGroups().then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _title.dispose();
     super.dispose();
@@ -1694,6 +1706,15 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
   @override
   Widget build(BuildContext context) {
     final models = ['default', ...widget.app.models.where((m) => m != 'default')];
+    // 显示友好名(与聊天页的模型弹层同源):原来这里直接显示模型 id,
+    // 同一个模型两处两个叫法(新建会话 `go-glm-5.3-flash` / 切换弹层
+    // `GLM 5.3 Flash (Go)`),用户看着就是"两边的模型列表不一样"。
+    final labels = <String, String>{};
+    for (final g in widget.app.modelGroups) {
+      for (final m in (g['models'] as List? ?? const [])) {
+        if (m is Map) labels['${m['id']}'] = '${m['label'] ?? m['id']}';
+      }
+    }
     return AlertDialog(
       backgroundColor: ZT.surface,
       title: const Text('新会话'),
@@ -1710,7 +1731,8 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
           decoration: const InputDecoration(labelText: '模型'),
           items: [
             for (final m in models)
-              DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 13))),
+              DropdownMenuItem(
+                  value: m, child: Text(labels[m] ?? m, style: const TextStyle(fontSize: 13))),
           ],
           onChanged: (v) => setState(() => _model = v ?? 'default'),
         ),
