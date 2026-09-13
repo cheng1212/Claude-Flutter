@@ -2391,44 +2391,80 @@ class _SendOrStop extends StatefulWidget {
   State<_SendOrStop> createState() => _SendOrStopState();
 }
 
+/// 输入区右侧按钮形态(纯函数,便于测试)。
+enum ComposerButtons {
+  /// 空闲:只有发送键
+  send,
+
+  /// 回合进行中且输入框为空:只有停止键(保持干净)
+  stop,
+
+  /// 回合进行中且输入框有内容(文字/图片/附件):发送 + 停止双键
+  sendAndStop,
+}
+
+/// 判定规则:
+/// - [canStop] = 在线且在跑(断线时 running 可能是冻结假象,不认);
+/// - 运行中只要有输入就给发送键——否则用户打了字/选了图却没有入口发出去
+///   (原来运行中整个按钮被停止键取代,排队/插话功能等于摸不到)。
+ComposerButtons composerButtonsOf({required bool canStop, required bool hasText}) {
+  if (!canStop) return ComposerButtons.send;
+  return hasText ? ComposerButtons.sendAndStop : ComposerButtons.stop;
+}
+
 class _SendOrStopState extends State<_SendOrStop> {
   bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    // 停止乐观反馈:点下瞬间就转「停止中」,不等 CLI 掐断流再转回(0.5~3 秒体感盲区)
-    if (widget.canStop) {
-      final stopping = widget.stopping;
-      return GestureDetector(
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTap: stopping ? null : widget.onStop,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
-          width: 46,
-          height: 46,
-          transform: Matrix4.translationValues(
-              _pressed ? 2.5 : 0, _pressed ? 2.5 : 0, 0),
-          decoration: ShapeDecoration(
-            color: ZT.rose,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(ZT.radius),
-              side: ZT.inkSide(w: 1.8, color: ZT.rose),
-            ),
-            shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose),
-          ),
-          child: stopping
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
-                )
-              : const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
-        ),
-      );
+    switch (composerButtonsOf(canStop: widget.canStop, hasText: widget.hasText)) {
+      case ComposerButtons.stop:
+        return _stopButton();
+      case ComposerButtons.sendAndStop:
+        return Row(mainAxisSize: MainAxisSize.min, children: [
+          _sendButton(enabled: true),
+          const SizedBox(width: 7),
+          _stopButton(),
+        ]);
+      case ComposerButtons.send:
+        return _sendButton(enabled: widget.hasText);
     }
-    final enabled = widget.hasText;
+  }
+
+  /// 停止键(带乐观反馈:点下瞬间转「停止中」,不等 CLI 掐断流再转回)
+  Widget _stopButton() {
+    final stopping = widget.stopping;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: stopping ? null : widget.onStop,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 90),
+        width: 46,
+        height: 46,
+        transform: Matrix4.translationValues(
+            _pressed ? 2.5 : 0, _pressed ? 2.5 : 0, 0),
+        decoration: ShapeDecoration(
+          color: ZT.rose,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(ZT.radius),
+            side: ZT.inkSide(w: 1.8, color: ZT.rose),
+          ),
+          shadows: _pressed ? const [] : ZT.hard(dx: 2.5, dy: 2.5, color: ZT.rose),
+        ),
+        child: stopping
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+              )
+            : const Icon(Icons.stop_rounded, color: Colors.white, size: 26),
+      ),
+    );
+  }
+
+  Widget _sendButton({required bool enabled}) {
     return GestureDetector(
       onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
       onTapUp: (_) => setState(() => _pressed = false),
