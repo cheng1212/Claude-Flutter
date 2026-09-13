@@ -252,7 +252,39 @@ export class SessionRuntime {
     }
     if (this.providerSessionId) options.resume = this.providerSessionId;
     if (this.forkPending && this.providerSessionId) options.forkSession = true;
+    // 子代理模型强制:派 Agent/Task 时把 input.model 改写成**本会话正在用的模型**。
+    // 为什么必须用 hook 而不是 canUseTool:bypassPermissions 模式下 SDK 会跳过
+    // canUseTool(官方警告 CAN_USE_TOOL_SHADOWED),只有 PreToolUse hook 仍会被调用
+    // —— 实测(probe)在 bypass 下 hook 照样触发且 updatedInput 真的改了执行内容。
+    // 这样"哪个会话派的子代理,就用哪个会话的模型",模型自己指定的贵模型会被覆盖。
+    if (model) {
+      options.hooks = {
+        PreToolUse: [{
+          matcher: 'Agent|Task',
+          hooks: [this.forceSubagentModelHook(model)],
+        }],
+      };
+    }
     return options;
+  }
+
+  /** PreToolUse 拦截器:把子代理派发的 model 改写成主会话模型(对模型透明)。 */
+  private forceSubagentModelHook(effectiveModel: string) {
+    return async (input: AnyRecord): Promise<AnyRecord> => {
+      const toolInput = (input.tool_input ?? {}) as AnyRecord;
+      const asked = typeof toolInput.model === 'string' ? toolInput.model : '';
+      if (asked === effectiveModel) return {}; // 本来就一致:不插手
+      // 只在服务端留痕,不往对话里插消息(每派一次子代理就插一条会吵)。
+      // 子代理实际用了什么模型,面板从转录采样显示,可复查。
+      console.log(`[zcode-server] subagent model locked: ${asked || '(unset)'} -> ${effectiveModel}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput: { ...toolInput, model: effectiveModel },
+        },
+      };
+    };
   }
 
   private canUseTool = async (toolName: string, input: unknown): Promise<CanUseToolResult> => {

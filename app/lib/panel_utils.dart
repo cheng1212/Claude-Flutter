@@ -8,11 +8,21 @@ class SubagentInfo {
   final int activityCount; // 该子代理名下的工具活动数
   final bool done;
 
+  /// 模型**请求**用的模型(Agent/Task 的 input.model)。空 = 没指定,继承主模型。
+  /// 用户最关心的一条:Claude 有时会自己挑贵的模型,这个字段让"挑了什么"可见;
+  /// server 侧 PreToolUse hook 会把它强制改写成主会话模型,所以实际执行的一定是会话模型。
+  final String requestedModel;
+
+  /// 子代理类型(Agent/Task 的 subagent_type),如 general-purpose / Explore。
+  final String agentType;
+
   const SubagentInfo({
     required this.toolId,
     required this.description,
     required this.activityCount,
     required this.done,
+    this.requestedModel = '',
+    this.agentType = '',
   });
 }
 
@@ -49,6 +59,8 @@ List<SubagentInfo> deriveSubagents(List<ChatRow> rows) {
         description: desc.isEmpty ? '子代理' : desc,
         activityCount: 0,
         done: r.result != null,
+        requestedModel: '${input['model'] ?? ''}'.trim(),
+        agentType: '${input['subagent_type'] ?? input['subagentType'] ?? ''}'.trim(),
       );
     }
   }
@@ -62,6 +74,8 @@ List<SubagentInfo> deriveSubagents(List<ChatRow> rows) {
         description: agents[p]!.description,
         activityCount: activity[p] ?? 0,
         done: agents[p]!.done,
+        requestedModel: agents[p]!.requestedModel,
+        agentType: agents[p]!.agentType,
       );
     }
   }

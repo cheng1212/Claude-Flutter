@@ -26,6 +26,28 @@ void main() {
       expect(subs[0].activityCount, 2);
       expect(subs[0].done, isFalse);
     });
+
+    test('带出模型与子代理类型(用户要盯"子代理用了哪个模型")', () {
+      final rows = <ChatRow>[
+        tool('task-1', 'Task', {
+          'description': '查文档',
+          'prompt': '查一下',
+          'model': 'opus-5',
+          'subagent_type': 'general-purpose',
+        }),
+      ];
+      final subs = deriveSubagents(rows);
+      expect(subs.single.requestedModel, 'opus-5');
+      expect(subs.single.agentType, 'general-purpose');
+    });
+
+    test('未指定 model → 空串(表示继承主模型,面板显示「跟随本会话」)', () {
+      final rows = <ChatRow>[
+        tool('task-1', 'Task', {'description': '查一下', 'prompt': 'x'}),
+      ];
+      expect(deriveSubagents(rows).single.requestedModel, '');
+      expect(deriveSubagents(rows).single.agentType, '');
+    });
     test('子代理结果到达即 done', () {
       final rows = <ChatRow>[
         tool('task-1', 'Task', {'description': '查文档'}),
