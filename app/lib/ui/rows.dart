@@ -1217,7 +1217,17 @@ class _TaskItem {
 List<PlanStep>? deriveTaskSteps(List<ChatRow> rows) {
   final order = <String>[];
   final byId = <String, _TaskItem>{};
+  void remove(String id) {
+    if (byId.remove(id) != null) order.remove(id);
+  }
+
   void put(String id, String subject, String status) {
+    // 已删除的任务直接从面板移除:留着会以「未勾选」的样子挂在计划里,
+    // 用户看到的就是"啥时候的计划,一直是未执行"(实测反馈)。
+    if (status == 'deleted') {
+      remove(id);
+      return;
+    }
     final existing = byId[id];
     if (existing == null) {
       order.add(id);
