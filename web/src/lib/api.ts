@@ -82,9 +82,10 @@ export class ZApi {
     return { deleted: res.deleted ?? 0, missing: res.missing ?? [] };
   }
 
-  async messages(id: string, limit = 500): Promise<{ messages: MessageRow[]; total: number }> {
+  async messages(id: string, limit = 500, beforeSeq?: number): Promise<{ messages: MessageRow[]; total: number }> {
+    const q = beforeSeq ? `&beforeSeq=${beforeSeq}` : '';
     const res = await this.call<{ messages: MessageRow[]; total: number }>(
-      'GET', `/api/sessions/${id}/messages?limit=${limit}`);
+      'GET', `/api/sessions/${id}/messages?limit=${limit}${q}`);
     return { messages: res.messages ?? [], total: res.total ?? 0 };
   }
 

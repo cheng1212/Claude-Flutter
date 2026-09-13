@@ -24,6 +24,7 @@ export function ChatPage({ store, sessionId }: {
 
   const chat = useStore(store, (s) => s.chat);
   const historyLoading = useStore(store, (s) => s.historyLoading);
+  const loadingOlder = useStore(store, (s) => s.loadingOlder);
   const sessions = useStore(store, (s) => s.sessions);
   const modelGroups = useStore(store, (s) => s.modelGroups);
   const [input, setInput] = useState('');
@@ -33,7 +34,6 @@ export function ChatPage({ store, sessionId }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
-  const [showJump, setShowJump] = useState(false);
 
   // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
   const api = useMemo(() => {
@@ -52,16 +52,19 @@ export function ChatPage({ store, sessionId }: {
   const onScroll = () => {
     const el = listRef.current;
     if (!el) return;
-    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickRef.current = gap < 80; // 贴底阈值,对齐 Flutter kAtBottomThreshold
-    setShowJump(gap >= 80);
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; // 贴底阈值,对齐 Flutter
   };
 
-  // 进入会话/历史加载完成:强制钉到最新一条(用户上来先看到的是现在,不是过去)。
+  // 进入会话/历史加载完成:多重保险钉到最新一条 —— markdown/图片异步增高会把视口顶离底部,
+  // 所以首帧 + 下一帧 + 250ms + 800ms 各补一次,确保"进来就在最底下"。
   useEffect(() => {
+    if (historyLoading) return;
     stickRef.current = true;
-    setShowJump(false);
     scrollToEnd();
+    const raf = requestAnimationFrame(() => scrollToEnd());
+    const t1 = setTimeout(() => scrollToEnd(), 250);
+    const t2 = setTimeout(() => scrollToEnd(), 800);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
   }, [sessionId, historyLoading]);
 
   // 新行与流式增长:仅在贴底时跟随,用户上翻看历史就不打扰。
@@ -113,6 +116,16 @@ export function ChatPage({ store, sessionId }: {
     <div className="chat">
       <div className="chat-list" ref={listRef} onScroll={onScroll}>
         <div className="chat-list__inner">
+          {chat.hasMoreOlder && (
+            <button
+              type="button"
+              className="load-older"
+              disabled={loadingOlder}
+              onClick={() => { stickRef.current = false; void store.getState().loadOlder(); }}
+            >
+              {loadingOlder ? '加载中…' : '加载更早的消息'}
+            </button>
+          )}
           <div className="chat__headtail">
             {session && <span className="mono chat__headmeta">{model} · {MODES.find((m) => m.value === mode)?.label ?? mode}</span>}
           </div>
@@ -124,15 +137,14 @@ export function ChatPage({ store, sessionId }: {
         </div>
       </div>
 
-      {showJump && (
-        <button
-          type="button"
-          className="jump-latest"
-          onClick={() => { stickRef.current = true; setShowJump(false); scrollToEnd(true); }}
-        >
-          ↓ 回到最新
-        </button>
-      )}
+      <button
+        type="button"
+        className="jump-latest"
+        aria-label="滑到最新消息"
+        onClick={() => { stickRef.current = true; scrollToEnd(true); }}
+      >
+        ↓ 最新
+      </button>
 
       {chat.pendingPermission && (
         <PermissionCard

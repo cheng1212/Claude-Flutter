@@ -29,6 +29,10 @@ export interface ChatState {
   rows: ChatRow[];
   lastSeq: number;
   running: boolean;
+  /** 已加载的最旧 seq(按需加载锚点);0 = 没有/未加载历史 */
+  oldestSeq: number;
+  /** 是否还有更旧的历史(滑到顶时"加载更早") */
+  hasMoreOlder: boolean;
   streamingText?: string;
   streamingThinking?: string;
   usage?: UsageInfo;
@@ -36,7 +40,7 @@ export interface ChatState {
 }
 
 export function emptyChat(): ChatState {
-  return { rows: [], lastSeq: 0, running: false };
+  return { rows: [], lastSeq: 0, running: false, oldestSeq: 0, hasMoreOlder: false };
 }
 
 /** 被打断工具卡的占位结果:可辨识,迟到的真 tool_result 会覆盖它。 */
@@ -47,6 +51,8 @@ function withState(s: ChatState, patch: Partial<ChatState> & { clearStreamText?:
     rows: patch.rows ?? s.rows,
     lastSeq: patch.lastSeq ?? s.lastSeq,
     running: patch.running ?? s.running,
+    oldestSeq: patch.oldestSeq ?? s.oldestSeq,
+    hasMoreOlder: patch.hasMoreOlder ?? s.hasMoreOlder,
     streamingText: patch.clearStreamText ? undefined : (patch.streamingText ?? s.streamingText),
     streamingThinking: patch.clearStreamThinking ? undefined : (patch.streamingThinking ?? s.streamingThinking),
     usage: patch.usage ?? s.usage,
@@ -68,6 +74,46 @@ function closeDanglingTools(rows: ChatRow[]): ChatRow[] {
 }
 
 const num = (v: unknown, d = 0): number => (typeof v === 'number' ? v : d);
+
+/** 单事件 → 行(只处理产行的 kind);按需加载的旧页不经 applyEvent 归约 —— 旧页 seq
+ *  全部 < lastSeq,走归约会被去重清零(实测一页 100 条只剩 1 条),必须直接构造。 */
+export function eventToRow(ev: Record<string, unknown>): ChatRow | null {
+  switch (ev.kind) {
+    case 'text':
+      return (ev.role as string | undefined ?? 'assistant') === 'user'
+        ? { kind: 'user', content: String(ev.content ?? ''), pending: false, createdAt: ev.createdAt as string | undefined }
+        : { kind: 'text', content: String(ev.content ?? ''), createdAt: ev.createdAt as string | undefined };
+    case 'thinking':
+      return { kind: 'thinking', content: String(ev.content ?? '') };
+    case 'tool_use':
+      return {
+        kind: 'tool', toolId: String(ev.toolId ?? ''), toolName: String(ev.toolName ?? ''),
+        toolInput: (ev.toolInput as Record<string, unknown> | undefined) ?? {}, startedAt: 0,
+      };
+    case 'tool_result':
+      // 结果交给 prependHistory 配对;同页内找不到 tool_use 的孤立结果直接丢弃
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** 按需加载的更旧一页:事件(升序)直接转行前插,不改 lastSeq/不去重。 */
+export function prependHistory(s: ChatState, eventsAsc: Record<string, unknown>[]): ChatState {
+  const older: ChatRow[] = [];
+  for (const ev of eventsAsc) {
+    const row = eventToRow(ev);
+    if (row) older.push(row);
+  }
+  // 本页内的 tool_result 补挂到前面最近的同 id 工具行(与 applyEvent 相同的 findLastIndex 语义)
+  for (const ev of eventsAsc) {
+    if (ev.kind !== 'tool_result') continue;
+    const toolId = String(ev.toolId ?? '');
+    const idx = older.findLastIndex((r) => r.kind === 'tool' && r.toolId === toolId && !r.result);
+    if (idx >= 0) older[idx] = { ...(older[idx] as ToolRow), result: { content: String(ev.content ?? ''), isError: ev.isError === true } };
+  }
+  return withState(s, { rows: [...older, ...s.rows] });
+}
 
 /** 单事件归约;seq <= lastSeq 的事件丢弃(重连去重),permission_request 豁免。 */
 export function applyEvent(s: ChatState, ev: Record<string, unknown>): ChatState {
