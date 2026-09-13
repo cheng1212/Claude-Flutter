@@ -9,6 +9,14 @@ import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
 
+/// 排队中的消息(会话 running 时发的、等上一轮结束后再推的消息)。
+class QueuedMessage {
+  const QueuedMessage({required this.id, required this.text, this.images = const []});
+  final String id;
+  final String text;
+  final List<String> images;
+}
+
 class ZApp extends ChangeNotifier {
   ZApp({required this._api, required this._socket}) {
     _bind();
@@ -28,6 +36,12 @@ class ZApp extends ChangeNotifier {
   String _pendDeltaThinking = '';
   int? _pendDeltaSeq;
   Timer? _pendDeltaTimer;
+
+  // 发送排队:会话 running 时发的消息先进队列(每会话独立),回复结束按「自动消化」
+  // 开关决定要不要自动推下一条。纯 app 内存态,不持久化、不过 server。
+  final Map<String, List<QueuedMessage>> _queues = {};
+  final Set<String> _autoConsumeOff = {}; // 默认开;关掉的会话记在这里
+  static int _queuedSeq = 0;
 
   /// openSession 后台补齐(首屏后的老消息拉取);_onEvent 顺手给它留 WS 底。
   _Backfill? _backfill;
@@ -183,7 +197,10 @@ class ZApp extends ChangeNotifier {
     _flushDeltas(); // 非 delta 事件先冲掉在途 delta,保住顺序(终态 text 必须落在残余 delta 之后)
     chat = applyEvent(chat, ev);
     _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
-    if (kind == 'complete') unawaited(_loadSessions(silent: true));
+    if (kind == 'complete') {
+      unawaited(_loadSessions(silent: true));
+      _maybeAutoConsume(); // 回合落定:自动消化队首(开关开 + 队列非空才真的推)
+    }
     notifyListeners();
   }
 
@@ -442,6 +459,7 @@ class ZApp extends ChangeNotifier {
       currentSessionId = null;
       chat = const ChatState();
     }
+    _queues.remove(id); // 会话没了,排队消息一并丢弃
     await _loadSessions();
     notifyListeners();
   }
@@ -453,6 +471,9 @@ class ZApp extends ChangeNotifier {
     if (currentSessionId != null && ids.contains(currentSessionId)) {
       currentSessionId = null;
       chat = const ChatState();
+    }
+    for (final id in ids) {
+      _queues.remove(id); // 会话没了,排队消息一并丢弃
     }
     await _loadSessions();
     notifyListeners();
@@ -667,6 +688,130 @@ class ZApp extends ChangeNotifier {
       error = '停止失败: 连接断开';
       notifyListeners();
     }
+  }
+
+  // ---------------------------------------------------------------- 发送排队
+
+  List<QueuedMessage> queueOf(String sid) => _queues[sid] ?? const [];
+
+  int queueCount(String sid) => _queues[sid]?.length ?? 0;
+
+  bool autoConsumeOf(String sid) => !_autoConsumeOff.contains(sid);
+
+  void setAutoConsume(String sid, {required bool on}) {
+    if (on) {
+      _autoConsumeOff.remove(sid);
+    } else {
+      _autoConsumeOff.add(sid);
+    }
+    notifyListeners();
+  }
+
+  /// 入队。返回 'queued' 成功 / 'duplicate' 队内已有同文消息(去重不入)。
+  String enqueue(String text, {List<String> images = const []}) {
+    final sid = currentSessionId;
+    if (sid == null) return 'queued';
+    final norm = text.trim();
+    final q = _queues.putIfAbsent(sid, () => <QueuedMessage>[]);
+    for (final m in q) {
+      if (m.text.trim() == norm && m.images.length == images.length) return 'duplicate';
+    }
+    q.add(QueuedMessage(
+      id: 'q${DateTime.now().microsecondsSinceEpoch}_${_queuedSeq++}',
+      text: text,
+      images: List<String>.of(images),
+    ));
+    notifyListeners();
+    return 'queued';
+  }
+
+  /// 置顶:把第 [index] 条提到队首(下一次优先推它)。
+  void promoteQueued(String sid, int index) {
+    final q = _queues[sid];
+    if (q == null || index <= 0 || index >= q.length) return;
+    q.insert(0, q.removeAt(index));
+    notifyListeners();
+  }
+
+  void removeQueued(String sid, int index) {
+    final q = _queues[sid];
+    if (q == null || index < 0 || index >= q.length) return;
+    q.removeAt(index);
+    if (q.isEmpty) _queues.remove(sid);
+    notifyListeners();
+  }
+
+  /// 修改排队文案;返回 false = 改成了与队内其他条重复,未生效。
+  bool editQueued(String sid, int index, String text) {
+    final q = _queues[sid];
+    if (q == null || index < 0 || index >= q.length) return true;
+    final norm = text.trim();
+    for (var i = 0; i < q.length; i++) {
+      if (i != index && q[i].text.trim() == norm) return false;
+    }
+    final old = q[index];
+    q[index] = QueuedMessage(id: old.id, text: text, images: old.images);
+    notifyListeners();
+    return true;
+  }
+
+  /// 从队列取出第 [index] 条立即发送:打断当前回合,等落定(强裁兜底最长几秒)
+  /// 后推出去;发送失败则塞回队首不丢。
+  Future<bool> sendQueuedNow(String sid, int index,
+      {String? model, String? permissionMode, String? thinking}) async {
+    final q = _queues[sid];
+    if (q == null || index < 0 || index >= q.length) return false;
+    final m = q.removeAt(index);
+    if (q.isEmpty) _queues.remove(sid);
+    notifyListeners();
+    final ok = await interruptAndSend(m.text,
+        model: model, permissionMode: permissionMode, thinking: thinking, images: m.images);
+    if (!ok && currentSessionId == sid) {
+      _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m);
+      notifyListeners();
+    }
+    return ok;
+  }
+
+  /// 打断当前回合并立即发送:abort → 等回合落定(server 强裁兜底保证最长几秒)
+  /// → sendChat。落定超时(12s)时返回发送结果(可能被 RUN_IN_PROGRESS 拒)。
+  Future<bool> interruptAndSend(String content,
+      {String? model, String? permissionMode, String? thinking, List<String> images = const []}) async {
+    abort();
+    final deadline = DateTime.now().add(const Duration(seconds: 12));
+    while (chat.running && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    return sendChat(content, model: model, permissionMode: permissionMode, thinking: thinking, images: images);
+  }
+
+  /// 回合落定(complete)后自动消化队首:开关开 + 队列非空 + 无待审批才推。
+  /// 推送前若会话已切走/又在跑,消息塞回队首不丢。
+  void _maybeAutoConsume() {
+    final sid = currentSessionId;
+    if (sid == null || chat.running || chat.pendingPermission != null) return;
+    final q = _queues[sid];
+    if (q == null || q.isEmpty || _autoConsumeOff.contains(sid)) return;
+    final m = q.removeAt(0);
+    if (q.isEmpty) _queues.remove(sid);
+    notifyListeners();
+    Timer(const Duration(milliseconds: 400), () {
+      if (_disposed) return;
+      if (currentSessionId != sid) {
+        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 切走了:留回原会话队列
+        return;
+      }
+      if (chat.running || chat.pendingPermission != null) {
+        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 又在跑/等审批:塞回队首
+        notifyListeners();
+        return;
+      }
+      final ok = sendChat(m.text, images: m.images);
+      if (!ok) {
+        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 没发出去(如断线):不丢
+        notifyListeners();
+      }
+    });
   }
 }
 
