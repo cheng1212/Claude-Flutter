@@ -12,6 +12,47 @@ ChatRow tool(String id, String name, Map<String, dynamic> input, {String? parent
     );
 
 void main() {
+  group('trimRecent · 列表收口', () {
+    test('已完成的超过 keep → 只留最近 keep 条,运行中的全留', () {
+      final items = <({String id, bool running})>[
+        (id: 'a', running: true), // 运行中,永远留
+        for (var i = 0; i < 20; i++) (id: 'd$i', running: false), // 时间倒序:d0 最新
+      ];
+      final r = trimRecent(items, isRunning: (x) => x.running, keep: 15);
+      expect(r.hidden, 5);
+      expect(r.shown.length, 16); // 1 运行中 + 15 完成
+      expect(r.shown.first.id, 'a');
+      expect(r.shown[1].id, 'd0'); // 最近的在最前
+      expect(r.shown.any((x) => x.id == 'd19'), isFalse); // 最旧的被折叠
+    });
+
+    test('未超上限 → 原样全显示,不折叠', () {
+      final items = <({String id, bool running})>[
+        for (var i = 0; i < 10; i++) (id: 'd$i', running: false),
+      ];
+      final r = trimRecent(items, isRunning: (x) => x.running, keep: 15);
+      expect(r.shown.length, 10);
+      expect(r.hidden, 0);
+    });
+
+    test('全是运行中 → 一条不折(哪怕超过 keep)', () {
+      final items = <({String id, bool running})>[
+        for (var i = 0; i < 30; i++) (id: 'r$i', running: true),
+      ];
+      final r = trimRecent(items, isRunning: (x) => x.running, keep: 15);
+      expect(r.shown.length, 30);
+      expect(r.hidden, 0);
+    });
+
+    test('边界:刚好等于 keep 不折叠;空列表安全', () {
+      final exact = <({String id, bool running})>[
+        for (var i = 0; i < 15; i++) (id: 'd$i', running: false),
+      ];
+      expect(trimRecent(exact, isRunning: (x) => x.running, keep: 15).hidden, 0);
+      expect(trimRecent(<({String id, bool running})>[], isRunning: (x) => x.running).hidden, 0);
+    });
+  });
+
   group('deriveSubagents', () {
     test('Task 工具行即子代理;嵌套活动按 parentToolUseId 计数', () {
       final rows = <ChatRow>[

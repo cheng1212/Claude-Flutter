@@ -93,6 +93,8 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
   Widget build(BuildContext context) {
     final live = deriveSubagents(widget.rows);
     final disk = _disk;
+    // 列表收口:长会话里子代理只增不减(磁盘转录一个子代理一个文件),
+    // 运行中的全留,已完成只留最近 15 个,更早的折叠起来(数据不删,点开还能看)。
     // 按 description 把"本轮活动"和"磁盘转录"归并:命中的磁盘行不再重复列出
     final diskRows = (disk ?? const <Map<String, dynamic>>[]).toList();
     for (final sub in live) {
@@ -111,14 +113,30 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
         ),
       );
     }
+    // 统一成一个列表再收口:运行中的(实时卡)优先 → 已完成的实时卡 → 磁盘转录
+    // (磁盘按更新时间倒序,新的在前)。这样"运行中永远在顶上,历史只留最近一批"。
+    final merged = <Widget>[];
+    final liveRunning = live.where((s) => !s.done).toList();
+    final liveDone = live.where((s) => s.done).toList().reversed.toList(); // rows 是正序
+    final diskSorted = [...diskRows]..sort((a, b) =>
+        '${b['updatedAt'] ?? ''}'.compareTo('${a['updatedAt'] ?? ''}'));
+    final ordered = [...liveRunning, ...liveDone, ...diskSorted];
+    final trimmed = trimRecent<Object>(ordered, isRunning: (o) => o is SubagentInfo && !o.done);
+    for (final o in trimmed.shown) {
+      merged.add(o is SubagentInfo ? _liveCard(o) : _diskCard(o as Map<String, dynamic>));
+    }
+    if (trimmed.hidden > 0) {
+      merged.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text('还有 ${trimmed.hidden} 个更早的子代理已折叠(转录仍在,不影响查看)',
+            style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+      ));
+    }
     return ListView.separated(
       shrinkWrap: true,
-      itemCount: live.length + diskRows.length,
+      itemCount: merged.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, i) {
-        if (i < live.length) return _liveCard(live[i]);
-        return _diskCard(diskRows[i - live.length]);
-      },
+      itemBuilder: (context, i) => merged[i],
     );
   }
 
@@ -374,12 +392,26 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
         ),
       );
     }
+    // 列表收口:后台任务在长会话里同样只增不减(内存登记表),运行中的全留,
+    // 已结束的按开始时间倒序只留最近 15 个,更早的折叠(数据不删,server 侧仍留着)。
+    final sorted = [...data]..sort((a, b) =>
+        ((b['startedAt'] as num?)?.toInt() ?? 0).compareTo((a['startedAt'] as num?)?.toInt() ?? 0));
+    final trimmed = trimRecent<Map<String, dynamic>>(sorted,
+        isRunning: (b) => '${b['status'] ?? 'running'}' == 'running');
+    final rows = trimmed.shown;
     return ListView.separated(
       shrinkWrap: true,
-      itemCount: data.length,
+      itemCount: rows.length + (trimmed.hidden > 0 ? 1 : 0),
       separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, i) {
-        final b = data[i];
+        if (i >= rows.length) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text('还有 ${trimmed.hidden} 个更早的后台任务已折叠',
+                style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+          );
+        }
+        final b = rows[i];
         final status = '${b['status'] ?? 'running'}';
         final style = _statusStyle(status);
         final description = (b['description'] ?? '') as String;

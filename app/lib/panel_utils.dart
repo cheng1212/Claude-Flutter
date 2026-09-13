@@ -99,6 +99,27 @@ List<BackgroundInfo> deriveBackgrounds(List<ChatRow> rows) {
   return out;
 }
 
+/// 列表收口:不管是子代理还是后台任务,长会话里"已完成"的条目会无限累积
+/// (磁盘转录只增不减、内存登记表也不会自己缩),面板越用越长。
+///
+/// 规则:**运行中的全留**(当前工作视图的核心),已完成的按传入顺序(调用方保证
+/// 时间倒序)只留最近 [keep] 条。返回被折叠的条数,由 UI 决定怎么提示。
+/// 纯函数,不依赖任何状态,便于单测。
+({List<T> shown, int hidden}) trimRecent<T>(
+  List<T> items, {
+  required bool Function(T) isRunning,
+  int keep = 15,
+}) {
+  final running = <T>[];
+  final done = <T>[];
+  for (final it in items) {
+    (isRunning(it) ? running : done).add(it);
+  }
+  if (done.length <= keep) return (shown: items, hidden: 0);
+  final shown = [...running, ...done.take(keep)];
+  return (shown: shown, hidden: done.length - keep);
+}
+
 /// 跨会话引用:把源会话导出的 markdown 压缩成可注入的上下文消息。
 /// 超长时截头留尾(head/tail 字符数),中间用省略标记衔接。
 String buildReferenceMessage({
