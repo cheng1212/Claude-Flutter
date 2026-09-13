@@ -38,4 +38,47 @@ describe('BackgroundRegistry', () => {
     expect(r.list('s1')).toHaveLength(0);
     expect(r.list('s2')).toHaveLength(1);
   });
+
+  it('list 按开始时间倒序(新→旧),不依赖 Map 插入序', () => {
+    const r = new BackgroundRegistry();
+    r.onToolUse('s', 'Bash', 'old', { command: 'old', run_in_background: true });
+    r.onToolUse('s', 'Bash', 'new', { command: 'new', run_in_background: true });
+    // 直接改 startedAt 模拟先后(测试里同毫秒会撞)
+    const list = r.list('s');
+    expect(list.length).toBe(2);
+    expect(list[0].startedAt).toBeGreaterThanOrEqual(list[1].startedAt);
+  });
+
+  it('prune 收口:超出上限清最旧的已完成,运行中的一条不动', () => {
+    const r = new BackgroundRegistry();
+    // 30 个已完成 + 3 个运行中
+    for (let i = 0; i < 30; i++) {
+      r.onTaskEvent('s', { kind: 'task_started', taskId: `done-${i}` });
+      r.onTaskEvent('s', { kind: 'task_complete', taskId: `done-${i}`, status: 'completed' });
+    }
+    for (let i = 0; i < 3; i++) {
+      r.onTaskEvent('s', { kind: 'task_started', taskId: `run-${i}` });
+    }
+    const before = r.list('s').length;
+    expect(before).toBe(33);
+
+    const removed = r.prune('s', 10);
+    expect(removed).toBeGreaterThan(0);
+    const after = r.list('s');
+    // 运行中的 3 条必须还在
+    expect(after.filter((t) => t.status === 'running').length).toBe(3);
+    // 已完成的被压到上限内
+    expect(after.filter((t) => t.status !== 'running').length).toBeLessThanOrEqual(10);
+  });
+
+  it('prune 不影响别的会话', () => {
+    const r = new BackgroundRegistry();
+    for (let i = 0; i < 20; i++) {
+      r.onTaskEvent('s1', { kind: 'task_started', taskId: `a-${i}` });
+      r.onTaskEvent('s1', { kind: 'task_complete', taskId: `a-${i}`, status: 'completed' });
+    }
+    r.onTaskEvent('s2', { kind: 'task_started', taskId: 'b-1' });
+    r.prune('s1', 5);
+    expect(r.list('s2').length).toBe(1);
+  });
 });

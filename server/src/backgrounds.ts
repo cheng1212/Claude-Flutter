@@ -128,11 +128,16 @@ export class BackgroundRegistry {
       entry.summary = ev.summary || entry.summary;
       entry.outputFile = ev.outputFile ?? entry.outputFile;
       entry.endAt = Date.now();
+      // 有任务收尾就顺手收口一次内存表(运行中的不会被清),避免长会话无限增长
+      this.prune(sessionId);
       return;
     }
   }
 
-  /** 去重后的任务列表:合并过的条目有两个键指向同一对象,按对象身份去重。 */
+  /**
+   * 去重后的任务列表:合并过的条目有两个键指向同一对象,按对象身份去重。
+   * 返回前顺手**按时间倒序**(新→旧),让面板不必依赖 Map 插入序。
+   */
   list(sessionId: string): TaskEntry[] {
     const map = this.sessionMap(sessionId);
     const seen = new Set<TaskEntry>();
@@ -142,7 +147,27 @@ export class BackgroundRegistry {
       seen.add(entry);
       out.push(entry);
     }
-    return out;
+    return out.sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  /**
+   * 内存收口:长会话跑几百个后台任务时,登记表只增不减会一直占内存。
+   * 每会话保留最近 [keep] 条,**运行中的一条不删**(面板还要靠它显示当前状态)。
+   * CLI 自己的输出文件与转录不受影响,这里只清本进程的内存登记。
+   */
+  prune(sessionId: string, keep = 200): number {
+    const map = this.sessionMap(sessionId);
+    const all = this.list(sessionId); // 已按时间倒序
+    let removed = 0;
+    for (let i = keep; i < all.length; i++) {
+      const e = all[i];
+      if (e.status === 'running' || e.status === 'pending' || e.status === 'paused') continue;
+      // 合并过的条目有两个键指向同一对象,两个键都要摘
+      map.delete(e.id);
+      if (e.taskId) map.delete(e.taskId);
+      removed += 1;
+    }
+    return removed;
   }
 
   clear(sessionId: string): void {
