@@ -21,6 +21,14 @@ class ZApp extends ChangeNotifier {
   Timer? _sessionsDirtyTimer;
   bool _disposed = false;
 
+  // 流式 delta 合帧缓冲:delta 按 chunk 频率(可到每秒几十条)到达,逐条 notify
+  // 会让整页按 chunk 频率重建(推流卡顿根因)。缓冲 40ms 合成一条再归约;
+  // 任何非 delta 事件先 flush(保顺序:终态 text 必须落在残余 delta 之后,不然丢字)。
+  String _pendDeltaText = '';
+  String _pendDeltaThinking = '';
+  int? _pendDeltaSeq;
+  Timer? _pendDeltaTimer;
+
   /// openSession 后台补齐(首屏后的老消息拉取);_onEvent 顺手给它留 WS 底。
   _Backfill? _backfill;
 
@@ -108,6 +116,7 @@ class ZApp extends ChangeNotifier {
     _disposed = true;
     _retry?.cancel();
     _sessionsDirtyTimer?.cancel();
+    _pendDeltaTimer?.cancel();
     _sub?.cancel();
     _socket.onChanged = null;
     unawaited(_socket.close());
@@ -167,10 +176,61 @@ class ZApp extends ChangeNotifier {
       );
       if (decision != null) Notify.show(decision, _notifyBody(kind, ev));
       if (sid == null || sid != currentSessionId) return;
+    if (kind == 'stream_delta' || kind == 'thinking_delta') {
+      _pendDelta(kind, ev);
+      return; // 合帧:缓冲期满统一归约,不逐条 notify(整页重建跟 chunk 频率脱钩)
+    }
+    _flushDeltas(); // 非 delta 事件先冲掉在途 delta,保住顺序(终态 text 必须落在残余 delta 之后)
     chat = applyEvent(chat, ev);
     _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
     if (kind == 'complete') unawaited(_loadSessions(silent: true));
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------- delta 合帧
+
+  void _pendDelta(String kind, Map<String, dynamic> ev) {
+    final content = ev['content'] as String? ?? '';
+    final seq = ev['seq'] as int?;
+    if (seq != null) _pendDeltaSeq = seq; // 只记最大序号:合帧后中间号无意义
+    if (kind == 'stream_delta') {
+      _pendDeltaText += content;
+    } else {
+      _pendDeltaThinking += content;
+    }
+    _pendDeltaTimer ??= Timer(const Duration(milliseconds: 40), _flushDeltas);
+  }
+
+  /// 把缓冲的 delta 合成一条归约进 chat(有残余才 notify)。
+  void _flushDeltas() {
+    _pendDeltaTimer?.cancel();
+    _pendDeltaTimer = null;
+    if (_pendDeltaText.isEmpty && _pendDeltaThinking.isEmpty) return;
+    final text = _pendDeltaText;
+    final thinking = _pendDeltaThinking;
+    final seq = _pendDeltaSeq;
+    _pendDeltaText = '';
+    _pendDeltaThinking = '';
+    _pendDeltaSeq = null;
+    var changed = false;
+    if (thinking.isNotEmpty) {
+      chat = applyEvent(chat, {'kind': 'thinking_delta', 'content': thinking, 'seq': ?seq});
+      changed = true;
+    }
+    if (text.isNotEmpty) {
+      chat = applyEvent(chat, {'kind': 'stream_delta', 'content': text, 'seq': ?seq});
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
+  /// 丢弃在途 delta(切会话):旧会话的瞬时流式尾巴不该落进新会话。
+  void _dropDeltas() {
+    _pendDeltaTimer?.cancel();
+    _pendDeltaTimer = null;
+    _pendDeltaText = '';
+    _pendDeltaThinking = '';
+    _pendDeltaSeq = null;
   }
 
   // ---------------------------------------------------------------- 会话
@@ -217,6 +277,7 @@ class ZApp extends ChangeNotifier {
     chat = const ChatState();
     historyLoading = true;
     error = null;
+    _dropDeltas(); // 旧会话的在途流式尾巴不跟进新会话
     final token = ++_openToken;
     _backfill = null;
     final bf = _Backfill(id);

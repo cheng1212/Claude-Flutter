@@ -3,9 +3,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -60,6 +62,8 @@ class _ChatPageState extends State<ChatPage> {
   final ImagePicker _picker = ImagePicker();
   final ScrollController _listCtrl = ScrollController(); // 「回到底部」药丸
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
+  bool _dragging = false; // 用户手指拖动中(补偿跳过,防 jumpTo 杀手势)
+  bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
   String _searchQuery = '';
@@ -119,7 +123,27 @@ class _ChatPageState extends State<ChatPage> {
     final derived = derivePlanSteps(chat.rows);
     if (derived != null) _stickyPlan = derived;
     if (chat.rows.isEmpty && derived == null && app.historyLoading) _stickyPlan = null;
+    _queueScrollCompensation();
     setState(() {});
+  }
+
+  /// 滚离底部看历史期间的一次性锁位:回合进行中每帧新增内容(行追加/面板变化)
+  /// 会把正在读的内容挪走。帧末量 maxScrollExtent 差值(reverse 列表 = 底部侧新增量),
+  /// 只在「离开底部 + 非拖动 + 回合在跑」时补偿;一帧只排一次,不搞逐帧循环。
+  void _queueScrollCompensation() {
+    if (_compensateQueued || !_listAway || _dragging || !chat.running) return;
+    if (!_listCtrl.hasClients) return;
+    final before = _listCtrl.position.maxScrollExtent;
+    _compensateQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _compensateQueued = false;
+      if (!mounted || !_listCtrl.hasClients || !_listAway || _dragging) return;
+      final pos = _listCtrl.position;
+      final delta = pos.maxScrollExtent - before;
+      // 只补增长(内容往下加);缩小(面板收起)让视口自然扩大,不回拉
+      if (delta <= 1 || pos.userScrollDirection != ScrollDirection.idle) return;
+      _listCtrl.jumpTo(math.min(pos.pixels + delta, pos.maxScrollExtent));
+    });
   }
 
   // ---------------------------------------------------------------- 会话信息
@@ -714,6 +738,11 @@ class _ChatPageState extends State<ChatPage> {
           Expanded(
             child: NotificationListener<ScrollNotification>(
               onNotification: (n) {
+                if (n is ScrollStartNotification && n.dragDetails != null) {
+                  _dragging = true;
+                } else if (n is ScrollEndNotification) {
+                  _dragging = false;
+                }
                 if (!_listCtrl.hasClients) return false;
                 final away = _listCtrl.offset > 60;
                 if (away != _listAway) setState(() => _listAway = away);
@@ -763,7 +792,7 @@ class _ChatPageState extends State<ChatPage> {
                 ]),
               ),
             ),
-          if (!_searching && _showStreamingPanel) _streamingArea()!,
+          if (!_searching && _showStreamingPanel) _streamingArea(compact: _listAway)!,
           if (!_searching && chat.pendingPermission != null)
             PermissionCard(
               req: chat.pendingPermission!,
@@ -1083,10 +1112,15 @@ class _ChatPageState extends State<ChatPage> {
   /// 流式面板(独立于消息列表):只在有内容或骨架行时占位,返回 null = 不显示。
   /// 列表里不再放流式区——reverse 列表锚点钉底,流式区在列表内长高会把历史
   /// 内容顶走(「滚来滚去」根因);搬出来后长高吃自己的固定空间,列表纹丝不动。
-  Widget? _streamingArea() {
+  ///
+  /// 紧凑态([compact],用户滚离底部看历史时):面板收成一行「正在回复/深度思考中」
+  /// 细条。展开态面板每长一截就把列表视口压扁一截,历史内容跟着挪——读历史期间
+  /// 收成定高细条,列表几乎纹丝不动;回到底部恢复全文。
+  Widget? _streamingArea({bool compact = false}) {
     final thinking = chat.streamingThinking;
     final text = chat.streamingText;
-    if ((thinking == null || thinking.isEmpty) && (text == null || text.isEmpty)) {
+    final hasContent = (thinking != null && thinking.isNotEmpty) || (text != null && text.isNotEmpty);
+    if (!hasContent) {
       // 静默期骨架行:已送达、模型还没开口的那段真空期。只在回合真的在跑时出现——
       // 空闲会话进窗口、回复已完成(turn_complete 后流式区清空)都不得显示,
       // 否则就是"一进来就计时/回完话还在计时"。等审批(卡片已亮)或工具在跑(卡片自带走秒)时不重复喊。
@@ -1098,6 +1132,20 @@ class _ChatPageState extends State<ChatPage> {
               padding: const EdgeInsets.only(top: 10),
               child: _SilenceHint(model: _modelLabel(), upstreamPhase: chat.upstreamPhase, upstreamAt: chat.upstreamAt))
           : const SizedBox.shrink();
+    }
+    if (compact) {
+      final busy = thinking != null && thinking.isNotEmpty;
+      return Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 2),
+        child: Row(children: [
+          PulseDot(color: busy ? ZT.grape : ZT.primary, animate: true, size: 6),
+          const SizedBox(width: 6),
+          Text(busy ? '深度思考中……(回到底部看全文)' : '正在回复……(回到底部看全文)',
+              style: TextStyle(
+                  fontSize: 11.5, fontWeight: FontWeight.w800,
+                  color: busy ? ZT.grape : ZT.primaryDeep)),
+        ]),
+      );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1119,10 +1167,18 @@ class _ChatPageState extends State<ChatPage> {
               const SizedBox(height: 3),
               // 边吐字边渲染 Markdown(200ms 节流 + 未闭合围栏补闭合),
               // 与落定后的 AssistantBlock 同一渲染管线,落定瞬间不再跳变。
-              MemoMarkdown(
-                text: text,
-                streaming: true,
-                baseStyle: TextStyle(fontSize: 14, height: 1.5, color: ZT.ink),
+              // 限高 + 内部滚动(reverse:锚定最新):长回复吃自己的空间,不再无限挤压列表。
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.42),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: MemoMarkdown(
+                    text: text,
+                    streaming: true,
+                    baseStyle: TextStyle(fontSize: 14, height: 1.5, color: ZT.ink),
+                  ),
+                ),
               ),
             ]),
           ),
