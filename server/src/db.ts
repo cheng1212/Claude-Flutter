@@ -51,7 +51,23 @@ export function openDb(file: string): Db {
       durable INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_crons_session ON crons(session_id);
+    -- 每次触发留一条(执行历史 + 已跑次数):成功/失败/跳过都记,面板可回看
+    CREATE TABLE IF NOT EXISTS cron_runs(
+      id TEXT PRIMARY KEY, cron_id TEXT NOT NULL, session_id TEXT NOT NULL,
+      started_at TEXT NOT NULL, status TEXT NOT NULL, note TEXT);
+    CREATE INDEX IF NOT EXISTS idx_cron_runs_cron ON cron_runs(cron_id);
   `);
+  // 迁移:定时任务增强(暂停开关/已跑次数/上次触发)
+  const cronCols = (db.prepare('PRAGMA table_info(crons)').all() as { name: string }[]).map((c) => c.name);
+  if (!cronCols.includes('run_count')) {
+    db.exec('ALTER TABLE crons ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!cronCols.includes('last_run_at')) {
+    db.exec('ALTER TABLE crons ADD COLUMN last_run_at TEXT');
+  }
+  if (!cronCols.includes('last_status')) {
+    db.exec('ALTER TABLE crons ADD COLUMN last_status TEXT');
+  }
   // 迁移:旧库 sessions 无 source 列,补上(本地导入的会话置 'local')
   const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
   if (!sessionCols.some((c) => c.name === 'source')) {
@@ -255,6 +271,12 @@ export type CronRow = {
   id: string; session_id: string; cron: string; prompt: string;
   recurring: number; durable: number; status: string;
   created_at: string; next_fire: string | null; session_title?: string;
+  /** 累计触发次数(含跳过) */
+  run_count?: number;
+  /** 上次触发时刻(ISO) */
+  last_run_at?: string | null;
+  /** 上次触发结果:success / skipped(会话在跑) / failed */
+  last_status?: string | null;
 };
 
 /** 登记一条定时任务(来源:CronCreate 工具事件拦截)。 */
@@ -273,17 +295,76 @@ export function markCronDeleted(db: Db, id: string): void {
   db.prepare("UPDATE crons SET status='deleted' WHERE id=?").run(id);
 }
 
-/** active 任务列表;next_fire 现算。sessionId 省略=全部(附会话标题)。 */
-export function listCrons(db: Db, sessionId?: string): CronRow[] {
+/** 单条任务(接口层校验存在性/取 session 用)。 */
+export function getCron(db: Db, id: string): CronRow | undefined {
+  return db.prepare('SELECT * FROM crons WHERE id=?').get(id) as CronRow | undefined;
+}
+
+/**
+ * 任务列表;next_fire 现算。sessionId 省略=全部(附会话标题)。
+ * 默认只给 active(调度器口径);面板要 [includePaused] 才能看到暂停中的任务。
+ */
+export function listCrons(db: Db, sessionId?: string, opts?: { includePaused?: boolean }): CronRow[] {
+  const cond = opts?.includePaused ? "c.status IN ('active','paused')" : "c.status='active'";
   const rows = (sessionId
-    ? db.prepare("SELECT * FROM crons WHERE session_id=? AND status='active' ORDER BY created_at")
-    : db.prepare("SELECT c.*, se.title AS session_title FROM crons c LEFT JOIN sessions se ON se.id=c.session_id WHERE c.status='active' ORDER BY c.created_at"))
+    ? db.prepare(`SELECT c.* FROM crons c WHERE c.session_id=? AND ${cond} ORDER BY c.created_at`)
+    : db.prepare(`SELECT c.*, se.title AS session_title FROM crons c LEFT JOIN sessions se ON se.id=c.session_id WHERE ${cond} ORDER BY c.created_at`))
     .all(...(sessionId ? [sessionId] : [])) as CronRow[];
   const from = new Date();
   return rows.map((r) => {
-    const nf = nextFire(r.cron, from);
+    // 暂停中的任务不显示倒计时(它不会触发),免得看着像还会跑
+    const nf = r.status === 'active' ? nextFire(r.cron, from) : null;
     return { ...r, next_fire: nf ? nf.toISOString() : null };
   });
+}
+
+/** 启用/暂停任务。恢复时把"已触发到哪一分钟"的记录留给调度器自己判断,
+ *  不在这里改 cron,避免"改表达式"和"暂停恢复"两件事混在一起。 */
+export function setCronStatus(db: Db, id: string, status: 'active' | 'paused'): void {
+  db.prepare('UPDATE crons SET status=? WHERE id=?').run(status, id);
+}
+
+/**
+ * 记一次触发(调度器与「立即运行」共用):落一条历史 + 更新计数。
+ * **skipped 不计数**——会话在跑而跳过不算"跑过一次",只留个痕迹(last_status),
+ * 否则"已跑 N 次"会被没真正执行的扫描灌水。
+ */
+export function recordCronRun(
+  db: Db, cronId: string, sessionId: string, status: 'success' | 'skipped' | 'failed', note?: string,
+): void {
+  const at = now();
+  db.prepare('INSERT INTO cron_runs(id,cron_id,session_id,started_at,status,note) VALUES(?,?,?,?,?,?)')
+    .run(randomUUID(), cronId, sessionId, at, status, note ?? null);
+  if (status === 'skipped') {
+    db.prepare('UPDATE crons SET last_status=? WHERE id=?').run(status, cronId);
+    return;
+  }
+  db.prepare('UPDATE crons SET run_count=COALESCE(run_count,0)+1, last_run_at=?, last_status=? WHERE id=?')
+    .run(at, status, cronId);
+}
+
+/** 重启任务:次数/上次结果清零,让它像刚建好一样重新计时。 */
+export function resetCron(db: Db, id: string): void {
+  db.prepare('UPDATE crons SET run_count=0, last_run_at=NULL, last_status=NULL, status=? WHERE id=?')
+    .run('active', id);
+}
+
+/**
+ * 某任务的执行历史(最近 limit 条,倒序)。
+ * 排序带 rowid 兜底:同一毫秒内的多次触发(测试/连点"立即运行")时间戳相同,
+ * 只按 started_at 排会给出不稳定顺序,历史列表看着会跳。
+ */
+export function listCronRuns(
+  db: Db, cronId: string, limit = 30,
+): { id: string; started_at: string; status: string; note: string | null }[] {
+  return db.prepare(
+    'SELECT id, started_at, status, note FROM cron_runs WHERE cron_id=? ORDER BY started_at DESC, rowid DESC LIMIT ?',
+  ).all(cronId, limit) as { id: string; started_at: string; status: string; note: string | null }[];
+}
+
+/** 会话被删:其任务一并标记删除(含暂停中的)。 */
+export function deleteCronsOfSession(db: Db, sessionId: string): void {
+  db.prepare("UPDATE crons SET status='deleted' WHERE session_id=?").run(sessionId);
 }
 
 /** fanout 拦截:CronCreate/CronDelete 工具事件 → 服务端登记(倒计时数据源)。 */

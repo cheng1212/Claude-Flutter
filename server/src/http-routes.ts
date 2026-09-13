@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { Db } from './db.js';
-import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted, usageStats } from './db.js';
+import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted, usageStats, getCron, setCronStatus, resetCron, listCronRuns, recordCronRun } from './db.js';
 import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
 import { listProjects, createProject, renameProject, renameProjectSessions, deleteProjectDir, projectSessionIds } from './projects.js';
@@ -29,7 +29,7 @@ export function sanitizeFileName(raw: string): string {
   return name;
 }
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string; onRestart?: () => void }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string; onRestart?: () => void; triggerSession?: (sessionId: string, prompt: string) => boolean }): void {
   // 自我重启:先回 202(客户端拿得到响应),再由 index 侧延迟拉起新实例并退出。
   // 重启会掐断本进程所有 WS/在跑回合 —— app 端会看到连接断几秒后自动重连。
   app.post('/api/server/restart', async (_req, reply) => {
@@ -143,17 +143,56 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     return row;
   });
 
-  // 定时任务列表(active;next_fire 现算,倒计时数据源)
+  // 定时任务列表(next_fire 现算,倒计时数据源)
   // ?session= 会话过滤:app 会话弹层/快捷条指示灯都以"本会话"语义使用,漏传会混入别会话的 cron
+  // ?paused=1 连暂停中的一起返回(管理面板要看全量;调度器口径仍只看 active)
   app.get('/api/crons', async (req) => {
-    const q = req.query as { session?: string };
-    return { crons: listCrons(deps.db, q.session || undefined) };
+    const q = req.query as { session?: string; paused?: string };
+    return { crons: listCrons(deps.db, q.session || undefined, { includePaused: q.paused === '1' }) };
   });
 
   app.delete('/api/crons/:id', async (req) => {
     markCronDeleted(deps.db, (req.params as { id: string }).id);
     return { ok: true };
   });
+
+  // 启用/暂停(面板开关)
+  app.patch('/api/crons/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const body = (req.body ?? {}) as { status?: unknown };
+    const status = String(body.status ?? '');
+    if (status !== 'active' && status !== 'paused') return reply.code(400).send({ error: "status 需为 'active' 或 'paused'" });
+    setCronStatus(deps.db, id, status);
+    return { ok: true, status };
+  });
+
+  // 立即运行一次(不等 cron 到点):与调度器共用同一条触发管线,结果落执行历史
+  app.post('/api/crons/:id/run', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const row = getCron(deps.db, id);
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    if (deps.isRunning?.(row.session_id)) {
+      recordCronRun(deps.db, id, row.session_id, 'skipped', '手动运行时会话正在运行');
+      return reply.code(409).send({ error: '会话正在运行,先等它跑完' });
+    }
+    const ok = deps.triggerSession?.(row.session_id, row.prompt) ?? false;
+    recordCronRun(deps.db, id, row.session_id, ok ? 'success' : 'failed', ok ? '手动运行' : '触发失败(会话不可用)');
+    if (!ok) return reply.code(409).send({ error: '触发失败:会话不可用' });
+    return { ok: true };
+  });
+
+  // 重启任务:次数/上次结果清零,重新开始计时
+  app.post('/api/crons/:id/restart', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getCron(deps.db, id)) return reply.code(404).send({ error: 'not found' });
+    resetCron(deps.db, id);
+    return { ok: true };
+  });
+
+  // 执行历史(最近 30 条)
+  app.get('/api/crons/:id/runs', async (req) => ({
+    runs: listCronRuns(deps.db, (req.params as { id: string }).id),
+  }));
 
   // 完整重载:从磁盘 CLI 转录补回中断/重启丢失的事件(幂等)
   app.post('/api/sessions/:id/reload', async (req) => {

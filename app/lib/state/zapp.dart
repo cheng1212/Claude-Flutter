@@ -637,13 +637,23 @@ class ZApp extends ChangeNotifier {
   }
 
   /// 定时任务列表;失败返回空。
-  Future<List<Map<String, dynamic>>> crons({String? sessionId}) async {
+  Future<List<Map<String, dynamic>>> crons({String? sessionId, bool includePaused = false}) async {
     try {
-      return await _api.crons(sessionId: sessionId);
+      return await _api.crons(sessionId: sessionId, includePaused: includePaused);
     } on Object {
       return const [];
     }
   }
+
+  /// 启用/暂停定时任务(面板开关)。抛错给调用方提示,不静默。
+  Future<void> setCronActive(String id, {required bool active}) => _api.setCronActive(id, active: active);
+
+  /// 立即运行一次(会话在跑时 server 回 409 → 抛错,由面板提示原因)。
+  Future<void> runCronNow(String id) => _api.runCronNow(id);
+
+  Future<void> restartCron(String id) => _api.restartCron(id);
+
+  Future<List<Map<String, dynamic>>> cronRuns(String id) => _api.cronRuns(id);
 
   /// 后台任务(server 统一登记视图);失败返回空。
   Future<List<Map<String, dynamic>>> backgrounds(String sessionId) async {
@@ -738,13 +748,9 @@ class ZApp extends ChangeNotifier {
   /// 删除项目:递归删文件夹 + 级联删其下会话;失败抛错(对话框提示)。
   Future<void> deleteProject(String name) => _api.deleteProject(name);
 
-  Future<void> deleteCron(String id) async {
-    try {
-      await _api.deleteCron(id);
-    } on Object {
-      // 静默
-    }
-  }
+  /// 删除定时任务。**不吞异常**:原来这里静默,面板里"删除失败"的提示永远不会弹
+  /// (调用方写了 try/catch 却永远等不到异常),用户点了没反应还以为删掉了。
+  Future<void> deleteCron(String id) => _api.deleteCron(id);
 
   /// 导出会话 markdown;失败返回 null(调用方提示即可)。
   Future<({String filename, String markdown})?> exportSession(String id) async {
