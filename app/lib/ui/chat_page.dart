@@ -88,6 +88,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
   bool _animatingToBottom = false; // 回到底部动画进行中(此时禁止补偿,防互相打断)
   int _planRowCount = -1; // 上次算计划时的行数(derivePlanSteps 全量扫描的缓存键)
+  bool _thinkingExpanded = false; // 流式思考区:展开看全文(默认一行摘要)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
   String _searchQuery = '';
@@ -1530,29 +1531,61 @@ class _ChatPageState extends State<ChatPage> {
             ]),
           ),
         if (thinking != null && thinking.isNotEmpty)
+          // 流式思考:默认一行摘要,点开看全文(限高 30% 屏 + 内部滚动,
+          // 不把聊天区挤没)。用户要求"深度思考要能展开"。
           Container(
             margin: const EdgeInsets.only(top: 8, right: 24),
-            padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
             decoration: BoxDecoration(
               color: ZT.surface,
               borderRadius: BorderRadius.circular(ZT.radius),
               border: Border.all(width: 1.2, color: ZT.grape.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5)),
             ),
-            child: Row(children: [
-              PulseDot(color: ZT.grape, animate: true, size: 6),
-              const SizedBox(width: 6),
-              Text('深度思考中',
-                  style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w800, color: ZT.grape)),
-              const Spacer(),
-              Flexible(
-                child: Text(thinking,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11, color: ZT.inkFaint, fontStyle: FontStyle.italic)),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(ZT.radius),
+                onTap: () => setState(() => _thinkingExpanded = !_thinkingExpanded),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      PulseDot(color: ZT.grape, animate: true, size: 6),
+                      const SizedBox(width: 6),
+                      Text('深度思考中',
+                          style: TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w800, color: ZT.grape)),
+                      const Spacer(),
+                      if (!_thinkingExpanded)
+                        Flexible(
+                          child: Text(thinking,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 11, color: ZT.inkFaint, fontStyle: FontStyle.italic)),
+                        ),
+                      const SizedBox(width: 4),
+                      Icon(_thinkingExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 15, color: ZT.inkFaint),
+                    ]),
+                    if (_thinkingExpanded)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                              maxHeight: MediaQuery.of(context).size.height * 0.3),
+                          child: SingleChildScrollView(
+                            reverse: true, // 思考是持续追加的:锚定最新一行
+                            child: SelectableText(thinking,
+                                style: TextStyle(
+                                    fontSize: 11.5, height: 1.45,
+                                    color: ZT.inkSoft, fontStyle: FontStyle.italic)),
+                          ),
+                        ),
+                      ),
+                  ]),
+                ),
               ),
-            ]),
+            ),
           ),
       ],
     );

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart' show Color;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'debug_log.dart';
 // 通知判定:哪些 WS 事件值得弹系统通知(仅 App 在后台时)。
 // 纯函数可单测;实际弹出由 lib/notify.dart 的插件封装执行。
 
@@ -85,8 +87,12 @@ class Notify {
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
       _ready = true;
-    } on Object {
+      ZLog.i('notify', 'initialized (权限已请求)');
+    } on Object catch (e) {
+      // 原来这里是纯静默:初始化一失败,之后所有通知都不弹且**查不到原因**。
+      // 记进诊断日志(设置→诊断日志可复制),用户报"通知不弹"时能直接看。
       _ready = false;
+      ZLog.e('notify', 'init 失败,通知将全程不弹: $e');
     }
   }
 
@@ -138,8 +144,9 @@ class Notify {
         payload: sessionId,
         notificationDetails: details,
       );
-    } on Object {
-      // 静默:通知失败不该影响任何主流程
+    } on Object catch (e) {
+      // 通知失败不该影响主流程,但要留痕(否则用户只看到"没弹",查不了)
+      ZLog.w('notify', 'show 失败: $e', dedupeKey: 'notify-show-fail');
     }
   }
 }
