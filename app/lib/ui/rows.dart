@@ -767,7 +767,18 @@ class ReasoningCard extends StatefulWidget {
 }
 
 class _ReasoningCardState extends State<ReasoningCard> {
-  bool _open = false;
+  /// 展开状态按**内容哈希**存在 static 里,而不是 State 字段:
+  /// ListView 会回收滚出屏幕的 widget,State 随之销毁重建 —— 存在实例里的话,
+  /// 展开后稍微一滚(卡片被回收)就自动收起,用户感受就是"展不开"。
+  /// 用内容哈希做键,卡片重建后仍认得自己那段思考。
+  static final Set<int> _expandedKeys = <int>{};
+
+  bool get _open => _expandedKeys.contains(widget.text.hashCode);
+
+  void _toggle() => setState(() {
+        final key = widget.text.hashCode;
+        if (!_expandedKeys.remove(key)) _expandedKeys.add(key);
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -784,7 +795,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(ZT.radius),
-          onTap: () => setState(() => _open = !_open),
+          onTap: _toggle,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
             child: Column(
