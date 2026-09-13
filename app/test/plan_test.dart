@@ -43,14 +43,46 @@ void main() {
   test('TaskList 快照整体校正折叠状态', () {
     final rows = <ChatRow>[
       _tool('TaskCreate', {'subject': '旧标题'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '同批第二件'}, result: '{"id":"2"}'),
       _tool('TaskList', {}),
     ];
     // 快照解析失败(非 JSON)→ 保留折叠
-    expect(derivePlanSteps(rows)!.single.content, '旧标题');
-    rows[1] = _tool('TaskList', {}, result: '{"tasks":[{"id":"1","subject":"新标题","status":"completed"}]}');
+    expect(derivePlanSteps(rows)!.map((s) => s.content), ['旧标题', '同批第二件']);
+    rows[2] = _tool('TaskList', {},
+        result: '{"tasks":[{"id":"1","subject":"新标题","status":"completed"},{"id":"2","subject":"还在做","status":"in_progress"}]}');
     final corrected = derivePlanSteps(rows)!;
-    expect(corrected.single.content, '新标题');
-    expect(corrected.single.completed, isTrue);
+    expect(corrected.first.content, '新标题');
+    expect(corrected.first.completed, isTrue);
+    expect(corrected[1].inProgress, isTrue);
+  });
+
+  test('一组计划全部完成 → 整组收起(不显示已完成的旧计划)', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '改 bug 步骤一'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '改 bug 步骤二'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+      _tool('TaskUpdate', {'taskId': '2', 'status': 'completed'}),
+    ];
+    expect(derivePlanSteps(rows), isNull, reason: '整组收尾 = 这件事做完了,面板不该继续摆着');
+
+    // 下一个工作建新计划 → 重新出现(且只有新计划)
+    final next = <ChatRow>[
+      ...rows,
+      _tool('TaskCreate', {'subject': '新工作步骤一'}, result: '{"id":"9"}'),
+    ];
+    expect(derivePlanSteps(next)!.map((s) => s.content), ['新工作步骤一']);
+  });
+
+  test('组内有未完成项时,已完成的条目照常显示(看得见进度)', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '第一步'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '第二步'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+    ];
+    final steps = derivePlanSteps(rows)!;
+    expect(steps.map((s) => s.content), ['第一步', '第二步']);
+    expect(steps[0].completed, isTrue);
+    expect(steps[1].completed, isFalse);
   });
 
   test('换批清空:上一批全 completed 后再 TaskCreate → 只显示新一批', () {
