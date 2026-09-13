@@ -30,6 +30,27 @@ import 'rows.dart';
 /// 对应恰好 ≤5MB 字符,再留余量取整 3MB。
 const int kMaxImageBytes = 3 * 1024 * 1024;
 
+/// 「算在底部」的容差(reverse 列表 offset ≤ 此值)。比「回到底部」药丸的显隐阈值
+/// (60px)小得多:药丸是"明显滚开了"才提示,而锁位补偿要覆盖"只滚了一点点看历史"
+/// 的常见情形——阈值取大就会漏补偿,表现成内容被一点点推走。
+const double kBottomPx = 4.0;
+
+/// 锁位补偿(看历史时锁住可视位置)的判定。抽成纯函数锁行为——这组条件
+/// 踩过好几次坑,每条都有实测来源:
+/// - `running`:回合没在跑就没有新增内容,不需要补
+/// - `dragging`:手指拖动中 jumpTo 会 goIdle 掉手势
+/// - `animatingToBottom`:与回底动画互相打断 → 动画永远到不了 0(表现为"卡住")
+/// - `offset > kBottomPx`:在底部就该自然跟随;但阈值不能大(60px 会漏掉"只滚一点")
+/// - `delta > 1`:只补增长(内容变多把视口顶上去了),缩小不回拉
+bool shouldLockScroll({
+  required double offset,
+  required double delta,
+  required bool dragging,
+  required bool animatingToBottom,
+  required bool running,
+}) =>
+    running && !dragging && !animatingToBottom && offset > kBottomPx && delta > 1;
+
 /// isolate 任务: picked 图片路径 → data URI 列表。必须是顶层函数(compute 要求);
 /// 读文件+base64 是纯 CPU 活,主线程做会在编码瞬间掉帧。超限单张跳过。
 List<String> _encodeImagesJob(List<String> paths) {
@@ -65,6 +86,8 @@ class _ChatPageState extends State<ChatPage> {
   bool _listAway = false; // 视口离开底部(>60px):显示「回到底部」药丸
   bool _dragging = false; // 用户手指拖动中(补偿跳过,防 jumpTo 杀手势)
   bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
+  bool _animatingToBottom = false; // 回到底部动画进行中(此时禁止补偿,防互相打断)
+  int _planRowCount = -1; // 上次算计划时的行数(derivePlanSteps 全量扫描的缓存键)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
   String _searchQuery = '';
@@ -101,6 +124,7 @@ class _ChatPageState extends State<ChatPage> {
   void initState() {
     super.initState();
     app.addListener(_onApp);
+    _planRowCount = -1; // 新会话:计划缓存作废(行数可能恰好相同)
     app.openSession(widget.sessionId);
     // 定时任务徽标进页面拉一次即可;放 build 里会随每帧重绘反复打接口
     app.crons(sessionId: widget.sessionId).then((list) {
@@ -124,34 +148,70 @@ class _ChatPageState extends State<ChatPage> {
     // 计划粘性缓存:新一轮计划(或 TaskList 快照)会覆盖。derivePlanSteps 返回 null
     // 有两种情形——整段历史都没计划(粘性缓存留给翻页抖动),或本轮计划被清空;
     // 后者要靠「有工具行但推不出计划」区分,避免旧计划一直粘在面板上。
-    final derived = derivePlanSteps(chat.rows);
-    if (derived != null) {
-      _stickyPlan = derived;
-    } else if (chat.rows.isEmpty && app.historyLoading) {
-      _stickyPlan = null;
+    //
+    // ⚠️ 按行数缓存:derivePlanSteps 是全量 O(n) 扫描,而 _onApp 会被每个事件触发
+    // (流式高频时每秒几十次)。长会话几千行时,每帧扫一遍正是"大量输出就卡住"的来源。
+    // 计划只由 tool_use 行决定,行数没变就不必重算。
+    if (chat.rows.length != _planRowCount) {
+      _planRowCount = chat.rows.length;
+      final derived = derivePlanSteps(chat.rows);
+      if (derived != null) {
+        _stickyPlan = derived;
+      } else if (chat.rows.isEmpty && app.historyLoading) {
+        _stickyPlan = null;
+      }
     }
     _queueScrollCompensation();
     setState(() {});
   }
 
-  /// 滚离底部看历史期间的一次性锁位:回合进行中每帧新增内容(行追加/面板变化)
-  /// 会把正在读的内容挪走。帧末量 maxScrollExtent 差值(reverse 列表 = 底部侧新增量),
-  /// 只在「离开底部 + 非拖动 + 回合在跑」时补偿;一帧只排一次,不搞逐帧循环。
+  /// 滚离底部看历史期间的一次性锁位:回合进行中新增内容会把正在读的内容挪走。
+  /// 帧末量 maxScrollExtent 差值(reverse 列表 = 底部侧新增量),只在
+  /// 「不在底部 + 非拖动 + 回合在跑 + 没在做回底动画」时补偿;一帧只排一次。
   void _queueScrollCompensation() {
-    if (_compensateQueued || !_listAway || _dragging || !chat.running) return;
+    if (_compensateQueued || _dragging || !chat.running || _animatingToBottom) return;
     if (!_listCtrl.hasClients) return;
+    // 判定用"是否在底部"而非 _listAway(60px):用户常常只滚一点点就看历史,
+    // 那时 offset 在几像素到几十像素之间,用 60px 阈值会漏补偿 —— 表现就是
+    // "不把我拉到底,但内容一点点往下移"(实测反馈)。
+    if (_listCtrl.position.pixels <= kBottomPx) return;
     final before = _listCtrl.position.maxScrollExtent;
     _compensateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _compensateQueued = false;
-      if (!mounted || !_listCtrl.hasClients || !_listAway || _dragging) return;
+      if (!mounted || !_listCtrl.hasClients || _dragging || _animatingToBottom) return;
       final pos = _listCtrl.position;
+      if (pos.pixels <= kBottomPx) return; // 已经回到底部:让它自然跟随
       final delta = pos.maxScrollExtent - before;
-      // 只补增长(内容往下加);缩小(面板收起)让视口自然扩大,不回拉
-      if (delta <= 1 || pos.userScrollDirection != ScrollDirection.idle) return;
+      if (!shouldLockScroll(
+        offset: pos.pixels,
+        delta: delta,
+        dragging: _dragging,
+        animatingToBottom: _animatingToBottom,
+        running: chat.running,
+      )) {
+        return;
+      }
+      if (pos.userScrollDirection != ScrollDirection.idle) return; // 惯性滑动中不打断
       ZLog.i('scroll', 'comp +${delta.toStringAsFixed(0)}px off=${pos.pixels.toStringAsFixed(0)}');
       _listCtrl.jumpTo(math.min(pos.pixels + delta, pos.maxScrollExtent));
     });
+  }
+
+  /// 回到底部:动画期间**禁止锁位补偿**。
+  /// 补偿用的 jumpTo 会 goIdle 掉进行中的动画 —— 两者互相打断时动画永远到不了 0,
+  /// 表现就是"点了回到底部卡住"(实测反馈;卡住只能重启)。
+  Future<void> _toBottom() async {
+    if (!_listCtrl.hasClients || _animatingToBottom) return;
+    setState(() => _animatingToBottom = true);
+    try {
+      await _listCtrl.animateTo(0,
+          duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic);
+    } on Object catch (e) {
+      ZLog.w('scroll', 'animateTo 失败: $e', dedupeKey: 'toBottom');
+    } finally {
+      if (mounted) setState(() => _animatingToBottom = false);
+    }
   }
 
   // ---------------------------------------------------------------- 会话信息
@@ -1048,9 +1108,7 @@ class _ChatPageState extends State<ChatPage> {
                       elevation: 3,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(99),
-                        onTap: () => _listCtrl.animateTo(0,
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeOutCubic),
+                        onTap: () => _toBottom(), // 动画期间会禁用锁位补偿,防互相打断卡住
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                           child: Row(mainAxisSize: MainAxisSize.min, children: [
