@@ -72,6 +72,15 @@ class SubagentsPanel extends StatefulWidget {
 class _SubagentsPanelState extends State<SubagentsPanel> {
   List<Map<String, dynamic>>? _disk;
 
+  /// 本会话正在用的模型 = 子代理的锁定基准(server 侧 PreToolUse hook 按它改写)。
+  /// 从会话列表里查当前会话的 model 字段,拿不到就空(不显示对比)。
+  String get _sessionModel {
+    for (final s in widget.app.sessions) {
+      if ('${s['id']}' == widget.sessionId) return '${s['model'] ?? ''}';
+    }
+    return '';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -114,6 +123,12 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
   }
 
   Widget _liveCard(SubagentInfo sub) {
+    // 模型:请求的(模型自己挑的)vs 实际(被 server 锁成会话模型)。
+    // 两者不一致正是"乱用贵模型"的现场,必须让用户看得见。
+    final sessionModel = _sessionModel;
+    final requested = sub.requestedModel;
+    final asked = requested.isEmpty ? '(未指定)' : requested;
+    final locked = requested.isNotEmpty && sessionModel.isNotEmpty && requested != sessionModel;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
       decoration: ShapeDecoration(
@@ -123,8 +138,8 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
           side: ZT.inkSide(w: 1.2, color: ZT.grape.withValues(alpha: ZT.palette.neoShadow ? 1 : 0.5)),
         ),
       ),
-      child: Row(
-        children: [
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
           sub.done
               ? Icon(Icons.check_circle_rounded, size: 16, color: ZT.aqua)
               : SizedBox(
@@ -134,29 +149,37 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
                 ),
           const SizedBox(width: 9),
           Expanded(
-            child: Text(
-              sub.description,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
+            child: Text(sub.description,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
           const SizedBox(width: 8),
-          Text(
-            sub.done ? '已完成' : '运行中',
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: sub.done ? ZT.aqua : ZT.grape,
-            ),
-          ),
+          Text(sub.done ? '已完成' : '运行中',
+              style: TextStyle(
+                  fontSize: 11.5, fontWeight: FontWeight.w700, color: sub.done ? ZT.aqua : ZT.grape)),
           const SizedBox(width: 8),
-          Text(
-            '${sub.activityCount} 次活动',
-            style: TextStyle(fontSize: 11.5, color: ZT.inkFaint),
-          ),
-        ],
-      ),
+          Text('${sub.activityCount} 次活动', style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+        ]),
+        const SizedBox(height: 4),
+        Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          if (sub.agentType.isNotEmpty)
+            Text(sub.agentType, style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkFaint)),
+          Text('模型 $asked', style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
+          if (locked)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: ShapeDecoration(
+                color: ZT.rose.withValues(alpha: 0.12),
+                shape: StadiumBorder(side: BorderSide(width: 1, color: ZT.rose)),
+              ),
+              child: Text('已锁 → $sessionModel',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: ZT.rose)),
+            )
+          else if (sessionModel.isNotEmpty)
+            Text('跟随本会话', style: TextStyle(fontSize: 10.5, color: ZT.aqua)),
+        ]),
+      ]),
     );
   }
 
@@ -209,20 +232,21 @@ class _SubagentsPanelState extends State<SubagentsPanel> {
               Icon(Icons.chevron_right_rounded, size: 16, color: ZT.inkSoft),
             ],
           ),
-          if (model.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(children: [
-                Icon(Icons.memory_rounded, size: 12, color: ZT.inkSoft),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text('模型:$model',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
-                ),
-              ]),
-            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: [
+              Icon(Icons.memory_rounded, size: 12, color: ZT.inkSoft),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                    // 采样不到 = 该子代理没换模型,跟着主模型跑(如实说明,不留空白)
+                    model.isNotEmpty ? '实际模型:$model' : '实际模型:跟随本会话${_sessionModel.isEmpty ? '' : '($_sessionModel)'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              ),
+            ]),
+          ),
         ]),
       ),
     );
