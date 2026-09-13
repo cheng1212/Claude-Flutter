@@ -84,6 +84,20 @@ void main() {
     });
   });
 
+  group('时间范围 → 服务端 range', () {
+    test('「今天」必须问服务端要 today(否则模型明细会跟着 7d 走)', () {
+      expect(UsageRangeChoice.today.serverRange, 'today');
+      // 回归:曾经今天/3 天都映射成 7d,而客户端切片只影响按日图表,
+      // 模型明细用的是服务端 7d 聚合 —— 实测「筛了今天,明细列出 6 个模型
+      // (今天其实只用了 2 个)」。
+      expect(UsageRangeChoice.thirtyDays.serverRange, '30d');
+      expect(UsageRangeChoice.all.serverRange, 'all');
+      expect(UsageRangeChoice.sevenDays.serverRange, '7d');
+      // 3 天没有对应服务端口径:仍取 7d 由客户端切
+      expect(UsageRangeChoice.threeDays.serverRange, '7d');
+    });
+  });
+
   group('formatTokens', () {
     test('亿/万/原样三档', () {
       expect(formatTokens(1560000000), '15.6亿');

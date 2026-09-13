@@ -502,13 +502,9 @@ class _UsagePageState extends State<UsagePage> {
     if (_modelFilter == null && _custom == null && _choice == UsageRangeChoice.all) {
       return view.models;
     }
-    if (_modelFilter == null && _custom == null) {
-      // 预设窗口 = 服务端口径,模型明细直接取;总量按窗口重算 share 没意义,保持原 share
-      return [
-        for (final m in view.models)
-          if (m.totalTokens > 0) m,
-      ];
-    }
+    // 其余一律按 daily 切片重算,与图表共用同一个时间窗口。
+    // 原来"预设窗口直接取服务端 models"是错的:app 选「今天」时拉的是 7d,
+    // 模型明细就跟着列出 7 天的模型(实测:今天只用了 2 个模型却显示 6 个)。
     // daily 不含缓存读(服务端按天只带输入/输出),切片路径给不出真实命中率:
     // 命中率取服务端该模型的整体值(口径一致,好过瞎算),请求数按出现天数近似。
     final serverRate = {for (final m in view.models) m.modelId: m.cacheHitRate};
