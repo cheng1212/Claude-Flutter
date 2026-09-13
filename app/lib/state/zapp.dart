@@ -750,7 +750,8 @@ class ZApp extends ChangeNotifier {
 
   /// 删除定时任务。**不吞异常**:原来这里静默,面板里"删除失败"的提示永远不会弹
   /// (调用方写了 try/catch 却永远等不到异常),用户点了没反应还以为删掉了。
-  Future<void> deleteCron(String id) => _api.deleteCron(id);
+  /// 返回 true = 已通知到会话的 CLI 撤销(那边才是真正在调度的)。
+  Future<bool> deleteCron(String id) => _api.deleteCron(id);
 
   /// 导出会话 markdown;失败返回 null(调用方提示即可)。
   Future<({String filename, String markdown})?> exportSession(String id) async {

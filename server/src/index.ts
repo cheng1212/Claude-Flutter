@@ -104,6 +104,22 @@ const app = await buildApp({
   onRestart: () => { void restartSelf(); },
   // 定时任务「立即运行」:复用 gateway 的程序化触发(与到点触发同一条管线)
   triggerSession: (sessionId, prompt) => gateway.triggerSession(sessionId, prompt),
+  // 面板删定时任务:顺带让活着的那条 CLI 撤销它。Claude Code 的 cron 是
+  // session-only(只活在 CLI 进程内存,不落盘),zcode 侧删镜像管不到它 ——
+  // 不通知的话就是"面板删了、到点照样跑"(用户实测反馈)。
+  cancelCronInCli: (sessionId, cron, prompt) => {
+    const runtime = runtimes.get(sessionId);
+    if (!runtime) return false; // CLI 进程已不在:任务随之消失,无需通知
+    if (registry.isRunning(sessionId)) return false; // 正在跑:这轮插不进去,等进程重启自然失效
+    void runtime
+      .send(
+        `[来自 zCode 面板] 请立刻用 CronDelete 工具删除这个定时任务,不要做别的事:\n` +
+        `cron: ${cron}\nprompt: ${prompt}\n` +
+        `删完只回一句「已删除」即可。`,
+      )
+      .catch((e) => console.warn('[zcode-server] cancelCronInCli send failed:', e instanceof Error ? e.message : e));
+    return true;
+  },
 }); // buildApp 内部已挂 REST
 
 const gateway = attachWsGateway(app.server, {

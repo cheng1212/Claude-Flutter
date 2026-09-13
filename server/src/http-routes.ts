@@ -29,7 +29,7 @@ export function sanitizeFileName(raw: string): string {
   return name;
 }
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string; onRestart?: () => void; triggerSession?: (sessionId: string, prompt: string) => boolean }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string; onRestart?: () => void; triggerSession?: (sessionId: string, prompt: string) => boolean; cancelCronInCli?: (sessionId: string, cron: string, prompt: string) => boolean }): void {
   // 自我重启:先回 202(客户端拿得到响应),再由 index 侧延迟拉起新实例并退出。
   // 重启会掐断本进程所有 WS/在跑回合 —— app 端会看到连接断几秒后自动重连。
   app.post('/api/server/restart', async (_req, reply) => {
@@ -157,8 +157,14 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   });
 
   app.delete('/api/crons/:id', async (req) => {
-    markCronDeleted(deps.db, (req.params as { id: string }).id);
-    return { ok: true };
+    const id = (req.params as { id: string }).id;
+    const row = getCron(deps.db, id);
+    markCronDeleted(deps.db, id);
+    // 顺带让活着的那条 CLI 也撤掉它的定时任务:Claude Code 的 cron 只活在 CLI
+    // 进程内存里(session-only、不落盘),只删 zcode 镜像的话"面板删了、到点还会跑"。
+    // 返回 cliNotified 让面板能如实提示"已通知会话撤销/由下次进程重启自然消失"。
+    const cliNotified = row ? (deps.cancelCronInCli?.(row.session_id, row.cron, row.prompt) ?? false) : false;
+    return { ok: true, cliNotified };
   });
 
   // 启用/暂停(面板开关)

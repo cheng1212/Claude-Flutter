@@ -92,9 +92,11 @@ class ZApi {
     return const [];
   }
 
-  /// 删除定时任务(标记删除)。
-  Future<void> deleteCron(String id) async {
-    await _call('DELETE', '/api/crons/$id', null);
+  /// 删除定时任务(标记删除 + 通知会话撤销 CLI 侧任务)。
+  /// 返回 true = 已通知到那个会话的 CLI;false = 那边没有活跃进程(任务随之失效)。
+  Future<bool> deleteCron(String id) async {
+    final res = await _call('DELETE', '/api/crons/$id', null);
+    return res is Map && res['cliNotified'] == true;
   }
 
   /// 启用/暂停定时任务(面板开关)。
