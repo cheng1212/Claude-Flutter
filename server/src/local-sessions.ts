@@ -23,6 +23,49 @@ export function claudeHome(): string {
   return process.env.ZCODE_CLAUDE_HOME ?? path.join(os.homedir(), '.claude');
 }
 
+// ---------------------------------------------------------------- 转录活跃度
+/** providerId → 转录文件路径(首次全扫一次,30s 内复用,避免列表接口每次都全目录扫描)。 */
+let transcriptPathCache: Map<string, string> | null = null;
+let transcriptPathCacheAt = 0;
+
+function transcriptPathOf(providerId: string, projectsDir: string): string | null {
+  if (!transcriptPathCache || Date.now() - transcriptPathCacheAt > 30_000) {
+    const m = new Map<string, string>();
+    for (const f of findProjectFiles(projectsDir)) {
+      if (isSubagentTranscript(f)) continue;
+      m.set(path.basename(f, '.jsonl'), f);
+    }
+    transcriptPathCache = m;
+    transcriptPathCacheAt = Date.now();
+  }
+  return transcriptPathCache.get(providerId) ?? null;
+}
+
+/**
+ * 这个会话的转录**最近还在写**吗 = 电脑端 Claude Code 正在跑它。
+ *
+ * 为什么需要:zcode 判断"是否在跑"原来只看 runs 表,而 **local 类型会话(电脑上直接
+ * 跑的)不经 zcode 发消息**,runs 表停在上一轮的 success → 手机列表显示"已完成",
+ * 实际电脑上正跑着(用户实测)。转录在生成期间会持续追加,最近的 mtime 就是活证据。
+ *
+ * 窗口取 120s:长思考/长工具调用期间转录会安静一会儿,窗口太短会误判成"已停"。
+ */
+export function isTranscriptActive(
+  providerId: string | null | undefined,
+  opts?: { projectsDir?: string; withinMs?: number; now?: number },
+): boolean {
+  if (!providerId) return false;
+  const file = transcriptPathOf(providerId, opts?.projectsDir ?? path.join(claudeHome(), 'projects'));
+  if (!file) return false;
+  try {
+    const st = fs.statSync(file);
+    const now = opts?.now ?? Date.now();
+    return now - st.mtimeMs < (opts?.withinMs ?? 120_000);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * subagent / tool-result 转写不是顶层会话,且会重复父会话的 sessionId,
  * 当成独立会话导入会污染主会话记录,必须跳过。
