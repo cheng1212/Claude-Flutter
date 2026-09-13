@@ -36,8 +36,10 @@ export function TopBar({ store, view, onBack, onNewSession, onUsage }: {
   return (
     <header className="topbar">
       <div className="topbar__left">
-        {view !== 'sessions' && (
+        {view === 'chat' || view === 'usage' ? (
           <button type="button" className="btn-ghost" onClick={onBack}>‹ 会话</button>
+        ) : (
+          <button type="button" className="btn-ghost" aria-label="返回" onClick={() => window.history.back()}>‹ 返回</button>
         )}
         {view === 'sessions' && <span className="topbar__brand">⚡ zCode</span>}
       </div>

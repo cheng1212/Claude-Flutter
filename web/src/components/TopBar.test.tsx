@@ -47,13 +47,16 @@ describe('TopBar(全局导航栏)', () => {
     expect(store.getState().phase).toBe('login');
   });
 
-  test('聊天视图显示返回按钮,列表视图不显示', () => {
+  test('每个视图都有返回按钮:聊天/用量回会话列表,列表页回退浏览器历史', () => {
     const { store } = setup();
+    const back = vi.fn();
     const { rerender } = render(
-      <TopBar store={store} view="chat" onBack={() => {}} onNewSession={() => {}} onUsage={() => {}} />,
+      <TopBar store={store} view="chat" onBack={back} onNewSession={() => {}} onUsage={() => {}} />,
     );
     expect(screen.getByRole('button', { name: '‹ 会话' })).toBeTruthy();
-    rerender(<TopBar store={store} view="sessions" onBack={() => {}} onNewSession={() => {}} onUsage={() => {}} />);
-    expect(screen.queryByRole('button', { name: '‹ 会话' })).toBeNull();
+    rerender(<TopBar store={store} view="usage" onBack={back} onNewSession={() => {}} onUsage={() => {}} />);
+    expect(screen.getByRole('button', { name: '‹ 会话' })).toBeTruthy();
+    rerender(<TopBar store={store} view="sessions" onBack={back} onNewSession={() => {}} onUsage={() => {}} />);
+    expect(screen.getByRole('button', { name: '返回' })).toBeTruthy();
   });
 });
