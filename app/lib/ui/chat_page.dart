@@ -3,16 +3,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, RenderSliverMultiBoxAdaptor, ScrollDirection, SliverMultiBoxAdaptorParentData;
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
+import '../chat_scroll_anchor.dart';
 import '../debug_log.dart';
 import '../panel_utils.dart';
 import '../session_utils.dart';
@@ -54,27 +55,6 @@ const int kMaxFreshRows = 30;
   return (freshFrom: freshFrom, watermark: wm);
 }
 
-/// 「算在底部」的容差(reverse 列表 offset ≤ 此值)。比「回到底部」药丸的显隐阈值
-/// (60px)小得多:药丸是"明显滚开了"才提示,而锁位补偿要覆盖"只滚了一点点看历史"
-/// 的常见情形——阈值取大就会漏补偿,表现成内容被一点点推走。
-const double kBottomPx = 4.0;
-
-/// 锁位补偿(看历史时锁住可视位置)的判定。抽成纯函数锁行为——这组条件
-/// 踩过好几次坑,每条都有实测来源:
-/// - `running`:回合没在跑就没有新增内容,不需要补
-/// - `dragging`:手指拖动中 jumpTo 会 goIdle 掉手势
-/// - `animatingToBottom`:与回底动画互相打断 → 动画永远到不了 0(表现为"卡住")
-/// - `offset > kBottomPx`:在底部就该自然跟随;但阈值不能大(60px 会漏掉"只滚一点")
-/// - `delta > 1`:只补增长(内容变多把视口顶上去了),缩小不回拉
-bool shouldLockScroll({
-  required double offset,
-  required double delta,
-  required bool dragging,
-  required bool animatingToBottom,
-  required bool running,
-}) =>
-    running && !dragging && !animatingToBottom && offset > kBottomPx && delta > 1;
-
 /// isolate 任务: picked 图片路径 → data URI 列表。必须是顶层函数(compute 要求);
 /// 读文件+base64 是纯 CPU 活,主线程做会在编码瞬间掉帧。超限单张跳过。
 List<String> _encodeImagesJob(List<String> paths) {
@@ -112,7 +92,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
   bool _animatingToBottom = false; // 回到底部动画进行中(此时禁止补偿,防互相打断)
   int _planRowCount = -1; // 上次算计划时的行数(derivePlanSteps 全量扫描的缓存键)
-  int _compensateRows = -1; // 上次补偿时的行数(识别换底:暴涨时不补偿,防把人弹飞)
   bool _thinkingExpanded = false; // 流式思考区:展开看全文(默认一行摘要)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
@@ -151,7 +130,8 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     app.addListener(_onApp);
     _planRowCount = -1; // 新会话:计划缓存作废(行数可能恰好相同)
-    _compensateRows = -1; // 补偿基准同理作废
+    _anchorSample = null; // 新会话:锚行基线作废(内容整体更换)
+    _followLocked = false;
     app.openSession(widget.sessionId);
     // 定时任务徽标进页面拉一次即可;放 build 里会随每帧重绘反复打接口
     app.crons(sessionId: widget.sessionId).then((list) {
@@ -188,52 +168,153 @@ class _ChatPageState extends State<ChatPage> {
         _stickyPlan = null;
       }
     }
-    _queueScrollCompensation();
+    _queueAnchorCheck();
     setState(() {});
   }
 
-  /// 滚离底部看历史期间的一次性锁位:回合进行中新增内容会把正在读的内容挪走。
-  /// 量**内容总高度**(maxScrollExtent + viewportDimension)而不是 maxScrollExtent,
-  /// 只在「不在底部 + 非拖动 + 回合在跑 + 没在做回底动画」时补偿;一帧只排一次。
-  ///
-  /// 为什么用内容总高度:maxScrollExtent = 内容高度 − **视口**高度,而流式面板
-  /// 一长高视口就变 → 被误当成"内容增长"补一笔,表现成"手停下看历史还是会滑,
-  /// 滑得不多"(实测反馈)。改用总高度后,视口变化不再触发补偿。
-  void _queueScrollCompensation() {
-    if (_compensateQueued || _dragging || !chat.running || _animatingToBottom) return;
-    if (!_listCtrl.hasClients) return;
-    // 判定用"是否在底部"而非 _listAway(60px):用户常常只滚一点点就看历史,
-    // 那时 offset 在几像素到几十像素之间,用 60px 阈值会漏补偿 —— 表现就是
-    // "不把我拉到底,但内容一点点往下移"(实测反馈)。
-    if (_listCtrl.position.pixels <= kBottomPx) return;
-    final pos0 = _listCtrl.position;
-    // 换底(内容整体替换)不补偿:行数一次性暴涨时 maxScrollExtent 也跟着暴涨,
-    // 按差值补等于把用户弹飞几屏("向下闪几屏",实测反馈);而且换底后看的内容
-    // 已经不是同一批,锚定本身就没意义。
-    final rowsNow = chat.rows.length;
-    final jumped = _compensateRows >= 0 && (rowsNow - _compensateRows).abs() > kMaxFreshRows;
-    _compensateRows = rowsNow;
-    if (jumped) return;
-    final before = pos0.maxScrollExtent + pos0.viewportDimension; // 内容总高度
+  // ── 锚行滚动锚定(对齐 zremote,治「飘来飘去/一闪一闪」)──
+  // 旧「内容总高度增量 + jumpTo 一步跳」方案已废,两大缺陷:
+  // ① 方向性:历史端内容长高(图片解码/markdown 重排)时,屏幕内容没动、
+  //    总高多了 G,按增量补会把用户往历史端推整个 G —— 「飘老远」的根因;
+  // ② 观感:jumpTo 直接改 pixels,量到的高度和下一帧实际高度常不一致,
+  //    每帧跳一次就是「一闪一闪」。
+  // 新方案:以「视口顶可见历史行(行对象 + 视口内 y)」为锚,内容变化前后
+  // 锚行 y 差就是该补的位移;身份变了(翻页/换底)重定基线一分不补 ——
+  // 换底/翻页防误补由此天然涵盖,不再需要 _compensateRows 三套散装标记。
+  // 纯函数(阈值/锁存/步进规划)在 ../chat_scroll_anchor.dart,可单测。
+
+  /// 锚行基线:上次采样(行对象 + 视口内 y);null = 不可锚,重定基线。
+  AnchorSample? _anchorSample;
+  double _coalescedAnchorDelta = 0; // 帧末合并桶:同帧多触发源只补一次(闪的来源)
+  bool _anchorFlushScheduled = false;
+  bool _anchorAnimating = false; // 单飞锁:并发 animateTo 互抢目标值就是抖动
+  Timer? _anchorAnimTimer;
+  bool _followLocked = false; // 「在看历史」锁存:锁存期间内容增长只计未读,不拽人
+
+  /// 内容变化后的锚行检查(post-frame:布局完成后才能量 y)。
+  void _queueAnchorCheck() {
+    if (_compensateQueued) return;
     _compensateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _compensateQueued = false;
-      if (!mounted || !_listCtrl.hasClients || _dragging || _animatingToBottom) return;
-      final pos = _listCtrl.position;
-      if (pos.pixels <= kBottomPx) return; // 已经回到底部:让它自然跟随
-      final delta = (pos.maxScrollExtent + pos.viewportDimension) - before;
-      if (!shouldLockScroll(
-        offset: pos.pixels,
-        delta: delta,
-        dragging: _dragging,
-        animatingToBottom: _animatingToBottom,
-        running: chat.running,
-      )) {
-        return;
+      if (!mounted || !_listCtrl.hasClients) return;
+      _anchorAgainstGrowth();
+    });
+  }
+
+  void _anchorAgainstGrowth() {
+    final next = _sampleTopRow();
+    if (next == null) return; // 锚不可用:基线保持原样,不补
+    final delta = ViewportAnchor.compensate(prev: _anchorSample, next: next);
+    _trackAnchorBaseline(); // 本次采样即新基线:下次变化的对比点
+    if (delta == null) return;
+    final pos = _listCtrl.position;
+    final gap = pos.maxScrollExtent - pos.pixels; // 距最新端
+    // 贴底且未锁存:在底部就该自然跟随(新行追加把人往下推是正确行为),锚定退场。
+    // 锁存期间即使 gap 很小也必须补 —— 用户就是要停在原地看历史。
+    if (gap <= AnchorThresholds.exitPx && !_followLocked) return;
+    _queueAnchorGrowth(delta);
+  }
+
+  /// 采样视口顶(最旧端)第一条可见**历史行**。头部槽(计划面板/加载提示)
+  /// 与流式区(列表外)不锚:头部槽身份不稳,锚它会引入抖动。
+  /// 找不到可锚行返回 null,基线保持原样。
+  AnchorSample? _sampleTopRow() {
+    if (!mounted || !_listCtrl.hasClients) return null;
+    final pos = _listCtrl.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return null;
+    final ctx = pos.context.notificationContext;
+    final viewport = RenderAbstractViewport.of(ctx?.findRenderObject());
+    if (viewport is! RenderBox) return null;
+    RenderSliverMultiBoxAdaptor? sliver;
+    viewport.visitChildren((child) {
+      if (sliver == null && child is RenderSliverMultiBoxAdaptor) sliver = child;
+    });
+    final box0 = sliver;
+    if (box0 == null) return null;
+    RenderBox? topChild;
+    var topY = double.infinity;
+    box0.visitChildren((child) {
+      final box = child as RenderBox;
+      final y = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
+      if (y < topY) {
+        topY = y;
+        topChild = box;
       }
-      if (pos.userScrollDirection != ScrollDirection.idle) return; // 惯性滑动中不打断
-      ZLog.i('scroll', 'comp +${delta.toStringAsFixed(0)}px off=${pos.pixels.toStringAsFixed(0)}');
-      _listCtrl.jumpTo(math.min(pos.pixels + delta, pos.maxScrollExtent));
+    });
+    final tc = topChild;
+    if (tc == null || !tc.hasSize) return null;
+    final idx = (tc.parentData as SliverMultiBoxAdaptorParentData).index;
+    if (idx == null) return null;
+    final rows = chat.rows;
+    if (idx < 0 || idx >= rows.length) return null; // 计划面板/会话头槽:不锚
+    return AnchorSample(rows[rows.length - 1 - idx], topY); // 行对象即身份(identical)
+  }
+
+  /// 滚动期间基线实时跟随:手势/惯性/程序化滚动引起的锚行 y 变化全部吞进
+  /// 基线,绝不进补偿 —— 否则停稳后的第一帧会把整个滚动距离当「内容增量」
+  /// 回放一遍,视口被拽回滚动前。
+  void _trackAnchorBaseline() {
+    final next = _sampleTopRow();
+    if (next != null) _anchorSample = next;
+  }
+
+  /// 补偿量进帧末合并桶(同帧多触发源各算一次会跳两次)。
+  void _queueAnchorGrowth(double growth) {
+    if (growth <= 0) return;
+    _coalescedAnchorDelta += growth;
+    if (_anchorFlushScheduled) return;
+    _anchorFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _anchorFlushScheduled = false;
+      final delta = _coalescedAnchorDelta;
+      _coalescedAnchorDelta = 0;
+      if (!mounted || _dragging || _animatingToBottom) return;
+      // 贴底且未锁存:在底部自然跟随,不补
+      final pos = _listCtrl.position;
+      final gap = pos.maxScrollExtent - pos.pixels;
+      if (gap <= AnchorThresholds.exitPx && !_followLocked) return;
+      _applyAnchorGrowth(delta);
+    });
+  }
+
+  /// 补偿落位:阈值过滤 + 单步上限 + 短动画(闪烁修复核心)+ 单飞锁。
+  void _applyAnchorGrowth(double growth) {
+    if (!_listCtrl.hasClients) return;
+    final pos = _listCtrl.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return;
+    if (pos.userScrollDirection != ScrollDirection.idle) return; // 惯性中不打断
+    final step = AnchorMath.plan(growth);
+    if (step.delta == 0 && step.leftover == 0) return;
+    if (_anchorAnimating) {
+      _coalescedAnchorDelta += growth; // 并进桶里,动画结束再走
+      _scheduleAnchorFlush();
+      return;
+    }
+    if (step.leftover > 0) {
+      _coalescedAnchorDelta += step.leftover; // 超上限的欠账留给下一帧
+      _scheduleAnchorFlush();
+    }
+    final target = (pos.pixels + step.delta).clamp(0.0, pos.maxScrollExtent);
+    if ((target - pos.pixels).abs() < AnchorMath.minStepPx) return;
+    _anchorAnimating = true;
+    _anchorAnimTimer?.cancel();
+    _anchorAnimTimer = Timer(Duration(milliseconds: step.durationMs), () {
+      _anchorAnimating = false;
+      if (_coalescedAnchorDelta.abs() >= AnchorMath.minStepPx) _scheduleAnchorFlush();
+    });
+    pos.animateTo(target, duration: Duration(milliseconds: step.durationMs), curve: Curves.linear);
+  }
+
+  void _scheduleAnchorFlush() {
+    if (_anchorFlushScheduled) return;
+    _anchorFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _anchorFlushScheduled = false;
+      final delta = _coalescedAnchorDelta;
+      _coalescedAnchorDelta = 0;
+      if (!mounted || _dragging || _animatingToBottom) return;
+      if (delta.abs() >= AnchorMath.minStepPx) _applyAnchorGrowth(delta);
     });
   }
 
@@ -242,6 +323,8 @@ class _ChatPageState extends State<ChatPage> {
   /// 表现就是"点了回到底部卡住"(实测反馈;卡住只能重启)。
   Future<void> _toBottom() async {
     if (!_listCtrl.hasClients || _animatingToBottom) return;
+    _followLocked = false; // 回到底部 = 解除「在看历史」锁存
+    _anchorSample = null; // 锚行基线作废(视口内容已换)
     setState(() => _animatingToBottom = true);
     try {
       await _listCtrl.animateTo(0,
@@ -1131,6 +1214,21 @@ class _ChatPageState extends State<ChatPage> {
                   _dragging = false;
                 }
                 if (!_listCtrl.hasClients) return false;
+                // 锚行基线实时跟随滚动(手势/惯性/程序化引起的 y 变化全部吞进
+                // 基线,不进补偿 —— 否则停稳后第一帧会把滚动距离回放一遍)
+                _trackAnchorBaseline();
+                // FollowLock 意图锁存:主动滚离(>exitPx)上锁,滚回 ≤releasePx 解锁
+                final gap = _listCtrl.position.maxScrollExtent - _listCtrl.offset;
+                if (FollowLock.shouldLock(
+                    atBottomGap: gap,
+                    locked: _followLocked,
+                    maxScrollExtent: _listCtrl.position.maxScrollExtent)) {
+                  _followLocked = true;
+                } else if (_followLocked &&
+                    FollowLock.shouldRelease(
+                        atBottomGap: gap, maxScrollExtent: _listCtrl.position.maxScrollExtent)) {
+                  _followLocked = false;
+                }
                 final away = _listCtrl.offset > 60;
                 if (away != _listAway) setState(() => _listAway = away);
                 // 滑到最旧端附近:按需拉更旧的一页(打开会话只拉了最新 100 条)。
