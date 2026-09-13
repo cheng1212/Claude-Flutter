@@ -133,18 +133,15 @@ export class ZApi {
     return res.messages ?? [];
   }
 
-  /** 全局用量聚合:?range=7d|30d|all。 */
-  async usageStats(range = '7d'): Promise<Record<string, unknown> | null> {
-    try {
-      return await this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
-    } catch {
-      return null;
-    }
+  /** 全局用量聚合:?range=7d|30d|all。失败抛 ApiError(调用方区分「失败」与「暂无数据」)。 */
+  async usageStats(range = '7d'): Promise<Record<string, unknown>> {
+    return this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
   }
 
   /**
    * 上传文件到会话(cwd/uploads/):分块 base64 + 进度(0~1)。
    * 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位。
+   * 网络错误/5xx 自动重试 2 次(0.8s/1.6s 退避,对齐 app uploadFile 语义);4xx 不重试。
    */
   async uploadFile(
     sessionId: string, fileName: string, bytes: Uint8Array, onProgress?: (p: number) => void,
@@ -158,7 +155,18 @@ export class ZApi {
       done = end;
       onProgress?.(done / bytes.length);
     }
-    return this.call('POST', `/api/sessions/${sessionId}/files`, { fileName, dataB64 });
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.call('POST', `/api/sessions/${sessionId}/files`, { fileName, dataB64 });
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : undefined;
+        const retryable = typeof status !== 'number' || status >= 500; // 网络错误/服务端错才重试
+        if (!retryable || attempt >= 2) throw e;
+        await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+        attempt++;
+      }
+    }
   }
 }
 

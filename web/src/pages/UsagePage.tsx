@@ -17,16 +17,22 @@ const RANGES = [
   { value: 'all', label: '全部' },
 ] as const;
 
-/** 用量页:总览 + 按日柱状 + 按模型明细(数据 = GET /api/usage?range=7d|30d|all);返回由全局导航栏提供。 */
+/** 用量页:总览 + 按日柱状 + 按模型明细(数据 = GET /api/usage?range=7d|30d|all)。
+ *  加载语义对齐移动端:失败态(错误条+重试)与「暂无数据」真空态严格区分。 */
 export function UsagePage({ api }: { api: ZApi }) {
   const [range, setRange] = useState<'7d' | '30d' | 'all'>('7d');
   const [data, setData] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       setData(await api.usageStats(range));
+    } catch (e) {
+      setData(null);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -58,6 +64,17 @@ export function UsagePage({ api }: { api: ZApi }) {
       </div>
 
       <div className="usage__body">
+        {error && (
+          <div className="usage__error">
+            <div className="strip strip--error">用量数据加载失败:{error}</div>
+            <button type="button" className="btn-gold" style={{ marginTop: 10 }} disabled={loading} onClick={() => void reload()}>
+              重新加载
+            </button>
+          </div>
+        )}
+        {!error && !data && !loading && <div className="session-empty">暂无用量数据</div>}
+        {data && (
+          <>
         <div className="usage__cards">
           <div className="card usage__card usage__card--main">
             <span className="usage__num mono">{loading ? '…' : fmtTok(n(data?.totalTokens))}</span>
@@ -97,6 +114,8 @@ export function UsagePage({ api }: { api: ZApi }) {
             </div>
           ))}
         </div>
+          </>
+        )}
       </div>
     </div>
   );
