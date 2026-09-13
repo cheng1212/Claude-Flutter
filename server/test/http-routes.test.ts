@@ -313,6 +313,24 @@ describe('REST · 用量', () => {
   });
 });
 
+describe('REST · 自我重启', () => {
+  it('POST /api/server/restart:先回 202,再触发回调;未注入回调回 501', async () => {
+    const db = openDb(':memory:');
+    let restarted = 0;
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json', onRestart: () => { restarted += 1; } });
+    const res = await app.inject({ method: 'POST', url: '/api/server/restart', headers: H });
+    expect(res.statusCode).toBe(202);
+    expect((res.json() as { ok: boolean }).ok).toBe(true);
+    expect(restarted).toBe(1);
+    await app.close();
+
+    // 没注入(如测试装配/非标准启动)→ 501,不假装能重启
+    const bare = await buildApp({ token: 't', db: openDb(':memory:'), routesPath: 'Z:/none.json' });
+    expect((await bare.inject({ method: 'POST', url: '/api/server/restart', headers: H })).statusCode).toBe(501);
+    await bare.close();
+  });
+});
+
 describe('REST · 定时任务', () => {
   it('GET /api/crons 支持 ?session= 过滤(会话弹层/快捷条只取本会话)', async () => {
     const db = openDb(':memory:');

@@ -548,6 +548,10 @@ class ZApp extends ChangeNotifier {
     }
   }
 
+  /// 让服务器自我重启:server 先回 202 再拉起新实例并退出,之后连接会断几秒,
+  /// 由既有 WS 自动重连恢复。抛错 = 压根没送出去(如旧版 server 无此接口)。
+  Future<void> restartServer() => _api.restartServer();
+
   Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
     await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode, archived: archived, tags: tags, cwd: cwd);
     await _loadSessions();

@@ -10,6 +10,7 @@ import { startUpstreamProxy } from './proxy/upstream-proxy.js';
 import { RunRegistry } from './runs/run-registry.js';
 import { startCronScheduler } from './cron-scheduler.js';
 import { SessionRuntime } from './protocol/sdk-client.js';
+import { restartPlan, spawnRestart } from './restart.js';
 
 const config = loadOrCreateConfig();
 const db = openDb(path.join(config.dataDir, 'zcode.db'));
@@ -84,6 +85,9 @@ const app = await buildApp({
     // gateway.notify(无 seq 不落库,各端 250ms 防抖拉列表),与开跑/跑完同路。
     gateway.notify({ kind: 'sessions_dirty', sessionId });
   },
+  // app 点「重启服务器」:拉起脱离进程树的新实例,再走优雅停机退出。
+  // gateway 还没建(声明在后面),所以重启动作走闭包引用,调用时已初始化。
+  onRestart: () => { void restartSelf(); },
 }); // buildApp 内部已挂 REST
 
 const gateway = attachWsGateway(app.server, {
@@ -155,6 +159,42 @@ const shutdown = (signal: string) => {
   for (const [, rt] of live) void rt.abort().catch(() => {});
   setTimeout(() => process.exit(0), 3000).unref();
 };
+
+// 自我重启(app 端「重启服务器」):拉起**脱离当前进程树**的新实例,再优雅退出。
+// 顺序很讲究:先让 REST 应答发出去 → abort 在跑回合并等落库 → 关 HTTP 释放端口
+// → 才 spawn 新实例(否则新旧抢 5190)→ 退出。新实例启动要 2~3 秒(tsx 编译),
+// 那会儿端口已经空了。
+let restarting = false;
+async function restartSelf(): Promise<void> {
+  if (restarting || shuttingDown) return;
+  restarting = true;
+  const plan = restartPlan({
+    execPath: process.execPath,
+    argv: process.argv, // 复现当前启动方式(tsx 加载器 + src/index.ts)
+    cwd: process.cwd(),
+    logFile: path.join(config.dataDir, 'server.out.log'),
+  });
+  console.log(`[zcode-server] restart requested: ${plan.cmd} ${plan.args.join(' ')} (cwd=${plan.cwd})`);
+  const live = [...runtimes.entries()].filter(([id]) => registry.isRunning(id));
+  if (live.length) console.log(`[zcode-server] restart: aborting ${live.length} running session(s)...`);
+  for (const [, rt] of live) void rt.abort().catch(() => {});
+  // 给 abort 落定/落库留时间(强裁兜底是 6s,这里只等 1.5s:重启不该让用户干等)
+  await new Promise((r) => setTimeout(r, 1500));
+  try {
+    await app.close(); // 释放 5190/5191,让新实例能绑上
+  } catch (error) {
+    console.warn('[zcode-server] restart: close failed (continuing):', error instanceof Error ? error.message : error);
+  }
+  try {
+    const pid = spawnRestart(plan);
+    console.log(`[zcode-server] restart: new instance spawned (pid=${pid}), exiting.`);
+  } catch (error) {
+    console.error('[zcode-server] restart: spawn failed, staying alive:', error instanceof Error ? error.message : error);
+    restarting = false; // 拉不起来就别死,留着旧进程继续服务
+    return;
+  }
+  setTimeout(() => process.exit(0), 300).unref();
+}
 cronScheduler.stop();
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
