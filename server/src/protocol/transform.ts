@@ -101,12 +101,36 @@ export function transformMessage(msg: AnyRecord): ProtocolEvent[] {
       if (typeof msg.output_file === 'string' && msg.output_file) ev.outputFile = msg.output_file;
       return [ev];
     }
-    // task_progress 频率高且卡片走秒已表达活性,先不透传;init/compact 等其余 subtype 不消费
+    // 上下文压缩边界:CLI 压完会报压缩前后 token 数,透传给 app 做「已压缩」反馈
+    if (subtype === 'compact_boundary') {
+      const meta = (msg.compact_metadata ?? {}) as AnyRecord;
+      return [{
+        kind: 'context_compacted',
+        trigger: meta.trigger === 'auto' ? 'auto' : 'manual',
+        preTokens: Number(meta.pre_tokens ?? 0),
+        postTokens: Number(meta.post_tokens ?? 0),
+      }];
+    }
+    // task_progress 频率高且卡片走秒已表达活性,先不透传;init 等其余 subtype 不消费
     return [];
   }
 
   if (type === 'stream_event') {
     const event = msg.event as AnyRecord | undefined;
+    // message_start 带**本次请求**的 usage:input+cache_read+cache_creation 就是
+    // 这次提交的 prompt 大小 = 当前真实上下文占用。result 里的 usage 是整轮累计
+    // (一轮内多次工具调用相加),拿它当上下文会算出 >100% 的越界值。
+    if ((event?.type as string) === 'message_start') {
+      const u = (event?.message as AnyRecord | undefined)?.usage as AnyRecord | undefined;
+      if (!u) return [];
+      const ctx = Number(u.input_tokens ?? 0)
+        + Number(u.cache_read_input_tokens ?? 0)
+        + Number(u.cache_creation_input_tokens ?? 0);
+      if (ctx <= 0) return [];
+      // 子代理有自己的上下文窗口,不计入主会话占用
+      if (parentToolUseId) return [];
+      return [{ kind: 'context_usage', contextTokens: ctx }];
+    }
     if ((event?.type as string) !== 'content_block_delta') return [];
     const delta = event?.delta as AnyRecord | undefined;
     if (delta?.type === 'text_delta' && typeof delta.text === 'string') {

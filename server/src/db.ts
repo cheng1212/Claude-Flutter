@@ -467,7 +467,12 @@ export function sessionUsageSummary(db: Db, sessionId: string): UsageSummary {
     totals.costUsd += u.totalCostUsd ?? 0;
     totals.durationMs += u.durationMs ?? 0;
     totals.turns += u.numTurns ?? 0;
-    const contextTokens = (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0);
+    // 真实上下文占用 = 本轮最后一次 API 调用的 prompt 大小(contextTokens,
+    // 新事件才有)。旧数据没有该字段时退回旧口径(整轮累计)——那会 >100%,
+    // 但只影响历史记录,新跑的回合一律用准确值。
+    const contextTokens = (u.contextTokens ?? 0) > 0
+      ? u.contextTokens!
+      : (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0);
     if (contextTokens > 0) {
       last = {
         contextTokens,

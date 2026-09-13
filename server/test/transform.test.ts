@@ -2,6 +2,46 @@ import { describe, expect, it } from 'vitest';
 import { transformMessage } from '../src/protocol/transform.js';
 import { startsBackgroundWork } from '../src/protocol/types.js';
 
+describe('transformMessage · 上下文占用', () => {
+  const started = (usage: Record<string, unknown>) => ({
+    type: 'stream_event',
+    event: { type: 'message_start', message: { usage } },
+  });
+
+  it('message_start → context_usage:本次请求 prompt = input + 缓存读 + 缓存写', () => {
+    const out = transformMessage(started({
+      input_tokens: 4, cache_read_input_tokens: 1000, cache_creation_input_tokens: 21, output_tokens: 1,
+    }));
+    expect(out).toEqual([{ kind: 'context_usage', contextTokens: 1025 }]);
+  });
+
+  it('子代理的 message_start 不计入主会话上下文(子代理有独立窗口)', () => {
+    const msg = { ...started({ input_tokens: 500 }), parent_tool_use_id: 'toolu_x' };
+    expect(transformMessage(msg)).toEqual([]);
+  });
+
+  it('usage 全 0 / 缺字段 → 不发事件,不污染显示', () => {
+    expect(transformMessage(started({}))).toEqual([]);
+    expect(transformMessage(started({ output_tokens: 3 }))).toEqual([]);
+    expect(transformMessage({ type: 'stream_event', event: { type: 'message_start' } })).toEqual([]);
+  });
+
+  it('compact_boundary → context_compacted(带压缩前后 token 与触发方式)', () => {
+    const out = transformMessage({
+      type: 'system', subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'manual', pre_tokens: 900000, post_tokens: 120000, duration_ms: 3000 },
+    });
+    expect(out).toEqual([{
+      kind: 'context_compacted', trigger: 'manual', preTokens: 900000, postTokens: 120000,
+    }]);
+    const auto = transformMessage({
+      type: 'system', subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', pre_tokens: 1000000 },
+    });
+    expect(auto[0]).toMatchObject({ trigger: 'auto', postTokens: 0 });
+  });
+});
+
 describe('transformMessage', () => {
   it('assistant 三种 block → thinking/text/tool_use', () => {
     const out = transformMessage({
