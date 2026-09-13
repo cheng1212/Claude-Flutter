@@ -75,24 +75,17 @@ function closeDanglingTools(rows: ChatRow[]): ChatRow[] {
 
 const num = (v: unknown, d = 0): number => (typeof v === 'number' ? v : d);
 
-/** 批量归约的行缓冲:传了 sink 就复用它(可变原地改),否则复制一份 —— 对齐 Flutter reducer 的 _rowsInto。 */
-function rowsInto(s: ChatState, sink?: ChatRow[]): ChatRow[] {
-  return sink ?? [...s.rows];
-}
-
-/** 按需加载的更旧一页:事件(升序)在独立缓冲里走完整 applyEvent 归约(所有 kind、
- *  页内工具配对、error 行都与首屏同一构造逻辑,对齐 Flutter 的 sink 用法),
+/** 按需加载的更旧一页:事件(升序)在独立缓冲 state 里走完整 applyEvent 归约(所有 kind、
+ *  页内工具配对、error 行都与首屏同一构造逻辑,对齐 Flutter 的独立缓冲 + sink 思路),
  *  归约出的行整体前插;不改主 state 的 lastSeq —— 旧页 seq 全部 < lastSeq 是正常的。 */
 export function prependHistory(s: ChatState, eventsAsc: Record<string, unknown>[]): ChatState {
-  const sink: ChatRow[] = [];
   let tmp = emptyChat();
-  for (const ev of eventsAsc) tmp = applyEvent(tmp, ev, sink);
-  return withState(s, { rows: [...sink, ...s.rows] });
+  for (const ev of eventsAsc) tmp = applyEvent(tmp, ev);
+  return withState(s, { rows: [...tmp.rows, ...s.rows] });
 }
 
-/** 单事件归约;seq <= lastSeq 的事件丢弃(重连去重),permission_request 豁免。
- *  sink 仅批量路径(prependHistory)传,见 rowsInto。 */
-export function applyEvent(s: ChatState, ev: Record<string, unknown>, sink?: ChatRow[]): ChatState {
+/** 单事件归约;seq <= lastSeq 的事件丢弃(重连去重),permission_request 豁免。 */
+export function applyEvent(s: ChatState, ev: Record<string, unknown>): ChatState {
   const kind = typeof ev.kind === 'string' ? ev.kind : '';
   const seq = typeof ev.seq === 'number' ? ev.seq : undefined;
   if (seq !== undefined && seq <= s.lastSeq && kind !== 'permission_request') return s;
@@ -114,7 +107,7 @@ export function applyEvent(s: ChatState, ev: Record<string, unknown>, sink?: Cha
       if (isUser) {
         // 服务器回显用户消息:就地转正第一条同内容的 pending 行,不追加(防双气泡)。
         const content = String(ev.content ?? '');
-        const rows = rowsInto(s, sink);
+        const rows = [...s.rows];
         const idx = rows.findIndex((r) => r.kind === 'user' && r.pending && r.content === content);
         if (idx >= 0) rows[idx] = { kind: 'user', content, pending: false, createdAt: (ev.createdAt as string | undefined) ?? (rows[idx] as UserRow).createdAt };
         else rows.push({ kind: 'user', content, pending: false, createdAt: ev.createdAt as string | undefined });
@@ -122,29 +115,29 @@ export function applyEvent(s: ChatState, ev: Record<string, unknown>, sink?: Cha
       }
       return withState(s, {
         lastSeq: nextSeq, running: true, clearStreamText: true,
-        rows: rowsInto(s, sink).concat({ kind: 'text', content: String(ev.content ?? ''), createdAt: ev.createdAt as string | undefined }),
+        rows: [...s.rows, { kind: 'text', content: String(ev.content ?? ''), createdAt: ev.createdAt as string | undefined }],
       });
     }
     case 'thinking':
       return withState(s, {
         lastSeq: nextSeq, running: true, clearStreamThinking: true,
-        rows: rowsInto(s, sink).concat({ kind: 'thinking', content: String(ev.content ?? '') }),
+        rows: [...s.rows, { kind: 'thinking', content: String(ev.content ?? '') }],
       });
     case 'tool_use':
       return withState(s, {
         lastSeq: nextSeq, running: true,
-        rows: rowsInto(s, sink).concat({
+        rows: [...s.rows, {
           kind: 'tool',
           toolId: String(ev.toolId ?? ''),
           toolName: String(ev.toolName ?? ''),
           toolInput: (ev.toolInput as Record<string, unknown> | undefined) ?? {},
           startedAt: Date.now(),
-        }),
+        }],
       });
     case 'tool_result': {
       const toolId = String(ev.toolId ?? '');
       const result: ToolResult = { content: String(ev.content ?? ''), isError: ev.isError === true };
-      const rows = rowsInto(s, sink);
+      const rows = [...s.rows];
       // 也匹配被中断标记收尾的卡:重连时 subscribed(false) 先到、replay 后到,
       // 放宽匹配,迟到的真结果才能覆盖占位标记。
       const idx = rows.findLastIndex((r) =>
@@ -190,7 +183,7 @@ export function applyEvent(s: ChatState, ev: Record<string, unknown>, sink?: Cha
           rows: [...rolled.rows, { kind: 'error', content: '上一轮仍在运行(可能已卡住):点停止按钮 ■ 后再重发' }],
         });
       }
-      return withState(s, { lastSeq: nextSeq, running: false, rows: rowsInto(s, sink).concat({ kind: 'error', content }) });
+      return withState(s, { lastSeq: nextSeq, running: false, rows: [...s.rows, { kind: 'error', content }] });
     }
     case 'subscribed': {
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,先抬会把 replay 整批去重丢弃。
