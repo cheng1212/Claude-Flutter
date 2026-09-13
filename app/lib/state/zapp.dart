@@ -859,11 +859,16 @@ class ZApp extends ChangeNotifier {
 
   void abort() {
     final sid = currentSessionId;
-    if (sid == null) return;
+    if (sid == null) {
+      // 原来这里静默 return:用户点了没反应也查不到原因
+      error = '停止失败:当前没有打开的会话';
+      notifyListeners();
+      return;
+    }
     try {
       _socket.abort(sid);
     } on Object {
-      error = '停止失败: 连接断开';
+      error = '停止失败:连接未就绪(正在自动重连),请稍后再按';
       notifyListeners();
     }
   }
