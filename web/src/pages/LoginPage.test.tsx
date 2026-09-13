@@ -58,6 +58,20 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: '连接' }));
     expect(onLogin).toHaveBeenCalledWith('http://192.168.31.194:5190', 'autofilled-token');
   });
+
+  test('wrong token: onLogin rejection shows message and stays on login', async () => {
+    const onLogin = vi.fn(async () => { throw new Error('访问令牌不正确:请核对后重试'); });
+    render(<LoginPage onLogin={onLogin} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '连接' }));
+    expect(await screen.findByText(/访问令牌不正确/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '连接' })).toBeEnabled();
+  });
+
+  test('shows one-time notice (e.g. auto-logout reason) from store', () => {
+    render(<LoginPage notice="登录已失效,请重新登录" onLogin={() => {}} />);
+    expect(screen.getByText(/登录已失效/)).toBeTruthy();
+  });
 });
 
 import { DEFAULT_BASE_URL, DEFAULT_TOKEN } from '../lib/store';

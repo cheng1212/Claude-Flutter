@@ -13,6 +13,7 @@ export function App({ store }: { store: ZStore }) {
   const phase = useStore(store, (s) => s.phase);
   const currentSessionId = useStore(store, (s) => s.currentSessionId);
   const error = useStore(store, (s) => s.error);
+  const notice = useStore(store, (s) => s.notice);
   const [sub, setSub] = useState<'none' | 'usage'>('none');
   const api = useMemo(() => {
     const c = loadCreds();
@@ -24,7 +25,8 @@ export function App({ store }: { store: ZStore }) {
     return (
       <LoginPage
         initial={creds ?? undefined}
-        onLogin={(baseUrl, token) => void store.getState().login(baseUrl, token)}
+        notice={notice ?? undefined}
+        onLogin={(baseUrl, token) => store.getState().login(baseUrl, token)}
       />
     );
   }
@@ -53,7 +55,8 @@ export function DefaultApp() {
   void phase;
   useMemo(() => {
     const creds = loadCreds();
-    if (creds) void store.getState().login(creds.baseUrl, creds.token);
+    // 凭据失效(401/网络不通)时 login 会 reject:留在登录页,不能冒成未处理拒绝
+    if (creds) store.getState().login(creds.baseUrl, creds.token).catch(() => {});
     // 仅装配期执行一次
   }, [store]);
   return <App store={store} />;
