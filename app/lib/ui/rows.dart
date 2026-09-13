@@ -1205,6 +1205,15 @@ class _TaskItem {
 
 /// 折叠任务工具行 → 实时任务清单。id 只在 tool_result 里(TaskCreate 返回分配的
 /// id),解析不出就按创建序号占位——进度面板不追求台账级精确,够看进度就行。
+///
+/// **只显示「当前这批」计划**:同一会话里 agent 会一批批建计划(上一批全做完了,
+/// 新一轮又 TaskCreate)。历史累积会把几十条古早任务一直挂在面板上(用户实测:
+/// 49/59 全是陈年旧账)。判定换批的规则:
+///   - 已有任务**全部终结**(completed)时再来 TaskCreate → 开新一批,清空重来;
+///   - 还有 pending/in_progress → 视为同批追加(agent 边做边补任务,含"完成一条
+///     再补下一条"的滚动计划,那种不算换批);
+///   - TaskList 回快照:解析得动就整体校正(它是当前真相),空快照 = 没有计划 → 收起;
+///     解析不动保留折叠。
 List<PlanStep>? deriveTaskSteps(List<ChatRow> rows) {
   final order = <String>[];
   final byId = <String, _TaskItem>{};
@@ -1219,23 +1228,35 @@ List<PlanStep>? deriveTaskSteps(List<ChatRow> rows) {
     }
   }
 
+  /// 换批判据:**上一批至少 2 条、且全部 completed** 时,新 TaskCreate 才算新一轮计划。
+  /// 单条完成后再补建是「滚动计划」(agent 做完一条顺手加下一条),不是换批——
+  /// 早先按「全部完成」判定会把这种滚动计划的前半段清掉。
+  bool batchSettled() =>
+      order.length >= 2 && order.every((id) => byId[id]!.status == 'completed');
+
+  void reset() {
+    order.clear();
+    byId.clear();
+  }
+
   for (final row in rows) {
     if (row is! ToolRow) continue;
     final name = row.toolName.toLowerCase().replaceAll('_', '');
     if (name == 'taskcreate') {
       final subject = '${row.toolInput['subject'] ?? ''}'.trim();
       if (subject.isEmpty) continue;
+      // 上一批已整体收尾 → 这条是新一轮计划的第一条:清掉旧的,只显示新的
+      if (batchSettled()) reset();
       put(_idFromResult(row.result?.content) ?? '${order.length + 1}', subject, 'pending');
     } else if (name == 'taskupdate') {
       final id = '${row.toolInput['taskId'] ?? row.toolInput['id'] ?? ''}'.trim();
       if (id.isEmpty) continue;
       put(id, '${row.toolInput['subject'] ?? ''}'.trim(), '${row.toolInput['status'] ?? ''}'.trim());
     } else if (name == 'tasklist') {
-      // TaskList 回全量快照:解析得动就整体校正一遍,解析不动保留已有折叠
+      // TaskList 回快照:解析出任务列表就整体校正;空列表 = 当前没有计划 → 收起面板
       final items = _tasksFromResult(row.result?.content);
-      if (items == null) continue;
-      order.clear();
-      byId.clear();
+      if (items == null) continue; // 解析不动:保留已有折叠
+      reset();
       for (final it in items) {
         put(it.$1, it.$2, it.$3);
       }
@@ -1283,7 +1304,9 @@ List<(String, String, String)>? _tasksFromResult(String? content) {
     if (id.isEmpty || subject.isEmpty) continue;
     out.add((id, subject, '${item['status'] ?? 'pending'}'));
   }
-  return out.isEmpty ? null : out;
+  // 空列表 ≠ 解析失败:前者表示「当前确实没有任务」(面板该收起),后者(返回 null)
+  // 才保留已有折叠。原实现把两者混同,清空后的计划会一直挂在面板上。
+  return out;
 }
 
 List<PlanStep>? _parsePlanValue(Object? value) {
