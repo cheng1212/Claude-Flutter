@@ -34,6 +34,8 @@ export function ChatPage({ store, sessionId }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const pendingInitRef = useRef(false);
+  const prevHeightRef = useRef(0);
 
   // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
   const api = useMemo(() => {
@@ -49,27 +51,58 @@ export function ChatPage({ store, sessionId }: {
     else el.scrollTop = el.scrollHeight;
   };
 
+  const [showJump, setShowJump] = useState(false);
+
   const onScroll = () => {
     const el = listRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; // 贴底阈值,对齐 Flutter
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80; // 贴底阈值,对齐 Flutter
+    stickRef.current = atBottom;
+    setShowJump(!atBottom); // 同值 setState 会被 React 去重,scroll 高频触发无渲染风暴
   };
 
-  // 进入会话/历史加载完成:多重保险钉到最新一条 —— markdown/图片异步增高会把视口顶离底部,
-  // 所以首帧 + 下一帧 + 250ms + 800ms 各补一次,确保"进来就在最底下"。
+  // 初始钉底(照 CloudCLI 的 robust 方案):逐帧 scrollTop=scrollHeight,直到 scrollHeight
+  // 连续 3 帧不再增长 —— markdown/代码高亮/图片异步渲染完才停;60 帧(~1s)封顶防死循环。
+  // 之前"固定时间点补滚"的版本输在这里:内容在补滚窗口之后才长完,视口又被顶离底部。
   useEffect(() => {
     if (historyLoading) return;
+    if (chat.rows.length === 0) return;
+    const el = listRef.current;
+    if (!el) return;
+    pendingInitRef.current = true;
     stickRef.current = true;
-    scrollToEnd();
-    const raf = requestAnimationFrame(() => scrollToEnd());
-    const t1 = setTimeout(() => scrollToEnd(), 250);
-    const t2 = setTimeout(() => scrollToEnd(), 800);
-    return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
-  }, [sessionId, historyLoading]);
+    let frame = 0;
+    let lastHeight = 0;
+    let stable = 0;
+    let raf = 0;
+    const tick = () => {
+      if (!pendingInitRef.current || !listRef.current) return;
+      const box = listRef.current;
+      box.scrollTop = box.scrollHeight;
+      if (box.scrollHeight === lastHeight) stable++;
+      else { stable = 0; lastHeight = box.scrollHeight; }
+      frame++;
+      if (stable < 3 && frame < 60) raf = requestAnimationFrame(tick);
+      else pendingInitRef.current = false;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+  }, [sessionId, historyLoading, chat.rows.length > 0]);
 
-  // 新行与流式增长:仅在贴底时跟随,用户上翻看历史就不打扰。
+  // 加载更早:前插后按高度差补偿 scrollTop,视口锚在原内容上不跳(CloudCLI 同款兜底公式)。
   useEffect(() => {
-    if (stickRef.current) scrollToEnd();
+    const el = listRef.current;
+    if (!el) return;
+    if (loadingOlder) { prevHeightRef.current = el.scrollHeight; return; }
+    if (prevHeightRef.current) {
+      el.scrollTop += el.scrollHeight - prevHeightRef.current;
+      prevHeightRef.current = 0;
+    }
+  }, [loadingOlder]);
+
+  // 新行与流式增长:仅在贴底时跟随,用户上翻看历史就不打扰(初始钉底期间让位)。
+  useEffect(() => {
+    if (!pendingInitRef.current && stickRef.current) scrollToEnd();
   }, [chat.rows.length, chat.streamingText, chat.streamingThinking]);
 
   const session = sessions.find((s) => s.id === sessionId);
@@ -137,14 +170,21 @@ export function ChatPage({ store, sessionId }: {
         </div>
       </div>
 
+      {showJump && (
       <button
         type="button"
         className="jump-latest"
         aria-label="滑到最新消息"
-        onClick={() => { stickRef.current = true; scrollToEnd(true); }}
+        onClick={() => {
+          pendingInitRef.current = false;
+          stickRef.current = true;
+          setShowJump(false);
+          scrollToEnd(true);
+        }}
       >
         ↓ 最新
       </button>
+      )}
 
       {chat.pendingPermission && (
         <PermissionCard

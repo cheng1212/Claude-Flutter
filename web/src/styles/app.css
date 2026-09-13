@@ -664,19 +664,18 @@
 .topbar__right { display: flex; align-items: center; gap: 8px; flex: none; }
 .topbar__theme { width: 116px; flex: none; padding: 5px 9px; font-size: 12.5px; }
 
-/* 回到最新:上翻看历史时出现 */
+/* 回到最新:fixed 钉在窗口右侧(输入框上方),滚动/布局变化都不动 */
 .jump-latest {
-  position: absolute;
-  bottom: 92px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
+  position: fixed;
+  right: 18px;
+  bottom: 150px;
+  z-index: 60;
   border: var(--z-border-w) solid var(--z-edge);
   background: var(--z-lemon);
   color: var(--z-ink);
   font-weight: 800;
   border-radius: 999px;
-  padding: 6px 14px;
+  padding: 8px 14px;
   box-shadow: 3px 3px 0 0 var(--z-edge);
   cursor: pointer;
 }

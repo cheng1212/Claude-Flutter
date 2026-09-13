@@ -19,8 +19,11 @@
   box-sizing: border-box;
 }
 
+/* 高度链根基:#root 是 index.html 的挂载点名(#app 是历史笔误,留着兼容);
+   断了它 .app-shell 的 height:100% 会退化 auto,聊天页变成整页滚、内部钉底全部失效。 */
 html,
 body,
+#root,
 #app {
   height: 100%;
 }
