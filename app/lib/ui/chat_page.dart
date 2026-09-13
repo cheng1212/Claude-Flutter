@@ -1133,6 +1133,15 @@ class _ChatPageState extends State<ChatPage> {
                 if (!_listCtrl.hasClients) return false;
                 final away = _listCtrl.offset > 60;
                 if (away != _listAway) setState(() => _listAway = away);
+                // 滑到最旧端附近:按需拉更旧的一页(打开会话只拉了最新 100 条)。
+                // reverse 列表 maxScrollExtent 就是"最旧端"。
+                final pos = _listCtrl.position;
+                if (chat.hasMoreOlder &&
+                    !app.loadingOlder &&
+                    pos.maxScrollExtent > 0 &&
+                    pos.pixels > pos.maxScrollExtent - 400) {
+                  unawaited(app.loadOlder());
+                }
                 return false;
               },
               child: Stack(children: [
@@ -1365,17 +1374,44 @@ class _ChatPageState extends State<ChatPage> {
               : PlanPanel(steps: plan);
         }
         if (i == headIdx) {
-          return app.historyLoading
+          // 最旧端:显示"加载更早"状态(打开会话只拉了最新 100 条,更旧的按需取)
+          final olderHint = app.loadingOlder
               ? Padding(
-                  padding: EdgeInsets.all(14),
-                  child: Center(
-                      child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: ZT.primary))),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: ZT.primary)),
+                    const SizedBox(width: 8),
+                    Text('正在加载更早的消息…',
+                        style: TextStyle(fontSize: 12, color: ZT.inkFaint)),
+                  ]),
                 )
-              : _sessionHeader();
+              : chat.hasMoreOlder
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Center(
+                        child: Text('滑到顶会自动加载更早的消息',
+                            style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+                      ),
+                    )
+                  : const SizedBox.shrink();
+          return Column(children: [
+            olderHint,
+            if (app.historyLoading)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Center(
+                    child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: ZT.primary))),
+              )
+            else
+              _sessionHeader(),
+          ]);
         }
         return const SizedBox.shrink();
       },

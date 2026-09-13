@@ -137,7 +137,16 @@ class ChatState {
   /// 上一次 API 请求的 prompt 大小,比等回合结束再更新更即时;0 = 还没收到。
   final int liveContextTokens;
 
+  /// 已加载的**最旧**一行的 seq:按需加载更旧消息时的分页锚点。0 = 未知/空。
+  final int oldestSeq;
+
+  /// 服务器还有更旧的消息没加载(首屏 total > 已加载条数时置位)。
+  /// 打开会话默认只拉最新 500 条,不再后台狂翻页 —— 更旧的等用户滑到顶再取。
+  final bool hasMoreOlder;
+
   const ChatState({
+    this.oldestSeq = 0,
+    this.hasMoreOlder = false,
     this.rows = const [],
     this.lastSeq = 0,
     this.running = false,
@@ -158,7 +167,7 @@ class ChatState {
   }
 }
 
-ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false, String? upstreamPhase, bool clearUpstream = false, int? liveContextTokens, bool clearLiveContext = false}) {
+ChatState copyChat(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, String? streamingText, String? streamingThinking, bool clearStreamText = false, bool clearStreamThinking = false, UsageInfo? usage, PermissionReq? pendingPermission, bool clearPermission = false, String? upstreamPhase, bool clearUpstream = false, int? liveContextTokens, bool clearLiveContext = false, int? oldestSeq, bool? hasMoreOlder}) {
   return ChatState(
     rows: rows ?? s.rows,
     lastSeq: lastSeq ?? s.lastSeq,
@@ -170,6 +179,8 @@ ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, 
     upstreamPhase: clearUpstream ? null : (upstreamPhase ?? s.upstreamPhase),
     upstreamAt: clearUpstream || upstreamPhase == null ? (clearUpstream ? null : s.upstreamAt) : DateTime.now(),
     liveContextTokens: clearLiveContext ? 0 : (liveContextTokens ?? s.liveContextTokens),
+    oldestSeq: oldestSeq ?? s.oldestSeq,
+    hasMoreOlder: hasMoreOlder ?? s.hasMoreOlder,
   );
 }
 
@@ -177,7 +188,7 @@ ChatState _with(ChatState s, {List<ChatRow>? rows, int? lastSeq, bool? running, 
 /// 只认 'request'/'first_byte' 两个有展示意义的相位;done/error 由回合终态统一收。
 ChatState setUpstreamPhase(ChatState s, String phase) {
   if (phase != 'request' && phase != 'first_byte') return s;
-  return _with(s, upstreamPhase: phase);
+  return copyChat(s, upstreamPhase: phase);
 }
 
 /// 被打断工具卡的占位结果:可辨识,迟到的真 tool_result 会覆盖它(见 tool_result 匹配)。
@@ -221,9 +232,9 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
 
   switch (kind) {
     case 'stream_delta':
-      return _with(s, lastSeq: nextSeq, running: true, streamingText: (s.streamingText ?? '') + (ev['content'] as String? ?? ''));
+      return copyChat(s, lastSeq: nextSeq, running: true, streamingText: (s.streamingText ?? '') + (ev['content'] as String? ?? ''));
     case 'thinking_delta':
-      return _with(s, lastSeq: nextSeq, running: true, streamingThinking: (s.streamingThinking ?? '') + (ev['content'] as String? ?? ''));
+      return copyChat(s, lastSeq: nextSeq, running: true, streamingThinking: (s.streamingThinking ?? '') + (ev['content'] as String? ?? ''));
     case 'text':
       final isUser = (ev['role'] as String? ?? 'assistant') == 'user';
       if (isUser) {
@@ -242,15 +253,15 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
         } else {
           rows.add(UserRow(content, images: historyImages ?? const <String>[], createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String()));
         }
-        return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+        return copyChat(s, lastSeq: nextSeq, running: true, rows: rows);
       }
-      return _with(s, lastSeq: nextSeq, running: true, clearStreamText: true, rows: _rowsInto(s, sink)
+      return copyChat(s, lastSeq: nextSeq, running: true, clearStreamText: true, rows: _rowsInto(s, sink)
         ..add(TextRow(ev['content'] as String? ?? '', createdAt: ev['createdAt'] as String? ?? DateTime.now().toIso8601String())));
     case 'thinking':
-      return _with(s, lastSeq: nextSeq, running: true, clearStreamThinking: true, rows: _rowsInto(s, sink)
+      return copyChat(s, lastSeq: nextSeq, running: true, clearStreamThinking: true, rows: _rowsInto(s, sink)
         ..add(ThinkingRow(ev['content'] as String? ?? '')));
     case 'tool_use':
-      return _with(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
+      return copyChat(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
         ..add(ToolRow(
           toolId: ev['toolId'] as String? ?? '',
           toolName: ev['toolName'] as String? ?? '',
@@ -269,25 +280,25 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
       if (idx >= 0) {
         final tool = rows[idx] as ToolRow;
         rows[idx] = ToolRow(toolId: tool.toolId, toolName: tool.toolName, toolInput: tool.toolInput, result: result, startedAt: tool.startedAt);
-        return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+        return copyChat(s, lastSeq: nextSeq, running: true, rows: rows);
       }
-      return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+      return copyChat(s, lastSeq: nextSeq, running: true, rows: rows);
     case 'permission_resolved':
       // 多端同步:另一端已应答该审批,本地同 requestId 的卡片收起(不匹配则忽略)
       final resolvedId = ev['requestId'] as String? ?? '';
       if (s.pendingPermission?.requestId == resolvedId) {
-        return _with(s, clearPermission: true);
+        return copyChat(s, clearPermission: true);
       }
       return s;
     case 'permission_request':
-      return _with(s, pendingPermission: PermissionReq(
+      return copyChat(s, pendingPermission: PermissionReq(
         requestId: ev['requestId'] as String? ?? '',
         toolName: ev['toolName'] as String? ?? '',
         input: (ev['input'] as Map?)?.cast<String, dynamic>() ?? const {},
       ));
     case 'task_started':
       // 后台任务/子代理:复用工具卡渲染(走秒计时直接继承),complete 后收尾
-      return _with(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
+      return copyChat(s, lastSeq: nextSeq, running: true, rows: _rowsInto(s, sink)
         ..add(ToolRow(
           toolId: ev['taskId'] as String? ?? '',
           toolName: ev['taskType'] == 'local_agent' ? '子任务' : '后台任务',
@@ -306,7 +317,7 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
       // 放宽匹配:后台任务跑得比回合久时,complete 已把卡片收尾成中断占位,迟到的真结果要盖回来
       final idx = rows.lastIndexWhere((r) =>
           r is ToolRow && r.toolId == taskId && (r.result == null || r.result?.content == kInterruptedToolMark));
-      if (idx < 0) return _with(s, lastSeq: nextSeq);
+      if (idx < 0) return copyChat(s, lastSeq: nextSeq);
       final tool = rows[idx] as ToolRow;
       rows[idx] = ToolRow(
         toolId: tool.toolId,
@@ -315,9 +326,9 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
         startedAt: tool.startedAt,
         result: result,
       );
-      return _with(s, lastSeq: nextSeq, running: true, rows: rows);
+      return copyChat(s, lastSeq: nextSeq, running: true, rows: rows);
     case 'usage':
-      return _with(s, lastSeq: nextSeq, usage: UsageInfo(
+      return copyChat(s, lastSeq: nextSeq, usage: UsageInfo(
         inputTokens: (ev['inputTokens'] as num?)?.toInt() ?? 0,
         outputTokens: (ev['outputTokens'] as num?)?.toInt() ?? 0,
         cacheReadInputTokens: (ev['cacheReadInputTokens'] as num?)?.toInt() ?? 0,
@@ -333,25 +344,25 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
       // 瞬态(无 seq):回复途中实时刷新上下文占用,不落库不参与去重
       final ctx = (ev['contextTokens'] as num?)?.toInt() ?? 0;
       if (ctx <= 0) return s;
-      return _with(s, liveContextTokens: ctx);
+      return copyChat(s, liveContextTokens: ctx);
     case 'complete':
       // 收尾:还没拿到 tool_result 的工具卡就地落定(命令被打断,结果永远不会来)。
       // 不收尾的话卡片永久转圈、走秒不停,看起来就是"卡住了"。
-      return _with(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true, clearUpstream: true, rows: _closeDanglingTools(s.rows));
+      return copyChat(s, lastSeq: nextSeq, running: false, clearStreamText: true, clearStreamThinking: true, clearPermission: true, clearUpstream: true, rows: _closeDanglingTools(s.rows));
     case 'error':
       final content = ev['content'] as String? ?? '';
       if (content == 'RUN_IN_PROGRESS') {
         // 服务器上一轮仍在跑(可能已卡死):本轮被拒,消息没落库。
         // 撤回乐观行(否则刷新前一直挂着假气泡)、恢复 running 让停止按钮出现,并提示怎么解。
         final rolled = rollbackLocalUser(s);
-        return _with(rolled, lastSeq: nextSeq, running: true, rows: [
+        return copyChat(rolled, lastSeq: nextSeq, running: true, rows: [
           ...rolled.rows,
           const ErrorRow('上一轮仍在运行(可能已卡住):点输入框旁的停止按钮 ■,然后再重发', neutral: true),
         ]);
       }
       // 已知可恢复的中断提示(服务重启打断/看门狗自动中断)视觉降噪:中性而非红
       final neutral = content.contains('打断了上一轮') || content.startsWith('回合超过');
-      return _with(s, lastSeq: nextSeq, running: false, clearUpstream: true,
+      return copyChat(s, lastSeq: nextSeq, running: false, clearUpstream: true,
           rows: _rowsInto(s, sink)..add(ErrorRow(content, neutral: neutral)));
     case 'subscribed':
       // 只取运行态,不抬 lastSeq:服务器指针先于 replay 到达,若先抬去重门槛,
@@ -364,22 +375,22 @@ ChatState applyEvent(ChatState s, Map<String, dynamic> ev, {List<ChatRow>? sink}
       final pendingList = ev['pending'] as List?;
       final rows = isProcessing ? s.rows : _closeDanglingTools(s.rows);
       if (pendingList == null) {
-        return _with(s, running: isProcessing, rows: rows);
+        return copyChat(s, running: isProcessing, rows: rows);
       }
       Map? lastPending;
       for (final item in pendingList) {
         if (item is Map) lastPending = item;
       }
       if (lastPending == null) {
-        return _with(s, running: isProcessing, clearPermission: true, rows: rows);
+        return copyChat(s, running: isProcessing, clearPermission: true, rows: rows);
       }
-      return _with(s, running: isProcessing, rows: rows, pendingPermission: PermissionReq(
+      return copyChat(s, running: isProcessing, rows: rows, pendingPermission: PermissionReq(
         requestId: '${lastPending['requestId'] ?? ''}',
         toolName: '${lastPending['toolName'] ?? ''}',
         input: (lastPending['input'] as Map?)?.cast<String, dynamic>() ?? const {},
       ));
     default:
-      return seq != null ? _with(s, lastSeq: nextSeq) : s;
+      return seq != null ? copyChat(s, lastSeq: nextSeq) : s;
   }
 }
 
@@ -429,12 +440,12 @@ ChatState applyReplay(ChatState s, List<Map<String, dynamic>> events) {
 /// 本地乐观插入用户消息(不占 seq)。images 随行带:气泡里直接回显缩略图(本地就有 base64)。
 ChatState applyLocalUser(ChatState s, String content, {List<String> images = const []}) {
   // 新回合从零开始等:上一回合的上游相位不能再带到这一回合的静默期里
-  return _with(s, running: true, clearUpstream: true, rows: [...s.rows, UserRow(content, pending: true, images: images, createdAt: DateTime.now().toIso8601String())]);
+  return copyChat(s, running: true, clearUpstream: true, rows: [...s.rows, UserRow(content, pending: true, images: images, createdAt: DateTime.now().toIso8601String())]);
 }
 
 /// 应答权限后立即收起面板(complete 也会清,这里只为即时反馈)。
 ChatState applyPermissionAnswer(ChatState s) {
-  return _with(s, clearPermission: true);
+  return copyChat(s, clearPermission: true);
 }
 
 /// 回滚末尾的乐观用户行(WS 未连上、发送失败时)。
@@ -444,5 +455,5 @@ ChatState rollbackLocalUser(ChatState s) {
   final idx = s.rows.lastIndexWhere((r) => r is UserRow && r.pending);
   if (idx < 0) return s;
   final rows = [...s.rows]..removeAt(idx);
-  return _with(s, rows: rows, running: false);
+  return copyChat(s, rows: rows, running: false);
 }

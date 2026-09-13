@@ -10,10 +10,9 @@ import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
 
-/// 打开会话时后台补页的上限(每页 500 条 → 最多 1 万条老消息)。
-/// 再往前的历史就不是"打开会话"该干的事了:无限拉会把主线程占满、
-/// 让后续请求超时(实测 8678 行 = 17 页,server 0.13s 返回 app 却报 20s 超时)。
-const int kMaxBackfillPages = 20;
+/// 打开会话时首屏拉多少条(也是按需加载每页的大小)。
+/// 用户定的:100 条足够日常看,更旧的历史平时用不到 —— 滑到最旧端再按需拉。
+const int kFirstPageSize = 100;
 
 /// 排队中的消息(会话 running 时发的、等上一轮结束后再推的消息)。
 class QueuedMessage {
@@ -377,11 +376,11 @@ class ZApp extends ChangeNotifier {
       // 而误判超时 —— 不该因此直接落到"空态白屏",等 600ms 主线程喘过来再试。
       Future<({List<Map<String, dynamic>> messages, int total})> fetchFirst() async {
         try {
-          return await _api.messages(id, limit: 500, offset: 0);
+          return await _api.messages(id, limit: kFirstPageSize, offset: 0);
         } on Object catch (e) {
           ZLog.w('open', '首屏失败,600ms 后重试: $e', dedupeKey: 'first-retry-$id');
           await Future<void>.delayed(const Duration(milliseconds: 600));
-          return await _api.messages(id, limit: 500, offset: 0);
+          return await _api.messages(id, limit: kFirstPageSize, offset: 0);
         }
       }
 
@@ -397,6 +396,13 @@ class ZApp extends ChangeNotifier {
         st = _withPermission(st, keepPermission);
       }
       if (liveBeforeLoad != null) st = _keepLiveState(st, liveBeforeLoad);
+      // 记住"最旧到哪"与"还有没有更旧的":用户滑到最旧端时按需再拉(见 loadOlder)。
+      // 打开会话**只拉最新 kFirstPageSize 条**——按用户要求,更旧的历史平时用不到;
+      // 早先的"后台一口气翻十几页"正是大会话白屏的成因(主线程被解析占满→请求超时)。
+      st = copyChat(st,
+          oldestSeq: _minSeqOf(headEvents) ?? 0,
+          hasMoreOlder: first.total > first.messages.length);
+      _backfill = null; // 首屏已并入 extra,不需要留底了
       chat = st;
       historyLoading = false;
       _armBlankWatchdog();
@@ -405,51 +411,6 @@ class ZApp extends ChangeNotifier {
       // 天文数字(与 DB 行号分家),照抄会把去重指针毒化 → 新事件全被丢弃。
       _socket.seedLastSeq(id, maxSeq > st.lastSeq ? maxSeq : st.lastSeq);
       _socket.subscribeSession(id);
-      // 单页会话(≤500 条,绝大多数)不需要翻页,但**不能**在这里提前收工:
-      // 换底那步还要归约 bf.extra——原实现 `if (total <= 页数) { _backfill = null; return; }`
-      // 直接丢弃留底,窗口内到达的实时行(含自己刚发消息的回显)被首屏覆盖后
-      // 永远补不回,即"刷新丢自己消息"的根因。统一走换底路径,消除双路径漂移。
-      var beforeSeq =
-          first.total <= first.messages.length ? null : _minSeqOf(headEvents);
-      // 后台补齐老消息:按 seq 锚点翻更旧页——offset 分页期间若新消息插入(更高 seq),
-      // 窗口会整体上移、整段漏掉;锚点(比当前最小 seq 更旧)免疫漂移,翻到底为止。
-      var pages = 0;
-      while (beforeSeq != null) {
-        final hist = await _api.messages(id, limit: 500, beforeSeq: beforeSeq);
-        if (token != _openToken || _backfill != bf) return;
-        pages += 1;
-        final (older, _) = _histEvents(hist);
-        if (older.isEmpty) break;
-        bf.older.addAll(older);
-        beforeSeq = _minSeqOf(older);
-        if (hist.messages.length < 500) break; // 不足一页 = 已翻到最旧
-        // 每页之间让出一次事件循环:大会话要拉十几页(实测 8678 行 = 17 页),
-        // 连续解析+归约把主线程占满,后续请求的响应回调被排到队尾 ——
-        // server 明明 0.13 秒就返回了,app 却报 20 秒超时 → openSession 失败 → 白屏。
-        // 让出一帧让 HTTP 回调和渲染有机会插进来。
-        await Future<void>.delayed(Duration.zero);
-        if (pages >= kMaxBackfillPages) {
-          // 兜底:超大会话不再无限拉,首屏那 500 条已够看;更旧的等高人手动上滑再补。
-          ZLog.w('open', 'backfill 达上限 $pages 页(共 ${bf.older.length} 条老消息),停止继续拉',
-              dedupeKey: 'backfill-cap');
-          break;
-        }
-      }
-      var full = _replay([...headEvents, ...bf.older, ...bf.extra], maxSeq);
-      final livePermission = currentSessionId == id ? chat.pendingPermission : null;
-      if (livePermission != null && full.pendingPermission == null) {
-        full = _withPermission(full, livePermission);
-      }
-      if (token != _openToken || _backfill != bf) return;
-      _backfill = null;
-      ZLog.i('open', 'swap rows=${full.rows.length} lastSeq=${full.lastSeq}');
-      if (currentSessionId == id) {
-        // 换底不能把 subscribed/实时事件已设定的 running 冲掉:保留它
-        // (重建本身不推断 running,实时态只由 subscribed/终态事件驱动)。
-        full = _keepLiveState(full, chat);
-        chat = full;
-        notifyListeners();
-      }
     } on Object catch (e) {
       if (token != _openToken) return;
       _backfill = null;
@@ -476,7 +437,58 @@ class ZApp extends ChangeNotifier {
       upstreamAt: fresh.upstreamAt,
       // 实时上下文占用来自瞬态事件(不落库),重建拿不到 → 保留会话当前值
       liveContextTokens: live.liveContextTokens,
+      // 分页锚点/是否还有更旧:首屏算出来的,别被实时态冲掉
+      oldestSeq: fresh.oldestSeq > 0 ? fresh.oldestSeq : live.oldestSeq,
+      hasMoreOlder: fresh.hasMoreOlder,
     );
+  }
+
+  /// 是否正在加载更旧的一页(UI 显示"加载更早的消息…")。
+  bool loadingOlder = false;
+
+  /// 按需加载更旧的一页:用户滑到最旧端时调。
+  ///
+  /// 打开会话只拉最新 [kFirstPageSize] 条,更旧的历史平时用不到(用户要求);
+  /// 早先"后台一口气翻十几页"正是大会话白屏的成因。
+  /// 用 [ChatState.oldestSeq] 作锚点(比它更旧的一页),免疫新消息插入导致的漂移。
+  Future<void> loadOlder() async {
+    final sid = currentSessionId;
+    if (sid == null || loadingOlder || !chat.hasMoreOlder || chat.oldestSeq <= 0) return;
+    final token = _openToken;
+    loadingOlder = true;
+    notifyListeners();
+    try {
+      final hist = await _api.messages(sid, limit: kFirstPageSize, beforeSeq: chat.oldestSeq);
+      if (token != _openToken || currentSessionId != sid) return;
+      final (older, _) = _histEvents(hist);
+      if (older.isEmpty) {
+        chat = copyChat(chat, hasMoreOlder: false);
+        return;
+      }
+      // ⚠️ 必须按 seq 升序归约:server 返回的是**倒序**(ORDER BY seq DESC),而
+      // applyEvent 的去重是"seq ≤ lastSeq 即丢弃" —— 倒序灌进去只有第一条能活,
+      // 其余全被当重复扔掉(实测:一页 100 条只接上 1 条)。
+      older.sort((a, b) => ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
+      // 把这批更旧的事件归约成行(独立缓冲,不动现有 state),再整体接到最前面。
+      final sink = <ChatRow>[];
+      var tmp = const ChatState();
+      for (final e in older) {
+        tmp = applyEvent(tmp, e, sink: sink);
+      }
+      final minSeq = _minSeqOf(older) ?? chat.oldestSeq;
+      chat = copyChat(chat,
+          rows: [...sink, ...chat.rows],
+          oldestSeq: minSeq,
+          hasMoreOlder: hist.messages.length >= kFirstPageSize);
+      ZLog.i('open', 'loadOlder +${sink.length} 条(最旧 seq=$minSeq,还有更旧=${chat.hasMoreOlder})');
+    } on Object catch (e) {
+      if (token != _openToken) return;
+      error = '加载更早的消息失败:$e';
+      ZLog.w('open', 'loadOlder 失败: $e', dedupeKey: 'load-older-$sid');
+    } finally {
+      loadingOlder = false;
+      notifyListeners();
+    }
   }
 
   /// 消息页(rows)→ 出站事件列表 + 最大 seq。
