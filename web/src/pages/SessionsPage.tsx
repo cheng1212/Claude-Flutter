@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import type { ZStore } from '../lib/store';
 import type { SessionRow } from '../lib/protocol';
-import { PALETTES, useTheme, setTheme } from '../theme';
 
 function timeLabel(iso: string): string {
   const t = new Date(iso);
@@ -17,16 +16,14 @@ function timeLabel(iso: string): string {
 }
 
 /** 会话列表:搜索/项目过滤 + 普通模式点开即聊 + 管理模式多选批量置顶/删除。 */
-export function SessionsPage({ store, onOpen, onUsage }: {
-  store: ZStore; onOpen: (id: string) => void; onUsage?: () => void;
+export function SessionsPage({ store, onOpen }: {
+  store: ZStore; onOpen: (id: string) => void;
 }) {
   const sessions = useStore(store, (s) => s.sessions);
   const wsState = useStore(store, (s) => s.wsState);
   const projects = useStore(store, (s) => s.projects);
-  const theme = useTheme();
   const [manage, setManage] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [proj, setProj] = useState('');
 
@@ -81,25 +78,12 @@ export function SessionsPage({ store, onOpen, onUsage }: {
       <header className="sessions__head">
         <h2 className="page-title">会 话</h2>
         <div className="sessions__actions">
-          <select
-            aria-label="主题"
-            className="field__input sessions__theme"
-            value={theme.id}
-            onChange={(e) => setTheme(e.target.value)}
-          >
-            {PALETTES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <button type="button" className="btn-ghost" onClick={() => onUsage?.()}>用量</button>
-          <button type="button" className="btn-gold btn-gold--sm" onClick={() => setCreating(true)}>新建会话</button>
           <button
             type="button"
             className="btn-ghost"
             onClick={() => { setManage((m) => !m); setPicked(new Set()); }}
           >
             {manage ? '完成' : '管理'}
-          </button>
-          <button type="button" className="btn-ghost" onClick={() => store.getState().logout()}>
-            登出
           </button>
         </div>
       </header>
@@ -183,49 +167,6 @@ export function SessionsPage({ store, onOpen, onUsage }: {
           <button type="button" className="btn-danger" onClick={() => void batchDelete()}>删除所选</button>
         </footer>
       )}
-
-      {creating && <NewSessionDialog store={store} onClose={() => setCreating(false)} onOpen={onOpen} />}
-    </div>
-  );
-}
-
-function NewSessionDialog({ store, onClose, onOpen }: {
-  store: ZStore; onClose: () => void; onOpen: (id: string) => void;
-}) {
-  const modelGroups = useStore(store, (s) => s.modelGroups);
-  const [title, setTitle] = useState('');
-  const [model, setModel] = useState('default');
-
-  const start = async () => {
-    const row = await store.getState().createSession({
-      title: title.trim() || undefined,
-      model: model === 'default' ? undefined : model,
-    });
-    onClose();
-    onOpen(row.id);
-  };
-
-  return (
-    <div className="dialog-mask" role="presentation">
-      <div className="dialog deco-corners" role="dialog" aria-label="新建会话">
-        <h3 className="dialog__title">新建会话</h3>
-        <label className="field">
-          <span className="field__label">标题</span>
-          <input aria-label="标题" className="field__input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="可空" />
-        </label>
-        <label className="field">
-          <span className="field__label">模型</span>
-          <select aria-label="模型" className="field__input mono" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="default">默认 (Claude 官方)</option>
-            {modelGroups.filter((g) => g.id !== 'default').flatMap((g) =>
-              g.models.map((m) => <option key={m.id} value={m.id}>{g.label} · {m.label}</option>))}
-          </select>
-        </label>
-        <div className="dialog__ops">
-          <button type="button" className="btn-ghost" onClick={onClose}>取消</button>
-          <button type="button" className="btn-gold" onClick={() => void start()}>开始</button>
-        </div>
-      </div>
     </div>
   );
 }

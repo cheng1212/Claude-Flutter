@@ -261,15 +261,7 @@
 
 /* ---------- 聊天页 ---------- */
 
-.chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.chat__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: var(--z-border-w) solid var(--z-edge);
-  background: var(--z-surface);
-}
+.chat { height: 100%; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .chat__title {
   flex: 1;
   min-width: 0;
@@ -297,10 +289,10 @@
 .status-chip.is-idle { color: var(--z-ink-faint); border-color: var(--z-line); }
 
 .chat-list { flex: 1; min-height: 0; overflow-y: auto; }
-/* column-reverse:滚动态天然钉在最新消息 */
+/* 正序列表(旧→新):进入会话/新消息时由 ChatPage 的滚动管理钉到最新端 */
 .chat-list__inner {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   align-items: stretch;
   padding: 14px 18px 10px;
   min-height: 100%;
@@ -642,6 +634,56 @@
   border: 1.2px solid var(--z-rose);
   border-radius: var(--z-radius);
 }
+
+/* ---------- 全局固定导航栏 ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--z-surface);
+  border-bottom: var(--z-border-w) solid var(--z-edge);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+.topbar__left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.topbar__brand { font-family: var(--z-font-display); font-weight: 800; letter-spacing: 0.08em; font-size: 16px; }
+.topbar__title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 14.5px;
+}
+.topbar__right { display: flex; align-items: center; gap: 8px; flex: none; }
+.topbar__theme { width: 116px; flex: none; padding: 5px 9px; font-size: 12.5px; }
+
+/* 回到最新:上翻看历史时出现 */
+.jump-latest {
+  position: absolute;
+  bottom: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  border: var(--z-border-w) solid var(--z-edge);
+  background: var(--z-lemon);
+  color: var(--z-ink);
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 6px 14px;
+  box-shadow: 3px 3px 0 0 var(--z-edge);
+  cursor: pointer;
+}
+.jump-latest:hover { filter: brightness(1.05); }
+
+/* 用量页时间范围行(TopBar 已提供返回) */
+.usage__range { display: flex; gap: 8px; padding: 14px 20px 0; }
 
 /* ---------- 动画 ---------- */
 

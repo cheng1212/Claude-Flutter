@@ -17,8 +17,8 @@ const RANGES = [
   { value: 'all', label: '全部' },
 ] as const;
 
-/** 用量页:总览 + 按日柱状 + 按模型明细(数据 = GET /api/usage?range=7d|30d|all)。 */
-export function UsagePage({ api, onBack }: { api: ZApi; onBack: () => void }) {
+/** 用量页:总览 + 按日柱状 + 按模型明细(数据 = GET /api/usage?range=7d|30d|all);返回由全局导航栏提供。 */
+export function UsagePage({ api }: { api: ZApi }) {
   const [range, setRange] = useState<'7d' | '30d' | 'all'>('7d');
   const [data, setData] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,22 +44,18 @@ export function UsagePage({ api, onBack }: { api: ZApi; onBack: () => void }) {
 
   return (
     <div className="usage">
-      <header className="sessions__head">
-        <button type="button" className="btn-ghost" aria-label="返回" onClick={onBack}>‹ 返回</button>
-        <h2 className="page-title">用 量</h2>
-        <div className="sessions__actions">
-          {RANGES.map((r) => (
-            <button
-              key={r.value}
-              type="button"
-              className={`chip${range === r.value ? ' chip--on' : ''}`}
-              onClick={() => setRange(r.value)}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </header>
+      <div className="usage__range">
+        {RANGES.map((r) => (
+          <button
+            key={r.value}
+            type="button"
+            className={`chip${range === r.value ? ' chip--on' : ''}`}
+            onClick={() => setRange(r.value)}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
 
       <div className="usage__body">
         <div className="usage__cards">

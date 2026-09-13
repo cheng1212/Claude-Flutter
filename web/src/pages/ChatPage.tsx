@@ -16,13 +16,14 @@ const MODES = [
   { value: 'plan', label: '计划模式' },
 ];
 
-/** 聊天页:历史 + 流式 + 权限 + 发送。column-reverse 列表天然钉在最新。 */
-export function ChatPage({ store, sessionId, onBack }: {
-  store: ZStore; sessionId: string; onBack: () => void;
+/** 聊天页:历史 + 流式 + 权限 + 发送。正序渲染 + 贴底跟随(阈值 80px,对齐 Flutter),进入会话/历史就绪强制钉到最新。 */
+export function ChatPage({ store, sessionId }: {
+  store: ZStore; sessionId: string;
 }) {
   useEffect(() => { void store.getState().openSession(sessionId); }, [store, sessionId]);
 
   const chat = useStore(store, (s) => s.chat);
+  const historyLoading = useStore(store, (s) => s.historyLoading);
   const sessions = useStore(store, (s) => s.sessions);
   const modelGroups = useStore(store, (s) => s.modelGroups);
   const [input, setInput] = useState('');
@@ -30,12 +31,43 @@ export function ChatPage({ store, sessionId, onBack }: {
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
 
   // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
   const api = useMemo(() => {
     const c = loadCreds();
     return c ? new ZApi(c.baseUrl, c.token) : null;
   }, []);
+
+  const scrollToEnd = (smooth = false) => {
+    const el = listRef.current;
+    if (!el) return;
+    // jsdom(单测)没有 scrollTo:兜底 scrollTop 赋值
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    else el.scrollTop = el.scrollHeight;
+  };
+
+  const onScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickRef.current = gap < 80; // 贴底阈值,对齐 Flutter kAtBottomThreshold
+    setShowJump(gap >= 80);
+  };
+
+  // 进入会话/历史加载完成:强制钉到最新一条(用户上来先看到的是现在,不是过去)。
+  useEffect(() => {
+    stickRef.current = true;
+    setShowJump(false);
+    scrollToEnd();
+  }, [sessionId, historyLoading]);
+
+  // 新行与流式增长:仅在贴底时跟随,用户上翻看历史就不打扰。
+  useEffect(() => {
+    if (stickRef.current) scrollToEnd();
+  }, [chat.rows.length, chat.streamingText, chat.streamingThinking]);
 
   const session = sessions.find((s) => s.id === sessionId);
   const model = session?.model ?? 'default';
@@ -50,7 +82,6 @@ export function ChatPage({ store, sessionId, onBack }: {
   }, [model, modelGroups]);
 
   const plan = derivePlanSteps(chat.rows);
-  const phase = chat.pendingPermission ? 'permission' : chat.running ? 'running' : 'idle';
 
   const send = () => {
     if (!input.trim()) return;
@@ -80,24 +111,28 @@ export function ChatPage({ store, sessionId, onBack }: {
 
   return (
     <div className="chat">
-      <header className="chat__head">
-        <button type="button" className="btn-ghost" aria-label="返回" onClick={onBack}>‹ 返回</button>
-        <span className="chat__title">{session?.title ?? '会话'}</span>
-        <StatusChip phase={phase} />
-      </header>
-
-      <div className="chat-list">
+      <div className="chat-list" ref={listRef} onScroll={onScroll}>
         <div className="chat-list__inner">
           <div className="chat__headtail">
             {session && <span className="mono chat__headmeta">{model} · {MODES.find((m) => m.value === mode)?.label ?? mode}</span>}
           </div>
           {plan && <PlanPanel steps={plan} />}
-          {[...chat.rows].reverse().map((row, i) => (
+          {chat.rows.map((row, i) => (
             <ChatRowView key={`${row.kind}-${i}`} row={row} />
           ))}
           <StreamingArea running={chat.running} streamingText={chat.streamingText} streamingThinking={chat.streamingThinking} />
         </div>
       </div>
+
+      {showJump && (
+        <button
+          type="button"
+          className="jump-latest"
+          onClick={() => { stickRef.current = true; setShowJump(false); scrollToEnd(true); }}
+        >
+          ↓ 回到最新
+        </button>
+      )}
 
       {chat.pendingPermission && (
         <PermissionCard
@@ -195,14 +230,4 @@ export function ChatPage({ store, sessionId, onBack }: {
       </footer>
     </div>
   );
-}
-
-function StatusChip({ phase }: { phase: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    running: { label: '运行中', cls: 'is-running' },
-    permission: { label: '待确认', cls: 'is-permission' },
-    idle: { label: '空闲', cls: 'is-idle' },
-  };
-  const it = map[phase] ?? map.idle;
-  return <span className={`status-chip ${it.cls}`}>{phase === 'idle' ? '' : <span className="dot dot--pulse" />}{it.label}</span>;
 }

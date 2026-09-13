@@ -1,24 +1,33 @@
 import { useMemo, useState } from 'react';
-import { createDefaultStore, loadCreds } from './lib/store';
+import { createDefaultStore, loadCreds, type ZStore } from './lib/store';
+import { emptyChat } from './lib/chatState';
 import { useStore } from 'zustand';
-import type { ZStore } from './lib/store';
 import { ZApi } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { ChatPage } from './pages/ChatPage';
 import { UsagePage } from './pages/UsagePage';
+import { TopBar } from './components/TopBar';
+import { NewSessionDialog } from './components/NewSessionDialog';
 
-/** 视图路由:phase(login/ready)+ main(列表/聊天)/usage 用量子页。 */
+/** 视图路由:phase(login/ready)+ main(列表/聊天)/usage 用量子页;TopBar 全局常驻。 */
 export function App({ store }: { store: ZStore }) {
   const phase = useStore(store, (s) => s.phase);
   const currentSessionId = useStore(store, (s) => s.currentSessionId);
   const error = useStore(store, (s) => s.error);
   const notice = useStore(store, (s) => s.notice);
   const [sub, setSub] = useState<'none' | 'usage'>('none');
+  const [showNew, setShowNew] = useState(false);
   const api = useMemo(() => {
     const c = loadCreds();
     return c ? new ZApi(c.baseUrl, c.token) : null;
   }, []);
+  const view = sub === 'usage' ? 'usage' : currentSessionId ? 'chat' : 'sessions';
+
+  const backToList = () => {
+    setSub('none');
+    store.setState({ currentSessionId: null, chat: emptyChat() });
+  };
 
   if (phase === 'login') {
     const creds = loadCreds();
@@ -32,18 +41,32 @@ export function App({ store }: { store: ZStore }) {
   }
   return (
     <div className="app-shell">
+      <TopBar
+        store={store}
+        view={view}
+        onBack={backToList}
+        onNewSession={() => setShowNew(true)}
+        onUsage={() => { setSub('usage'); store.setState({ currentSessionId: null, chat: emptyChat() }); }}
+      />
       {error && (
         <button type="button" className="strip strip--error" onClick={() => store.getState().clearError()}>
           ⚠ {error} —— 点击关闭
         </button>
       )}
       {sub === 'usage' && api ? (
-        <UsagePage api={api} onBack={() => setSub('none')} />
-      ) : currentSessionId
-        ? <ChatPage store={store} sessionId={currentSessionId} onBack={() => {
-          store.setState({ currentSessionId: null, chat: { rows: [], lastSeq: 0, running: false } });
-        }} />
-        : <SessionsPage store={store} onOpen={(id) => { store.setState({ currentSessionId: id }); }} onUsage={() => setSub('usage')} />}
+        <UsagePage api={api} />
+      ) : currentSessionId ? (
+        <ChatPage store={store} sessionId={currentSessionId} />
+      ) : (
+        <SessionsPage store={store} onOpen={(id) => { store.setState({ currentSessionId: id }); }} />
+      )}
+      {showNew && (
+        <NewSessionDialog
+          store={store}
+          onClose={() => setShowNew(false)}
+          onOpen={(id) => { setShowNew(false); setSub('none'); store.setState({ currentSessionId: id }); }}
+        />
+      )}
     </div>
   );
 }

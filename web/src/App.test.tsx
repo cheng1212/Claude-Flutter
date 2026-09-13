@@ -29,6 +29,7 @@ function setup() {
     sendChat: vi.fn(),
     abort: vi.fn(),
     answerPermission: vi.fn(),
+    poke: vi.fn(),
   };
   const store: ZStore = createZStore({
     makeApi: () => api as never,
