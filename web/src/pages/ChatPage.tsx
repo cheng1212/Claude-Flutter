@@ -28,10 +28,12 @@ export function ChatPage({ store, sessionId }: {
   const sessions = useStore(store, (s) => s.sessions);
   const modelGroups = useStore(store, (s) => s.modelGroups);
   const [input, setInput] = useState('');
-  const [picker, setPicker] = useState<'none' | 'model' | 'mode' | 'tasks'>('none');
+  const [picker, setPicker] = useState<'none' | 'model' | 'mode' | 'tasks' | 'files'>('none');
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const albumRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const pendingInitRef = useRef(false);
@@ -179,7 +181,7 @@ export function ChatPage({ store, sessionId }: {
           pendingInitRef.current = false;
           stickRef.current = true;
           setShowJump(false);
-          scrollToEnd(true);
+          scrollToEnd(); // 不用 smooth:程序化平滑滚动在部分 Chromium 内嵌环境(IAB/WebView)静默失效
         }}
       >
         ↓ 最新
@@ -198,6 +200,20 @@ export function ChatPage({ store, sessionId }: {
         <div className="strip strip--warn">正在上传 {Math.round(uploadPct * 100)}%…</div>
       )}
 
+      {picker === 'files' && (
+        <div className="picker" role="region" aria-label="上传附件">
+          <div className="picker__title">上传附件</div>
+          <button type="button" className="picker__item" onClick={() => { setPicker('none'); albumRef.current?.click(); }}>
+            🖼 相册 · 选择图片
+          </button>
+          <button type="button" className="picker__item" onClick={() => { setPicker('none'); cameraRef.current?.click(); }}>
+            📷 相机 · 拍照
+          </button>
+          <button type="button" className="picker__item" onClick={() => { setPicker('none'); fileRef.current?.click(); }}>
+            📁 文件 · 任意类型
+          </button>
+        </div>
+      )}
       {picker === 'tasks' && api && (
         <TasksPanel api={api} sessionId={sessionId} onClose={() => setPicker('none')} />
       )}
@@ -262,10 +278,29 @@ export function ChatPage({ store, sessionId }: {
               type="button"
               className="chip"
               disabled={uploadPct !== null}
-              onClick={() => fileRef.current?.click()}
+              onClick={() => setPicker(picker === 'files' ? 'none' : 'files')}
             >
               {uploadPct !== null ? `上传 ${Math.round(uploadPct * 100)}%` : '＋ 附件'}
             </button>
+            {/* 三个入口分别调起相册/相机/文件(accept+capture 由移动端浏览器分派);桌面端均为文件选择器 */}
+            <input
+              ref={albumRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              aria-label="从相册选择图片"
+              onChange={(e) => void handleFiles(e.target.files)}
+            />
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              aria-label="拍照上传"
+              onChange={(e) => void handleFiles(e.target.files)}
+            />
             <input
               ref={fileRef}
               type="file"
