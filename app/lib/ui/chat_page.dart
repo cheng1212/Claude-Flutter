@@ -121,10 +121,15 @@ class _ChatPageState extends State<ChatPage> {
 
   void _onApp() {
     if (!mounted) return;
-    // 计划粘性缓存:新一轮 TodoWrite 会覆盖
+    // 计划粘性缓存:新一轮计划(或 TaskList 快照)会覆盖。derivePlanSteps 返回 null
+    // 有两种情形——整段历史都没计划(粘性缓存留给翻页抖动),或本轮计划被清空;
+    // 后者要靠「有工具行但推不出计划」区分,避免旧计划一直粘在面板上。
     final derived = derivePlanSteps(chat.rows);
-    if (derived != null) _stickyPlan = derived;
-    if (chat.rows.isEmpty && derived == null && app.historyLoading) _stickyPlan = null;
+    if (derived != null) {
+      _stickyPlan = derived;
+    } else if (chat.rows.isEmpty && app.historyLoading) {
+      _stickyPlan = null;
+    }
     _queueScrollCompensation();
     setState(() {});
   }

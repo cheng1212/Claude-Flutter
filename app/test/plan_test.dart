@@ -53,6 +53,52 @@ void main() {
     expect(corrected.single.completed, isTrue);
   });
 
+  test('换批清空:上一批全 completed 后再 TaskCreate → 只显示新一批', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '古早任务A'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '古早任务B'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+      _tool('TaskUpdate', {'taskId': '2', 'status': 'completed'}),
+      // 新一轮计划开始
+      _tool('TaskCreate', {'subject': '新任务一'}, result: '{"id":"10"}'),
+      _tool('TaskCreate', {'subject': '新任务二'}, result: '{"id":"11"}'),
+    ];
+    final steps = derivePlanSteps(rows)!;
+    expect(steps.map((s) => s.content).toList(), ['新任务一', '新任务二'],
+        reason: '上一批已完成 → 不再显示古早计划,只留当前这批');
+    expect(steps.every((s) => !s.completed), isTrue);
+  });
+
+  test('同批追加:还有没做完的,TaskCreate 不触发清空', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '任务一'}, result: '{"id":"1"}'),
+      _tool('TaskCreate', {'subject': '任务二'}, result: '{"id":"2"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+      _tool('TaskCreate', {'subject': '任务三'}, result: '{"id":"3"}'), // 任务二还没做完 → 同批追加
+    ];
+    final steps = derivePlanSteps(rows)!;
+    expect(steps.map((s) => s.content).toList(), ['任务一', '任务二', '任务三']);
+  });
+
+  test('滚动计划:单条完成后再补建一条,不清空(不是换批)', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '第一步'}, result: '{"id":"1"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+      _tool('TaskCreate', {'subject': '第二步'}, result: '{"id":"2"}'), // 只有一条且已完成:滚动计划
+    ];
+    final steps = derivePlanSteps(rows)!;
+    expect(steps.map((s) => s.content).toList(), ['第一步', '第二步']);
+  });
+
+  test('TaskList 空快照 → 清空计划(面板收起)', () {
+    final rows = <ChatRow>[
+      _tool('TaskCreate', {'subject': '做完了的事'}, result: '{"id":"1"}'),
+      _tool('TaskUpdate', {'taskId': '1', 'status': 'completed'}),
+      _tool('TaskList', {}, result: '{"tasks":[]}'),
+    ];
+    expect(derivePlanSteps(rows), isNull, reason: '快照为空 = 当前没有计划,旧的不再显示');
+  });
+
   test('没有任务工具 → 退回 TodoWrite 快照;两者皆无 → null', () {
     final todo = <ChatRow>[
       _tool('TodoWrite', {
