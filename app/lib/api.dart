@@ -205,6 +205,12 @@ class ZApi {
     return res is Map ? res.cast<String, dynamic>() : null;
   }
 
+  /// 让服务器自我重启(server 拉起新实例后退出,约 5~10 秒恢复)。
+  /// server 先回 202 再动手,所以本调用能正常拿到响应;之后 WS 会断,靠自动重连恢复。
+  Future<void> restartServer() async {
+    await _call('POST', '/api/server/restart', const <String, dynamic>{});
+  }
+
   /// 历史消息:{messages:[…], total};行内 meta 是完整出站事件(含 seq)。
   /// beforeSeq 给"比该 seq 更旧的一页"——分页期间新消息插入(更高 seq)时,
   /// offset 窗口会整体上移丢一截;按 seq 锚点翻页则免疫漂移。

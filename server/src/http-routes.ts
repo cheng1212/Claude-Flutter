@@ -29,7 +29,15 @@ export function sanitizeFileName(raw: string): string {
   return name;
 }
 
-export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string }): void {
+export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesPath: string; onSessionDeleted?: (sessionId: string) => void; onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void; isRunning?: (sessionId: string) => boolean; isAwaiting?: (sessionId: string) => boolean; backgrounds?: (sessionId: string) => unknown[]; projectsRoot?: string; onRestart?: () => void }): void {
+  // 自我重启:先回 202(客户端拿得到响应),再由 index 侧延迟拉起新实例并退出。
+  // 重启会掐断本进程所有 WS/在跑回合 —— app 端会看到连接断几秒后自动重连。
+  app.post('/api/server/restart', async (_req, reply) => {
+    if (!deps.onRestart) return reply.code(501).send({ error: '本进程不支持自我重启(非标准启动方式)' });
+    reply.code(202).send({ ok: true, message: '服务器正在重启,约 5-10 秒后自动恢复' });
+    deps.onRestart();
+  });
+
   // 项目文件夹:总目录下的子文件夹 = 项目;新建会话/移动会话从这里选,也可现场新建
   app.get('/api/projects', async () => {
     const root = deps.projectsRoot ?? '';

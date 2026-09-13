@@ -43,6 +43,8 @@ class _SessionsPageState extends State<SessionsPage> {
   String _sort = _kSortUpdated;
   bool _reloadTick = false; // 刷新按钮转圈
   bool _refreshing = false; // 刷新进行中(防连点,状态条据此显示)
+  int _restartPhase = 0; // 重启回执:0=无 1=等断开 2=等重连
+  Timer? _restartTimer; // 重启回执兜底超时
   bool _picking = false; // 批量管理模式
   final Set<String> _picked = <String>{};
 
@@ -73,6 +75,7 @@ class _SessionsPageState extends State<SessionsPage> {
   void dispose() {
     app.removeListener(_onApp);
     _tick?.cancel();
+    _restartTimer?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -93,7 +96,61 @@ class _SessionsPageState extends State<SessionsPage> {
   }
 
   void _onApp() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 重启回执走两段状态机:先等连接断(证明 server 真的在重启),再等重连成功。
+    // 只看"是否已连接"会在请求刚发出、WS 还没断的那一帧就误报"已恢复"。
+    if (_restartPhase == 1 && !app.linked) {
+      _restartPhase = 2;
+    } else if (_restartPhase == 2 && app.linked) {
+      _restartPhase = 0;
+      _restartTimer?.cancel();
+      showToast(context, '服务器已重启,连接恢复正常');
+    }
+    setState(() {});
+  }
+
+  /// 重启服务器:确认 → 调接口 → 等自动重连 → 回执。失败(如旧版 server 无此接口)如实报错。
+  Future<void> _restartServer() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: BorderSide(color: ZT.edge, width: 1.4),
+        ),
+        title: Text('重启服务器', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: ZT.ink)),
+        content: Text(
+          '服务器会中断约 5~10 秒(正在回复的回合会被打断),之后自动恢复。\n\n确定现在重启?',
+          style: TextStyle(fontSize: 13.5, height: 1.5, color: ZT.inkSoft),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('取消', style: TextStyle(fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('重启', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.rose)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await app.restartServer();
+    } on Object catch (e) {
+      if (mounted) showToast(context, '重启请求没发出去:$e');
+      return;
+    }
+    if (!mounted) return;
+    _restartPhase = 1;
+    showToast(context, '服务器重启中,连上后会自动恢复…');
+    // 兜底:若 30 秒内没走完两段(请求没生效/网络异常),清状态免得下次误报
+    _restartTimer?.cancel();
+    _restartTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && _restartPhase != 0) setState(() => _restartPhase = 0);
+    });
   }
 
   // ---------------------------------------------------------------- actions
@@ -617,6 +674,16 @@ class _SessionsPageState extends State<SessionsPage> {
               onTap: () {
                 Navigator.pop(context);
                 _openSettings();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.restart_alt_rounded, size: 20, color: ZT.rose),
+              title: const Text('重启服务器', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              subtitle: Text('服务器卡住/改了配置时用,约 10 秒恢复',
+                  style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+              onTap: () {
+                Navigator.pop(context);
+                _restartServer();
               },
             ),
           ]),

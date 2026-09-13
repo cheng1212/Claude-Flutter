@@ -14,6 +14,8 @@ export type AppOptions = {
   onSessionDeleted?: (sessionId: string) => void;
   /** PATCH 落库成功后回调(仅带本次 PATCH 的字段):运行中的 runtime 现场热设模式/模型。 */
   onSessionPatched?: (sessionId: string, patch: { model?: string; permissionMode?: string }) => void;
+  /** app 点「重启服务器」:拉起新实例并退出(index 侧实现,不传则接口回 501) */
+  onRestart?: () => void;
   /** 会话是否在跑(注入 registry.isRunning):列表接口据此标"运行中"徽章 */
   isRunning?: (sessionId: string) => boolean;
   /** 后台任务列表(注入 BackgroundRegistry.list):/api/sessions/:id/backgrounds */
@@ -88,7 +90,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     });
   }
   if (opts.db && opts.routesPath) {
-    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot });
+    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot, onRestart: opts.onRestart });
   }
   if (opts.webDir) {
     // SPA 静态托管:非 /api 的 GET → webDir 下文件,未命中回 index.html(前端路由刷新不 404)。
