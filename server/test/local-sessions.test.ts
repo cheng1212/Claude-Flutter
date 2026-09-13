@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { openDb, listSessions, listMessages, getSessionByProviderSessionId, deleteSession } from '../src/db.js';
-import { importLocalSessions } from '../src/local-sessions.js';
+import { importLocalSessions, isTranscriptActive } from '../src/local-sessions.js';
 
 let tempDir: string;
 
@@ -187,6 +187,36 @@ describe('reloadSessionTranscript · 完整重载', () => {
     } finally {
       delete process.env.ZCODE_CLAUDE_HOME;
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('isTranscriptActive · 转录活跃度(本地会话"是否在跑"的判据)', () => {
+  it('刚写过 → true;久未更新 → false;查不到文件/无 providerId → false', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-active-'));
+    try {
+      const dir = path.join(root, 'proj');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'sid-1.jsonl');
+      fs.writeFileSync(file, '{}\n');
+
+      // 刚写过:电脑端正在生成
+      expect(isTranscriptActive('sid-1', { projectsDir: root })).toBe(true);
+
+      // 10 分钟没动:认为已停(默认窗口 120s)
+      const old = (Date.now() - 600_000) / 1000;
+      fs.utimesSync(file, old, old);
+      expect(isTranscriptActive('sid-1', { projectsDir: root })).toBe(false);
+
+      // 边界:窗口内算活跃(now 传固定值,避免用例间抖动)
+      fs.utimesSync(file, (Date.now() - 60_000) / 1000, (Date.now() - 60_000) / 1000);
+      expect(isTranscriptActive('sid-1', { projectsDir: root })).toBe(true);
+
+      expect(isTranscriptActive('不存在的会话', { projectsDir: root })).toBe(false);
+      expect(isTranscriptActive(null, { projectsDir: root })).toBe(false);
+      expect(isTranscriptActive(undefined, { projectsDir: root })).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

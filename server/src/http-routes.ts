@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { Db } from './db.js';
 import { createSession, listSessions, getSession, updateSession, deleteSession, listMessages, sessionUsageSummary, forkSession, buildSessionExport, listCrons, markCronDeleted, usageStats, getCron, setCronStatus, resetCron, listCronRuns, recordCronRun } from './db.js';
-import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts } from './local-sessions.js';
+import { importLocalSessions, reloadSessionTranscript, listSubagents, readSubagentTranscript, subagentCounts, isTranscriptActive } from './local-sessions.js';
 import { readOutputTail } from './backgrounds.js';
 import { listProjects, createProject, renameProject, renameProjectSessions, deleteProjectDir, projectSessionIds } from './projects.js';
 import { listModels, listModelGroups, loadRoutes } from './routes.js';
@@ -95,7 +95,12 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
     return listSessions(deps.db).map((row) => ({
       ...row,
       subagentCount: counts.get(String(row.provider_session_id ?? '')) ?? 0,
-      isRunning: deps.isRunning?.(row.id) ?? false,
+      // 「在跑」有两个来源,缺一不可:
+      //  ①本进程 runtime(经 zcode 发的回合)
+      //  ②转录最近还在写 = 电脑端 Claude Code 直接在跑这个 local 会话
+      //     (这类回合不经 zcode,runs 表停在上一轮的 success,只看 ① 会显示"已完成")
+      isRunning: (deps.isRunning?.(row.id) ?? false)
+        || isTranscriptActive(row.provider_session_id),
       awaitingApproval: deps.isAwaiting?.(row.id) ?? false,
     }));
   });
