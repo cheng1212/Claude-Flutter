@@ -161,8 +161,8 @@ class _SessionsPageState extends State<SessionsPage> {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChatPage(app: app, sessionId: id),
     ));
-    app.refreshSessions();
-    _loadCrons();
+    unawaited(app.refreshSessions());
+    unawaited(_loadCrons());
   }
 
   /// 手动刷新:即时出「刷新中」状态条 + 按钮转圈,完成后弹结果(条数/失败原因)。
@@ -202,7 +202,7 @@ class _SessionsPageState extends State<SessionsPage> {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChatPage(app: app, sessionId: id),
     ));
-    app.refreshSessions();
+    unawaited(app.refreshSessions());
   }
 
   Future<void> _rename(Map<String, dynamic> session) async {
