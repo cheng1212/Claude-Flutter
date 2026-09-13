@@ -16,6 +16,11 @@ const MODES = [
   { value: 'plan', label: '计划模式' },
 ];
 
+// ── 滚动稳定性阈值(对齐 zremote composer_logic 纯函数常量)──
+const FOLLOW_EXIT_PX = 180;   // 离底超过它 → 锁存「在看历史」(AnchorThresholds.exitPx)
+const FOLLOW_ENTER_PX = 100;  // 距底小于它 → 回到贴底(AnchorThresholds.enterPx)
+const FOLLOW_RELEASE_PX = 40; // 锁存解锁阈值,与 enter 制造死区防临界横跳(FollowLock.releasePx)
+
 /** 聊天页:历史 + 流式 + 权限 + 发送。正序渲染 + 贴底跟随(阈值 80px,对齐 Flutter),进入会话/历史就绪强制钉到最新。 */
 export function ChatPage({ store, sessionId }: {
   store: ZStore; sessionId: string;
@@ -35,10 +40,18 @@ export function ChatPage({ store, sessionId }: {
   const albumRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const stickRef = useRef(true);
   const pendingInitRef = useRef(false);
   const prevHeightRef = useRef(0);
   const loadLockRef = useRef(false);
+  // ── 滚动稳定性(对齐 zremote chat_page/composer_logic 的纯函数架构)──
+  // atBottom:双阈值滞回(enter 100/exit 180)——流式期间内容每 tick 长高,
+  // 单阈值会让贴底判定在临界带反复横跳(zremote AnchorThresholds.resolve 同源)。
+  const atBottomRef = useRef(true);
+  // followLocked:「在看历史」意图锁存——主动滚离(>180)上锁,滚回 ≤40(releasePx
+  // 死区设计)解锁;锁存期间内容再长也不拽人。只靠位置判定挡不住流式追加。
+  const followLockedRef = useRef(false);
+  const prevRowsRef = useRef(0);
+  const [unread, setUnread] = useState(0); // 锁存期间错过的新消息数(回底按钮徽标)
 
   // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
   const api = useMemo(() => {
@@ -59,13 +72,24 @@ export function ChatPage({ store, sessionId }: {
   const onScroll = () => {
     const el = listRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80; // 贴底阈值,对齐 Flutter
-    stickRef.current = atBottom;
-    setShowJump(!atBottom); // 同值 setState 会被 React 去重,scroll 高频触发无渲染风暴
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    // 双阈值滞回(AnchorThresholds.resolve web 版):流式期间内容每 tick 长高,
+    // 单阈值会让贴底判定在临界带反复横跳。
+    atBottomRef.current = maxScroll <= 0
+      ? true
+      : (atBottomRef.current ? gap <= FOLLOW_EXIT_PX : gap <= FOLLOW_ENTER_PX);
+    // FollowLock(对齐 zremote):主动滚离(>exit)上锁,锁存中滚回 ≤release(死区)解锁。
+    if (!followLockedRef.current && maxScroll > 0 && gap > FOLLOW_EXIT_PX) followLockedRef.current = true;
+    else if (followLockedRef.current && gap <= FOLLOW_RELEASE_PX) {
+      followLockedRef.current = false;
+      setUnread(0); // 回到最新端:徽标清零
+    }
+    const jump = !atBottomRef.current || (followLockedRef.current && unread > 0);
+    setShowJump(jump); // 同值 setState 会被 React 去重,scroll 高频触发无渲染风暴
     // 滚到顶自动加载更早(CloudCLI 同款:scrollTop<100 触发;lock 防重入,完成 400ms 后解锁)
     if (el.scrollTop < 100 && chat.hasMoreOlder && !loadingOlder && !loadLockRef.current) {
       loadLockRef.current = true;
-      stickRef.current = false;
       void store.getState().loadOlder().finally(() => { setTimeout(() => { loadLockRef.current = false; }, 400); });
     }
   };
@@ -79,7 +103,9 @@ export function ChatPage({ store, sessionId }: {
     const el = listRef.current;
     if (!el) return;
     pendingInitRef.current = true;
-    stickRef.current = true;
+    atBottomRef.current = true;
+    followLockedRef.current = false;
+    setUnread(0);
     let frame = 0;
     let lastHeight = 0;
     let stable = 0;
@@ -111,9 +137,20 @@ export function ChatPage({ store, sessionId }: {
     }
   }, [loadingOlder]);
 
-  // 新行与流式增长:仅在贴底时跟随,用户上翻看历史就不打扰(初始钉底期间让位)。
+  // 新行与流式增长:跟随闸门 = atBottom(滞回) && 未锁存(对齐 zremote「每 tick 重判」);
+  // 锁存期间错过的新行进未读徽标,回底清零。初始钉底期间让位。
   useEffect(() => {
-    if (!pendingInitRef.current && stickRef.current) scrollToEnd();
+    if (pendingInitRef.current) { prevRowsRef.current = chat.rows.length; return; }
+    const grew = chat.rows.length > prevRowsRef.current;
+    if (followLockedRef.current) {
+      if (grew) {
+        setUnread((u) => u + (chat.rows.length - prevRowsRef.current));
+        setShowJump(true); // 锁存期间来新消息:点亮回底按钮
+      }
+    } else if (atBottomRef.current) {
+      scrollToEnd(); // 贴底跟随:新行与流式增高都跟
+    }
+    prevRowsRef.current = chat.rows.length;
   }, [chat.rows.length, chat.streamingText, chat.streamingThinking]);
 
   const session = sessions.find((s) => s.id === sessionId);
@@ -161,14 +198,19 @@ export function ChatPage({ store, sessionId }: {
 
   return (
     <div className="chat">
-      <div className="chat-list" ref={listRef} onScroll={onScroll}>
+      <div
+        className="chat-list"
+        ref={listRef}
+        onScroll={onScroll}
+        onWheel={(e) => { if (e.deltaY < 0) followLockedRef.current = true; }}
+      >
         <div className="chat-list__inner">
           {chat.hasMoreOlder && (
             <button
               type="button"
               className="load-older"
               disabled={loadingOlder}
-              onClick={() => { stickRef.current = false; void store.getState().loadOlder(); }}
+              onClick={() => { followLockedRef.current = true; void store.getState().loadOlder(); }}
             >
               {loadingOlder ? '加载中…' : '加载更早的消息'}
             </button>
@@ -191,12 +233,14 @@ export function ChatPage({ store, sessionId }: {
         aria-label="滑到最新消息"
         onClick={() => {
           pendingInitRef.current = false;
-          stickRef.current = true;
+          atBottomRef.current = true;
+          followLockedRef.current = false;
+          setUnread(0);
           setShowJump(false);
           scrollToEnd(); // 不用 smooth:程序化平滑滚动在部分 Chromium 内嵌环境(IAB/WebView)静默失效
         }}
       >
-        ↓ 最新
+        ↓ 最新{unread > 0 ? ` ·${unread}` : ''}
       </button>
       )}
 
