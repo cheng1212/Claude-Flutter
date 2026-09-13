@@ -95,4 +95,13 @@ describe('SessionsPage', () => {
     // 初始 state idle(未 login)
     expect(screen.getByText(/未连接/)).toBeTruthy();
   });
+
+  test('logout button returns to login phase', async () => {
+    const { store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    await store.getState().refreshSessions();
+    render(<SessionsPage store={store} onOpen={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: '登出' }));
+    expect(store.getState().phase).toBe('login');
+  });
 });

@@ -98,6 +98,9 @@ export function SessionsPage({ store, onOpen, onUsage }: {
           >
             {manage ? '完成' : '管理'}
           </button>
+          <button type="button" className="btn-ghost" onClick={() => store.getState().logout()}>
+            登出
+          </button>
         </div>
       </header>
 

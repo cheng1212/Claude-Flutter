@@ -76,9 +76,11 @@ export interface ZState {
   historyLoading: boolean;
   error: string | null;
   wsState: WsState;
+  /** 登录页一次性提示(如「登录已失效,请重新登录」),登录成功即清。 */
+  notice: string | null;
 
   login(baseUrl: string, token: string): Promise<void>;
-  logout(): void;
+  logout(reason?: string): void;
   refreshSessions(): Promise<void>;
   loadProjects(): Promise<void>;
   openSession(id: string): Promise<void>;
@@ -93,6 +95,11 @@ export interface ZState {
 }
 
 export type ZStore = UseBoundStore<StoreApi<ZState>>;
+
+/** 服务器 401 = 令牌错误/失效:清凭据弹回登录页,不让用户停在「处处未授权」的死界面里。 */
+function isAuthError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { status?: unknown }).status === 401;
+}
 
 /** 消息行 meta → 出站事件;行号 row.seq 是权威锚(覆写 meta 里的旧进程 seq)。 */
 function rowEvent(row: MessageRow): Record<string, unknown> | null {
@@ -136,6 +143,7 @@ export function createZStore(deps: {
       try {
         set({ models: await api.models(), modelGroups: await api.modelGroups() });
       } catch (e) {
+        if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
         set({ error: String(e instanceof Error ? e.message : e) });
       }
     }
@@ -144,6 +152,7 @@ export function createZStore(deps: {
       try {
         set({ sessions: await api.sessions() });
       } catch (e) {
+        if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
         // 后台静默刷新失败不弹错误条:一次 REST 抖动不值得打扰
         if (!silent) set({ error: String(e instanceof Error ? e.message : e) });
       }
@@ -204,19 +213,33 @@ export function createZStore(deps: {
       historyLoading: false,
       error: null,
       wsState: 'idle',
+      notice: null,
 
       async login(baseUrl, token) {
+        // 先拿 token 真刀真枪问一次服务器:错了就留在登录页报错,
+        // 不再「假进主界面 → 处处未授权 → 退不出去」。
+        const probe = deps.makeApi(baseUrl, token);
+        try {
+          await probe.models();
+        } catch (e) {
+          const err = e as { status?: number; message?: string };
+          if (isAuthError(e)) throw new Error('访问令牌不正确:请核对后重试');
+          if (typeof err?.message === 'string' && err.message.startsWith('网络错误')) {
+            throw new Error(`连不上服务器:${err.message}`);
+          }
+          throw new Error(`服务器没有通过校验:${err?.message ?? String(e)}`);
+        }
         saveCreds({ baseUrl, token });
-        api = deps.makeApi(baseUrl, token);
+        api = probe;
         socket = deps.makeSocket(wsUriOf(baseUrl), token);
         socket.onEvent(route);
         socket.onStateChange(() => set({ wsState: socket.state }));
         wireWake(true);
-        set({ phase: 'ready', baseUrl, wsState: socket.state });
+        set({ phase: 'ready', baseUrl, wsState: socket.state, notice: null });
         await bootstrap();
       },
 
-      logout() {
+      logout(reason?: string) {
         saveCreds(null);
         if (retryTimer) clearTimeout(retryTimer);
         if (dirtyTimer) clearTimeout(dirtyTimer);
@@ -225,6 +248,7 @@ export function createZStore(deps: {
         set({
           phase: 'login', baseUrl: '', models: [], modelGroups: [], sessions: [],
           currentSessionId: null, chat: emptyChat(), historyLoading: false, error: null, wsState: 'idle',
+          notice: reason ?? null,
         });
       },
 
@@ -259,6 +283,7 @@ export function createZStore(deps: {
           socket.seedLastSeq(id, maxSeq > chat.lastSeq ? maxSeq : chat.lastSeq);
           socket.subscribeSession(id);
         } catch (e) {
+          if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
           set({ historyLoading: false, error: String(e instanceof Error ? e.message : e) });
         }
       },
@@ -335,8 +360,12 @@ export function createDefaultStore(): ZStore {
 export async function autoLogin(store: ZStore): Promise<boolean> {
   const creds = loadCreds();
   if (!creds) return false;
-  await store.getState().login(creds.baseUrl, creds.token);
-  return true;
+  try {
+    await store.getState().login(creds.baseUrl, creds.token);
+    return true;
+  } catch {
+    return false; // 凭据缺失/失效:留在登录页
+  }
 }
 
 /** 登录页默认值:家里局域网的 server 地址与当前令牌,变了用户自己改。 */

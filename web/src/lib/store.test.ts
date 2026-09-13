@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createZStore, wsUriOf, type ApiLike, type SocketLike } from './store';
+import { createZStore, loadCreds, wsUriOf, type ApiLike, type SocketLike } from './store';
 import { emptyChat } from './chatState';
 
 function makeFakeApi(): ApiLike & { calls: Record<string, number> } {
@@ -85,8 +85,50 @@ describe('createZStore', () => {
     expect(store.getState().phase).toBe('ready');
     expect(store.getState().models).toEqual(['default']);
     expect(store.getState().sessions).toHaveLength(2);
-    expect(api.calls.models).toBe(1);
+    expect(api.calls.models).toBe(2); // 1 次=登录探针校验 token,1 次=loadModels
     expect(api.calls.sessions).toBe(1);
+  });
+
+  test('wrong token (401): stays on login, creds not saved, friendly error', async () => {
+    const { api, store } = setup();
+    api.models = vi.fn(async () => {
+      throw Object.assign(new Error('Unauthorized'), { status: 401 });
+    });
+    await expect(store.getState().login('http://x:5190', 'bad'))
+      .rejects.toThrow('访问令牌不正确');
+    expect(store.getState().phase).toBe('login');
+    expect(loadCreds()).toBeNull();
+  });
+
+  test('server unreachable: stays on login with connection error', async () => {
+    const { api, store } = setup();
+    api.models = vi.fn(async () => { throw new Error('网络错误: fetch failed'); });
+    await expect(store.getState().login('http://x:5190', 'tk'))
+      .rejects.toThrow('连不上服务器');
+    expect(store.getState().phase).toBe('login');
+    expect(loadCreds()).toBeNull();
+  });
+
+  test('in-session 401 auto-logs out back to login with notice', async () => {
+    const { api, store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    expect(store.getState().phase).toBe('ready');
+    api.sessions = vi.fn(async () => {
+      throw Object.assign(new Error('Unauthorized'), { status: 401 });
+    });
+    await store.getState().refreshSessions();
+    expect(store.getState().phase).toBe('login');
+    expect(loadCreds()).toBeNull();
+    expect(store.getState().notice).toContain('登录已失效');
+  });
+
+  test('manual logout returns to clean login state (notice cleared)', async () => {
+    const { store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    store.getState().logout();
+    expect(store.getState().phase).toBe('login');
+    expect(loadCreds()).toBeNull();
+    expect(store.getState().notice).toBeNull();
   });
 
   test('connect failure sets error and retries until success', async () => {

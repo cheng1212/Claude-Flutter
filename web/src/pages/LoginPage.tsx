@@ -5,17 +5,22 @@ import { DEFAULT_BASE_URL, DEFAULT_TOKEN } from '../lib/store';
  * 登录页:填服务器地址 + 访问令牌。地址缺 scheme 自动补 http://。
  * 非受控输入:提交时直接读 DOM 值——浏览器自动填充/IME 不触发 React onChange
  * 时受控方案会让按钮永久禁用("点不了"),这里按钮永远可点,所见即所提交。
+ * onLogin 是异步的(内部先向服务器验 token):失败把错误显示在本页,不再假进主界面。
  */
-export function LoginPage({ initial, onLogin }: {
+export function LoginPage({ initial, notice, onLogin }: {
   initial?: { baseUrl: string; token: string };
-  onLogin: (baseUrl: string, token: string) => void;
+  /** 外层一次性提示(如自动登出后的「登录已失效」)。 */
+  notice?: string;
+  onLogin: (baseUrl: string, token: string) => Promise<void> | void;
 }) {
   const addrRef = useRef<HTMLInputElement>(null);
   const tokRef = useRef<HTMLInputElement>(null);
-  const [hint, setHint] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(notice ?? null);
+  const [busy, setBusy] = useState(false);
 
-  const go = (e: React.FormEvent) => {
+  const go = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     const b = (addrRef.current?.value ?? '').trim();
     const t = (tokRef.current?.value ?? '').trim();
     if (!b || !t) {
@@ -23,7 +28,14 @@ export function LoginPage({ initial, onLogin }: {
       return;
     }
     setHint(null);
-    onLogin(/^[a-z][a-z0-9+.-]*:\/\//i.test(b) ? b : `http://${b}`, t);
+    setBusy(true);
+    try {
+      await onLogin(/^[a-z][a-z0-9+.-]*:\/\//i.test(b) ? b : `http://${b}`, t);
+    } catch (err) {
+      setHint(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -58,8 +70,8 @@ export function LoginPage({ initial, onLogin }: {
           />
         </label>
         {hint && <div className="login__hint" role="alert">{hint}</div>}
-        <button type="submit" className="btn-gold btn-gold--wide">
-          连接
+        <button type="submit" className="btn-gold btn-gold--wide" disabled={busy}>
+          {busy ? '连接中…' : '连接'}
         </button>
       </form>
     </div>
