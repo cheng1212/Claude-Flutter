@@ -42,6 +42,7 @@ class _SessionsPageState extends State<SessionsPage> {
   String? _project; // 项目 chip 选中时生效
   String _sort = _kSortUpdated;
   bool _reloadTick = false; // 刷新按钮转圈
+  bool _refreshing = false; // 刷新进行中(防连点,状态条据此显示)
   bool _picking = false; // 批量管理模式
   final Set<String> _picked = <String>{};
 
@@ -104,6 +105,33 @@ class _SessionsPageState extends State<SessionsPage> {
     ));
     app.refreshSessions();
     _loadCrons();
+  }
+
+  /// 手动刷新:即时出「刷新中」状态条 + 按钮转圈,完成后弹结果(条数/失败原因)。
+  /// 加最短 400ms 转圈:本地网络秒回时,转圈一闪而过反而像"没反应"。
+  Future<void> _doRefresh() async {
+    if (_refreshing) return;
+    setState(() {
+      _refreshing = true;
+      _reloadTick = true;
+    });
+    final started = DateTime.now();
+    final r = await app.refreshSessions();
+    await _loadCrons();
+    final elapsed = DateTime.now().difference(started);
+    const minSpin = Duration(milliseconds: 400);
+    if (elapsed < minSpin) {
+      await Future<void>.delayed(minSpin - elapsed);
+    }
+    if (!mounted) return;
+    setState(() {
+      _refreshing = false;
+      _reloadTick = false;
+    });
+    showToast(
+      context,
+      r.ok ? '已刷新 · ${r.count} 个会话' : '刷新失败:${r.error ?? '未知原因'}',
+    );
   }
 
   Future<void> _newSession() async {
@@ -360,12 +388,7 @@ class _SessionsPageState extends State<SessionsPage> {
           icon: _reloadTick
               ? const SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.refresh_rounded, size: 21),
-          onPressed: () async {
-            setState(() => _reloadTick = true);
-            await app.refreshSessions();
-            await _loadCrons();
-            if (mounted) setState(() => _reloadTick = false);
-          },
+          onPressed: _refreshing ? null : _doRefresh,
         ),
         IconButton(
           tooltip: '设置',
@@ -611,6 +634,7 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
       body: Column(children: [
         if (!app.linked) _linkStrip(),
+        if (_refreshing) _refreshStrip(),
         // 批量管理模式:搜索/筛选让位给批量操作条(不再额外包 ZDotBg,AppShell 已有)
         if (_picking) _batchBar() else ...[
         Padding(
@@ -676,7 +700,12 @@ class _SessionsPageState extends State<SessionsPage> {
           child: RefreshIndicator(
             color: ZT.primary,
             backgroundColor: ZT.surface,
-            onRefresh: app.refreshSessions,
+            onRefresh: () async {
+              final r = await app.refreshSessions();
+              if (!mounted) return;
+              // ignore: use_build_context_synchronously —— 上一行已按 State.mounted 守卫
+              showToast(context, r.ok ? '已刷新 · ${r.count} 个会话' : '刷新失败:${r.error ?? '未知原因'}');
+            },
             child: sessions.isEmpty
                 ? (app.sessionsLoaded
                     ? ListView(children: [
@@ -1060,6 +1089,22 @@ class _SessionsPageState extends State<SessionsPage> {
         _filter = SessionFilter.all;
       });
     }
+  }
+
+  /// 「刷新中」状态条:本地网络秒回时,只靠按钮上那圈细转圈用户根本看不到
+  /// (反馈太差),给一条绿色文字条,结束自动消失。
+  Widget _refreshStrip() {
+    return Container(
+      width: double.infinity,
+      color: ZT.aqua.withValues(alpha: 0.18),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: Row(children: [
+        SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.8, color: ZT.aqua)),
+        const SizedBox(width: 8),
+        Text('正在刷新会话列表…',
+            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: ZT.ink)),
+      ]),
+    );
   }
 
   Widget _linkStrip() {
