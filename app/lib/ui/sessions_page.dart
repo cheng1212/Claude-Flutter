@@ -1139,7 +1139,6 @@ class _SessionsPageState extends State<SessionsPage> {
     final project = '${s['project'] ?? ''}';
     final tags = tagsOf(s);
     final cronIso = _cronNext['${s['id']}'];
-    final subagents = (s['subagentCount'] as num?)?.toInt() ?? 0;
     final totalTokens = (fieldOf(s, ['totalTokens', 'total_tokens']) as num?)?.toInt() ?? 0;
 
     return HardCard(
@@ -1192,9 +1191,9 @@ class _SessionsPageState extends State<SessionsPage> {
                   child: _pill('⏰ ${_cronCountdown(cronIso)}', 'cron'),
                 ),
               if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
-              if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
-              if (model.isNotEmpty) _pill(model, 'model', maxWidth: 120),
+              // 「子代理 N」标签撤掉,位置让给 Token 总量(用户要求:卡片上更关心烧了多少)
               if (totalTokens > 0) _pill('⚡ ${fmtTokens(totalTokens)}', 'model', maxWidth: 96),
+              if (model.isNotEmpty) _pill(model, 'model', maxWidth: 120),
               if (project.isNotEmpty) _pill(project, 'project', maxWidth: 96),
               for (final t in tags.take(2)) _pill(t, 'tag', maxWidth: 88),
             ]),

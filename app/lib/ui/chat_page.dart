@@ -74,8 +74,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
   bool _queueExpanded = false; // 排队面板折叠/展开(折叠只显示第一条)
-  int _totalTokens = 0; // 当前会话累计消耗 Token(输入+输出+缓存读写),AppBar 显示
-  bool _prevRunning = false; // 上一帧 running:回落瞬间刷新 Token 总量
 
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
   Future<void> _openTasks() async {
@@ -108,7 +106,6 @@ class _ChatPageState extends State<ChatPage> {
     app.crons(sessionId: widget.sessionId).then((list) {
       if (mounted && _cronsOn != list.isNotEmpty) setState(() => _cronsOn = list.isNotEmpty);
     });
-    _loadTotalTokens();
   }
 
   @override
@@ -128,26 +125,8 @@ class _ChatPageState extends State<ChatPage> {
     final derived = derivePlanSteps(chat.rows);
     if (derived != null) _stickyPlan = derived;
     if (chat.rows.isEmpty && derived == null && app.historyLoading) _stickyPlan = null;
-    final wasRunning = _prevRunning;
-    _prevRunning = chat.running;
-    if (wasRunning && !chat.running) _loadTotalTokens(); // 一轮落定,累计 Token 变了
     _queueScrollCompensation();
     setState(() {});
-  }
-
-  /// AppBar 的会话累计 Token(输入+输出+缓存读写);拉不到保持 0 不显示。
-  Future<void> _loadTotalTokens() async {
-    final u = await app.sessionUsage(widget.sessionId);
-    if (!mounted) return;
-    final totals = u?['totals'];
-    var n = 0;
-    if (totals is Map) {
-      n = (totals['inputTokens'] as num? ?? 0).toInt() +
-          (totals['outputTokens'] as num? ?? 0).toInt() +
-          (totals['cacheReadInputTokens'] as num? ?? 0).toInt() +
-          (totals['cacheCreationInputTokens'] as num? ?? 0).toInt();
-    }
-    setState(() => _totalTokens = n);
   }
 
   /// 滚离底部看历史期间的一次性锁位:回合进行中每帧新增内容(行追加/面板变化)
@@ -804,14 +783,7 @@ class _ChatPageState extends State<ChatPage> {
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.2)),
           ),
-          if (_totalTokens > 0) ...[
-            Icon(Icons.electric_bolt_rounded, size: 11, color: ZT.inkFaint),
-            const SizedBox(width: 2),
-            Text(_fmtTokens(_totalTokens),
-                style: TextStyle(
-                    fontSize: 10.5, fontWeight: FontWeight.w800, color: ZT.inkFaint)),
-            const SizedBox(width: 7),
-          ],
+          // Token 总量只在会话列表卡片上显示(用户要求聊天页不显示,避免标题拥挤)
           const SizedBox(width: 8),
           StatusChip(phase: _phase(), compact: true),
         ]),
