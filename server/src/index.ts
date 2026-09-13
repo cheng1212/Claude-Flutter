@@ -67,6 +67,8 @@ const app = await buildApp({
   projectsRoot: config.projectsRoot,
   sourceDir: SOURCE_DIR,
   startedAt: STARTED_AT,
+  // 健康检查里的"在跑会话数":原来只声明没接线,恒为 0(排查状态问题时会被误导)
+  runningCount: () => [...runtimes.keys()].filter((id) => registry.isRunning(id)).length,
   // 会话列表的"运行中"徽章数据源
   isRunning: (sessionId) => registry.isRunning(sessionId),
   backgrounds: (sessionId) => backgrounds.list(sessionId),
