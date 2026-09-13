@@ -10,6 +10,7 @@ import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
 import 'slices/models_slice.dart';
+import 'slices/sessions_slice.dart';
 import 'slices/queue_slice.dart';
 
 export 'slices/queue_slice.dart' show QueuedMessage;
@@ -27,7 +28,6 @@ class ZApp extends ChangeNotifier {
   ZSocket _socket;
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _retry;
-  Timer? _sessionsDirtyTimer;
   bool _disposed = false;
 
   // 流式 delta 合帧缓冲:delta 按 chunk 频率(可到每秒几十条)到达,逐条 notify
@@ -60,10 +60,16 @@ class ZApp extends ChangeNotifier {
   );
   List<String> get models => modelsSlice.models;
   List<Map<String, dynamic>> get modelGroups => modelsSlice.modelGroups;
-  List<Map<String, dynamic>> sessions = const [];
+  /// 会话列表切片(T4 第三刀):状态在 slice,以下 getter 保持 UI 零改动。
+  late final SessionsSlice sessionsSlice = SessionsSlice(
+    onChanged: notifyListeners,
+    onError: (msg) => error = msg,
+    fetchSessions: () => _api.sessions(),
+  );
+  List<Map<String, dynamic>> get sessions => sessionsSlice.sessions;
 
   /// 首次会话列表拉取完成(成败皆置):页面据此区分「加载中」与「真空空如也」
-  bool sessionsLoaded = false;
+  bool get sessionsLoaded => sessionsSlice.sessionsLoaded;
   String? currentSessionId;
   ChatState chat = const ChatState();
   bool historyLoading = false;
@@ -99,7 +105,7 @@ class ZApp extends ChangeNotifier {
       });
     }
     await modelsSlice.load();
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
   }
 
@@ -170,7 +176,7 @@ class ZApp extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _retry?.cancel();
-    _sessionsDirtyTimer?.cancel();
+    sessionsSlice.dispose();
     _pendDeltaTimer?.cancel();
     _blankWatchdog?.cancel();
     _sub?.cancel();
@@ -200,18 +206,13 @@ class ZApp extends ChangeNotifier {
       return;
     }
     if (kind == 'session_created') {
-      unawaited(_loadSessions(silent: true));
+      unawaited(sessionsSlice.load(silent: true));
       return;
     }
     if (kind == 'sessions_dirty') {
       // 任一会话开跑/跑完的服务端广播:250ms 防抖合并成一次 REST,列表徽章跟着活。
       // 控制事件,无 seq,不许进 reducer。
-      _sessionsDirtyTimer?.cancel();
-      _sessionsDirtyTimer = Timer(const Duration(milliseconds: 250), () async {
-        if (_disposed) return;
-        await _loadSessions(silent: true);
-        if (!_disposed) notifyListeners();
-      });
+      sessionsSlice.scheduleDirtyReload(isAlive: () => !_disposed);
       return;
     }
     if (kind == 'context_compacted') {
@@ -255,7 +256,7 @@ class ZApp extends ChangeNotifier {
     ZLog.i('ev', '$kind seq=${ev['seq']} rows=${chat.rows.length} lastSeq=${chat.lastSeq} running=${chat.running}');
     _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
     if (kind == 'complete') {
-      unawaited(_loadSessions(silent: true));
+      unawaited(sessionsSlice.load(silent: true));
       _maybeAutoConsume(); // 回合落定:自动消化队首(开关开 + 队列非空才真的推)
     }
     _armBlankWatchdog();
@@ -333,7 +334,7 @@ class ZApp extends ChangeNotifier {
   /// 手动刷新:把成败**报给调用方**(页面据此给可见反馈——转圈/条数/失败原因)。
   Future<({bool ok, int count, String? error})> refreshSessions() async {
     final before = error;
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     final failed = error != null && error != before;
     return (ok: !failed, count: sessions.length, error: failed ? error : null);
@@ -571,7 +572,7 @@ class ZApp extends ChangeNotifier {
   /// 新建会话,建完刷新列表,返回会话行。
   Future<Map<String, dynamic>> createSession({String? title, String? cwd, String? model}) async {
     final s = await _api.createSession(title: title, cwd: cwd, model: model);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return s;
   }
@@ -583,7 +584,7 @@ class ZApp extends ChangeNotifier {
       chat = const ChatState();
     }
     queue.discardQueues(id); // 会话没了,排队消息一并丢弃
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
   }
 
@@ -598,7 +599,7 @@ class ZApp extends ChangeNotifier {
     for (final id in ids) {
       queue.discardQueues(id); // 会话没了,排队消息一并丢弃
     }
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return r;
   }
@@ -655,14 +656,14 @@ class ZApp extends ChangeNotifier {
 
   Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
     await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode, archived: archived, tags: tags, cwd: cwd);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
   }
 
   /// 复制会话(fork):服务端拷贝消息与配置;完成后刷新列表,返回新会话行。
   Future<Map<String, dynamic>> forkSession(String id) async {
     final row = await _api.forkSession(id);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return row;
   }
