@@ -1,10 +1,35 @@
 // 用量信息页:时间范围(可折叠/日历自定义) + 模型筛选 + 总览 + 每日堆叠柱 + 模型明细。
 // 数据源 /api/usage(server runs 表聚合);视图解析/切片在 ../usage_stats.dart(纯函数)。
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../state/zapp.dart';
 import '../theme.dart';
 import '../usage_stats.dart';
+
+/// 堆叠柱里单段的高度:至少 1px 保证可见,但不许超过本段真实高度。
+///
+/// ⚠️ clamp 的下界必须 ≤ 上界:段高不足 1px(值极小/日子太多)时 `clamp(1.0, h)`
+/// 会抛 ArgumentError。绘制代码每帧跑,抛一次就是**每帧一次异常**,主线程被拖死
+/// (实测:白屏 / 回到底部点不动 / 整个卡死)。抽成纯函数便于回归。
+double stackSegmentHeight({required double h, required double gap, required bool isBottom}) {
+  if (h <= 1.0) return h;
+  return (h - (isBottom ? 0 : gap)).clamp(1.0, h);
+}
+
+/// 日期标签的水平位置:居中,但夹在绘图区内不越界。
+/// 窄屏或长标签时 `viewWidth - labelWidth` 可能小于 padLeft(甚至为负),
+/// 必须先取 max 当上界,否则同上 —— clamp 抛异常。
+double stackLabelX({
+  required double centerX,
+  required double labelWidth,
+  required double padLeft,
+  required double viewWidth,
+}) {
+  final maxX = math.max(padLeft, viewWidth - labelWidth);
+  return (centerX - labelWidth / 2).clamp(padLeft, maxX);
+}
 
 class UsagePage extends StatefulWidget {
   final ZApp app;
@@ -621,7 +646,7 @@ class _StackedBarsPainter extends CustomPainter {
           bottomLeft: Radius.circular(isBottom ? 3 : 0),
           bottomRight: Radius.circular(isBottom ? 3 : 0),
         );
-        final hDraw = (h - (isBottom ? 0 : segGap)).clamp(1.0, h);
+        final hDraw = stackSegmentHeight(h: h, gap: segGap, isBottom: isBottom);
         canvas.drawRRect(r.toRRect(Rect.fromLTWH(cx - barW / 2, y - hDraw, barW, hDraw)), Paint()..color = colors[s]);
         y = top;
       }
@@ -631,7 +656,12 @@ class _StackedBarsPainter extends CustomPainter {
           text: TextSpan(text: chart.dayLabels[d], style: labelStyle),
           textDirection: TextDirection.ltr,
         )..layout();
-        tp.paint(canvas, Offset((cx - tp.width / 2).clamp(padLeft, size.width - tp.width), padTop + plotH + 4));
+        tp.paint(
+            canvas,
+            Offset(
+                stackLabelX(
+                    centerX: cx, labelWidth: tp.width, padLeft: padLeft, viewWidth: size.width),
+                padTop + plotH + 4));
       }
     }
   }

@@ -57,9 +57,13 @@ class ZLog {
     if (_installed) return;
     _installed = true;
     FlutterError.onError = (details) {
-      e('flutter', details.exceptionAsString());
+      // ⚠️ 同一异常要降频:绘制期抛的异常(paint 每帧执行)会**每帧一次**回调,
+      // 原来每次都 debugPrint + 堆栈拼接 → 日志自己成了卡顿源,还把环形缓冲
+      // 刷满、把真正有用的信息挤掉(实测:一次绘制异常刷了 15 条/秒)。
+      final msg = details.exceptionAsString();
+      w('flutter', msg, dedupeKey: 'flutter-$msg');
       final stack = details.stack?.toString().split('\n').take(5).join(' | ') ?? '';
-      if (stack.isNotEmpty) i('flutter', 'at $stack');
+      if (stack.isNotEmpty) w('flutter', 'at $stack', dedupeKey: 'flutter-stack-$msg');
       FlutterError.presentError(details);
     };
     PlatformDispatcher.instance.onError = (error, stack) {
