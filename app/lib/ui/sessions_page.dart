@@ -1438,12 +1438,31 @@ class _SessionsPageState extends State<SessionsPage> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(children: [
-                    Expanded(child: _modeChip('铃声', 'sound')),
+                    Expanded(child: _modeChip('铃声+震动', 'sound')),
                     const SizedBox(width: 6),
-                    Expanded(child: _modeChip('震动', 'vibrate')),
+                    Expanded(child: _modeChip('仅震动', 'vibrate')),
                     const SizedBox(width: 6),
                     Expanded(child: _modeChip('静音', 'silent')),
                   ]),
+                ),
+              if (NotifyPrefs.enabled)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: InkWell(
+                    onTap: () {
+                      final ok = Notify.test();
+                      showToast(context, ok
+                          ? '已发测试通知——听到/感到震动了吗?没反应请看系统通知设置'
+                          : '发不出去:通知未初始化或被总开关关掉');
+                    },
+                    child: Row(children: [
+                      Icon(Icons.notifications_active_outlined, size: 16, color: ZT.primary),
+                      const SizedBox(width: 8),
+                      Text('发一条测试通知', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.primaryDeep)),
+                      const Spacer(),
+                      Text('验证铃声/震动', style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
+                    ]),
+                  ),
                 ),
               Divider(height: 18, thickness: 1, color: ZT.line),
               _settingsRow('连接状态', link),
