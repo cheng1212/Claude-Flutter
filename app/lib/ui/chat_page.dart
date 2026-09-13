@@ -1697,10 +1697,12 @@ class _ChatPageState extends State<ChatPage> {
               const SizedBox(height: 3),
               // 边吐字边渲染 Markdown(200ms 节流 + 未闭合围栏补闭合),
               // 与落定后的 AssistantBlock 同一渲染管线,落定瞬间不再跳变。
-              // 限高 + 内部滚动(reverse:锚定最新):长回复吃自己的空间,不再无限挤压列表。
+              // 限高 + 内部滚动(reverse:锚定最新):流式面板只当一行「正在回复」
+              // 进度条用(用户裁定 2026-09-14:1/10 屏,对齐 zremote 面板封顶标准),
+              // 长输出内部滚动跟尾,绝不挤压历史阅读区。
               ConstrainedBox(
                 constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.42),
+                    maxHeight: MediaQuery.of(context).size.height * 0.10),
                 child: SingleChildScrollView(
                   reverse: true,
                   child: MemoMarkdown(
