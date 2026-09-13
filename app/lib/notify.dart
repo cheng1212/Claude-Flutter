@@ -101,20 +101,47 @@ class Notify {
     if (payload != null && payload.isNotEmpty) onTap?.call(payload);
   }
 
+  /// 是否能弹(初始化成功且总开关开着)。设置页据此提示用户"为什么没响"。
+  static bool get ready => _ready;
+
+  /// 发一条测试通知:让用户当场验证铃声/震动/横幅是否正常,
+  /// 不用等真实任务跑完。返回是否真的发出去了。
+  static bool test() {
+    if (!_ready) return false;
+    if (!NotifyPrefs.enabled) return false;
+    show('测试通知',
+        '看到这条说明通知正常;没声音/没震动请检查系统通知设置(渠道:会话事件)\n'
+        '当前提醒方式:${_modeLabel()}');
+    return true;
+  }
+
+  static String _modeLabel() => switch (NotifyPrefs.mode) {
+        'vibrate' => '仅震动',
+        'silent' => '静音',
+        _ => '铃声 + 震动',
+      };
+
   static void show(String title, String body, {String? sessionId, bool isError = false}) {
     if (!_ready || !NotifyPrefs.enabled) return;
     try {
-      // 提醒方式(用户设置):铃声=默认带声;震动=无声只振;静音=low 无声无振。
-      // Android 渠道一旦创建不可改属性,故按模式分渠道 id。
+      // 提醒方式(用户设置):铃声=响铃+震动;震动=只振;静音=都不。
+      //
+      // ⚠️ 渠道 id 带 **_v2** 是一次性的**:Android 的通知渠道一旦创建,属性永久锁定
+      // ——改这里的参数对手机上已存在的旧渠道**完全不生效**。用户实测"铃声从来
+      // 没听到过",旧渠道就是按老参数(不震动、importance 只到 high)建的。
+      // 换 id 才会按新参数重建渠道。以后要再改提醒行为,同样得升这个版本号。
+      //
+      // sound 模式改为**响铃+震动**、importance 提到 max:MIUI 对非最高级通知
+      // 常做静默处理,high 不足以稳定抢到横幅和声音。
       final mode = NotifyPrefs.mode;
       final suffix = mode == 'sound' ? '' : '_$mode';
-      final importance = mode == 'silent' ? Importance.low : Importance.high;
-      final priority = mode == 'silent' ? Priority.low : Priority.high;
-      final enableVibration = mode == 'vibrate';
-      final playSound = mode != 'silent';
+      final importance = mode == 'silent' ? Importance.low : Importance.max;
+      final priority = mode == 'silent' ? Priority.low : Priority.max;
+      final enableVibration = mode != 'silent'; // 响铃模式也震一下(提醒要有存在感)
+      final playSound = mode == 'sound';
       final errDetails = NotificationDetails(
           android: AndroidNotificationDetails(
-        'zcode_errors$suffix',
+        'zcode_errors_v2$suffix',
         '会话错误',
         channelDescription: '任务失败 / 执行错误',
         importance: importance,
@@ -126,7 +153,7 @@ class Notify {
       ));
       final evtDetails = NotificationDetails(
           android: AndroidNotificationDetails(
-        'zcode_events$suffix',
+        'zcode_events_v2$suffix',
         '会话事件',
         channelDescription: '任务完成 / 等待审批',
         importance: importance,
