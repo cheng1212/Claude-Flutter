@@ -117,4 +117,27 @@ describe('ZApi · 默认 fetch 绑定(Ilegal invocation 防御)', () => {
     expect(seen[0]).toBeGreaterThan(0);
     expect(seen[seen.length - 1]).toBe(1);
   });
+  test('uploadFile retries 5xx with backoff and succeeds', async () => {
+    let calls = 0;
+    const f = vi.fn(async () => {
+      calls++;
+      if (calls < 3) return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({ path: 'p/x', fileName: 'a' }), { status: 200 });
+    }) as unknown as FetchFn;
+    const api = new ZApi('http://x:5190', 't', f);
+    const res = await api.uploadFile('s1', 'a', Uint8Array.from([1, 2, 3]));
+    expect(res.path).toBe('p/x');
+    expect(calls).toBe(3);
+  });
+
+  test('uploadFile does not retry on 4xx', async () => {
+    let calls = 0;
+    const f = vi.fn(async () => {
+      calls++;
+      return new Response('unauthorized', { status: 401 });
+    }) as unknown as FetchFn;
+    const api = new ZApi('http://x:5190', 't', f);
+    await expect(api.uploadFile('s1', 'a', Uint8Array.from([1]))).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
 });

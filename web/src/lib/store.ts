@@ -66,6 +66,19 @@ export function saveCreds(c: { baseUrl: string; token: string } | null): void {
   }
 }
 
+/** 页面隐藏 + 用户开了🔔 + 已授权 → 系统通知(TopBar 开关;前台页面不打扰)。 */
+function notifyIfHidden(title: string, body: string): void {
+  try {
+    if (localStorage.getItem('zcode.notify') !== 'on') return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') return;
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body });
+    }
+  } catch {
+    /* 通知失败不影响主流程 */
+  }
+}
+
 export interface ZState {
   phase: 'login' | 'ready';
   baseUrl: string;
@@ -202,8 +215,13 @@ export function createZStore(deps: {
         dirtyTimer = setTimeout(() => { void loadSessions(true); }, 250);
         return;
       }
+      // 审批等待最重要:任何会话的审批请求都提醒(页面隐藏 + 🔔开时)
+      if (kind === 'permission_request') notifyIfHidden('需要审批', `${String(ev.toolName ?? '')} 等待确认`);
       const sid = ev.sessionId as string | undefined;
       if (!sid || sid !== get().currentSessionId) return;
+      if (kind === 'text' && (ev.role as string | undefined ?? 'assistant') !== 'user') {
+        notifyIfHidden('zCode 新回复', String(ev.content ?? '').slice(0, 80));
+      }
       set({ chat: applyEvent(get().chat, ev) });
       if (kind === 'complete') void loadSessions(true);
     }

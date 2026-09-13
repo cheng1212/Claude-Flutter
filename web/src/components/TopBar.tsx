@@ -1,5 +1,7 @@
+import { useMemo, useState } from 'react';
 import { useStore } from 'zustand';
-import type { ZStore } from '../lib/store';
+import { loadCreds, type ZStore } from '../lib/store';
+import { ZApi } from '../lib/api';
 import { PALETTES, useTheme, setTheme } from '../theme';
 
 export type TopView = 'sessions' | 'chat' | 'usage';
@@ -31,6 +33,37 @@ export function TopBar({ store, view, onBack, onNewSession, onUsage }: {
   const theme = useTheme();
   const session = sessions.find((x) => x.id === currentSessionId);
   const phase = chat.pendingPermission ? 'permission' : chat.running ? 'running' : 'idle';
+  const [notifyOn, setNotifyOn] = useState(() => localStorage.getItem('zcode.notify') === 'on');
+  const api = useMemo(() => {
+    const c = loadCreds();
+    return c ? new ZApi(c.baseUrl, c.token) : null;
+  }, []);
+
+  /** 通知开关:首次开启请求浏览器授权(仅页面隐藏时弹,不打扰前台)。 */
+  const toggleNotify = async () => {
+    if (notifyOn) { localStorage.setItem('zcode.notify', 'off'); setNotifyOn(false); return; }
+    let granted = false;
+    if (typeof Notification !== 'undefined') {
+      const p = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      granted = p === 'granted';
+    }
+    localStorage.setItem('zcode.notify', granted ? 'on' : 'off');
+    setNotifyOn(granted);
+  };
+
+  /** 导出当前会话为 markdown(Blob 下载,对齐 app 导出)。 */
+  const doExport = async () => {
+    if (!api || !currentSessionId) return;
+    const out = await api.sessionExport(currentSessionId);
+    if (!out?.markdown) return;
+    const url = URL.createObjectURL(new Blob([out.markdown], { type: 'text/markdown' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = out.filename || `session-${currentSessionId}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const title = view === 'usage' ? '用量统计' : view === 'chat' ? (session?.title ?? '会话') : 'zCode 终端';
 
   return (
@@ -48,6 +81,18 @@ export function TopBar({ store, view, onBack, onNewSession, onUsage }: {
         {view === 'chat' && <StatusChip phase={phase} />}
       </span>
       <div className="topbar__right">
+        {view === 'chat' && (
+          <button type="button" className="btn-ghost btn-ghost--sm" onClick={() => void doExport()}>导出</button>
+        )}
+        <button
+          type="button"
+          className="btn-ghost btn-ghost--sm"
+          aria-label="后台通知开关"
+          title={notifyOn ? '通知:开(仅页面隐藏时提醒)' : '通知:关'}
+          onClick={() => void toggleNotify()}
+        >
+          {notifyOn ? '🔔' : '🔕'}
+        </button>
         {view !== 'usage' && (
           <button type="button" className="btn-gold btn-gold--sm" onClick={onNewSession}>＋ 新建</button>
         )}

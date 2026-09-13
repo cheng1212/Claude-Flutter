@@ -138,6 +138,15 @@ export class ZApi {
     return this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
   }
 
+  /** 会话导出(markdown);失败返回 null(导出是锦上添花,不弹错)。 */
+  async sessionExport(id: string): Promise<{ filename: string; markdown: string } | null> {
+    try {
+      return await this.call<{ filename: string; markdown: string }>('GET', `/api/sessions/${id}/export`);
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * 上传文件到会话(cwd/uploads/):分块 base64 + 进度(0~1)。
    * 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位。

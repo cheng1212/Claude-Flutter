@@ -1,6 +1,6 @@
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { ChatRow, ErrorRow, TextRow, ThinkingRow, UserRow } from '../lib/chatState';
 import { ToolCard } from './ToolCard';
 
@@ -60,8 +60,8 @@ export function ErrorBlock({ row }: { row: ErrorRow }) {
   return <div className="error-block">{row.content}</div>;
 }
 
-/** 行分发。 */
-export function ChatRowView({ row }: { row: ChatRow }) {
+/** 行分发。memo:流式期间 rows 数组引用不变,已渲染的行不随每次 delta 重渲(业界共识,对齐 GetStream 虚拟化实践)。 */
+export const ChatRowView = memo(function ChatRowView({ row }: { row: ChatRow }) {
   switch (row.kind) {
     case 'user': return <UserBubble row={row} />;
     case 'text': return <AssistantBlock row={row} />;
@@ -69,4 +69,4 @@ export function ChatRowView({ row }: { row: ChatRow }) {
     case 'tool': return <ToolCard row={row} />;
     case 'error': return <ErrorBlock row={row} />;
   }
-}
+});

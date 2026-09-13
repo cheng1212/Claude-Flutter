@@ -26,6 +26,7 @@ export function SessionsPage({ store, onOpen }: {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [proj, setProj] = useState('');
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => { void store.getState().loadProjects(); }, [store]);
 
@@ -139,6 +140,14 @@ export function SessionsPage({ store, onOpen }: {
                   <button
                     type="button"
                     className="btn-ghost btn-ghost--sm"
+                    aria-label={`重命名 ${id}`}
+                    onClick={() => setRenaming({ id, title: s.title })}
+                  >
+                    改名
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-ghost--sm"
                     aria-label={`置顶 ${id}`}
                     onClick={() => void store.getState().patchSession(id, { isPinned: !(Number(s.isPinned) === 1 || s.isPinned === true) })}
                   >
@@ -166,6 +175,36 @@ export function SessionsPage({ store, onOpen }: {
           <button type="button" className="btn-ghost" onClick={() => void batchPin()}>置顶所选</button>
           <button type="button" className="btn-danger" onClick={() => void batchDelete()}>删除所选</button>
         </footer>
+      )}
+
+      {renaming && (
+        <div className="dialog-mask" role="presentation">
+          <div className="dialog" role="dialog" aria-label="重命名会话">
+            <h3 className="dialog__title">重命名会话</h3>
+            <label className="field">
+              <span className="field__label">标题</span>
+              <input
+                autoFocus
+                aria-label="新标题"
+                className="field__input"
+                value={renaming.title}
+                onChange={(e) => setRenaming({ ...renaming, title: e.target.value })}
+              />
+            </label>
+            <div className="dialog__ops">
+              <button type="button" className="btn-ghost" onClick={() => setRenaming(null)}>取消</button>
+              <button
+                type="button"
+                className="btn-gold"
+                onClick={() => {
+                  void store.getState().patchSession(renaming.id, { title: renaming.title }).then(() => setRenaming(null));
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

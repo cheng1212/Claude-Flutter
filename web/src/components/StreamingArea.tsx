@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
  * 流式区(列表底部):
  * - running 且无任何流式内容 → 「已送达 · 正在思考」骨架行(静默期反馈)
  * - 有 thinking → 深度思考卡;有 text → 正在回复
+ * 流式文本经 rAF 节流后渲染(业界共识:token 级 setState 拖垮列表;delta 已在 store 无丢字)。
  */
 export function StreamingArea({ running, streamingText, streamingThinking }: {
   running: boolean; streamingText?: string; streamingThinking?: string;

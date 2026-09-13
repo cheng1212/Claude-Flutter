@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { loadCreds, type ZStore } from '../lib/store';
 import { ZApi } from '../lib/api';
@@ -38,6 +38,7 @@ export function ChatPage({ store, sessionId }: {
   const stickRef = useRef(true);
   const pendingInitRef = useRef(false);
   const prevHeightRef = useRef(0);
+  const loadLockRef = useRef(false);
 
   // 面板/上传用轻量 REST 客户端:凭据登录时已持久化,不必经 store 转发。
   const api = useMemo(() => {
@@ -61,6 +62,12 @@ export function ChatPage({ store, sessionId }: {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80; // 贴底阈值,对齐 Flutter
     stickRef.current = atBottom;
     setShowJump(!atBottom); // 同值 setState 会被 React 去重,scroll 高频触发无渲染风暴
+    // 滚到顶自动加载更早(CloudCLI 同款:scrollTop<100 触发;lock 防重入,完成 400ms 后解锁)
+    if (el.scrollTop < 100 && chat.hasMoreOlder && !loadingOlder && !loadLockRef.current) {
+      loadLockRef.current = true;
+      stickRef.current = false;
+      void store.getState().loadOlder().finally(() => { setTimeout(() => { loadLockRef.current = false; }, 400); });
+    }
   };
 
   // 初始钉底(照 CloudCLI 的 robust 方案):逐帧 scrollTop=scrollHeight,直到 scrollHeight
@@ -88,7 +95,9 @@ export function ChatPage({ store, sessionId }: {
       else pendingInitRef.current = false;
     };
     raf = requestAnimationFrame(tick);
-    return () => { if (raf) cancelAnimationFrame(raf); };
+    // 兜底帧:某些环境(无头/测试)不驱动 rAF,至少补滚一次
+    const fb = setTimeout(() => { if (pendingInitRef.current) tick(); }, 400);
+    return () => { if (raf) cancelAnimationFrame(raf); clearTimeout(fb); };
   }, [sessionId, historyLoading, chat.rows.length > 0]);
 
   // 加载更早:前插后按高度差补偿 scrollTop,视口锚在原内容上不跳(CloudCLI 同款兜底公式)。
@@ -120,6 +129,9 @@ export function ChatPage({ store, sessionId }: {
   }, [model, modelGroups]);
 
   const plan = derivePlanSteps(chat.rows);
+  // 流式文本用 React 原生并发节流:紧急更新(交互)优先,流式正文延迟渲染,不拖垮列表
+  const deferredText = useDeferredValue(chat.streamingText);
+  const deferredThinking = useDeferredValue(chat.streamingThinking);
 
   const send = () => {
     if (!input.trim()) return;
@@ -168,7 +180,7 @@ export function ChatPage({ store, sessionId }: {
           {chat.rows.map((row, i) => (
             <ChatRowView key={`${row.kind}-${i}`} row={row} />
           ))}
-          <StreamingArea running={chat.running} streamingText={chat.streamingText} streamingThinking={chat.streamingThinking} />
+          <StreamingArea running={chat.running} streamingText={deferredText} streamingThinking={deferredThinking} />
         </div>
       </div>
 

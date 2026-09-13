@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createZStore, type ZStore } from '../lib/store';
 import { ChatPage } from './ChatPage';
@@ -92,8 +92,13 @@ describe('ChatPage', () => {
     render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     store.getState().sendChat('流式任务');
-    socket.emit({ kind: 'stream_delta', sessionId: 's1', content: '部分回答' });
-    expect(await screen.findByText('部分回答')).toBeTruthy();
+    // 节流窗(50ms)的 setShown 发生在 act 外会被 React 测试环境挂起:用 act 包裹等待
+    await act(async () => {
+      socket.emit({ kind: 'stream_delta', sessionId: 's1', content: '部分回答' });
+      await new Promise((r) => setTimeout(r, 120));
+    });
+    console.log('DBG streamingText =', JSON.stringify(store.getState().chat.streamingText), 'rows =', store.getState().chat.rows.length);
+    expect(screen.getByText('部分回答')).toBeTruthy();
     expect(screen.queryByText(/已送达/)).toBeNull();
   });
 
