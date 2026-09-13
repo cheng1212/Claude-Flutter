@@ -489,6 +489,71 @@ void main() {
     expect(app.chat.streamingText, isNull, reason: '旧会话的流式尾巴不得落进新会话');
   });
 
+  test('发送排队:入队/去重/置顶/修改/删除', () async {
+    await openEmpty();
+    expect(app.enqueue('A'), 'queued');
+    expect(app.enqueue('A'), 'duplicate', reason: '同文消息不重复入队');
+    expect(app.enqueue('B'), 'queued');
+    expect(app.enqueue('C'), 'queued');
+    expect(app.queueOf('s1').map((m) => m.text), ['A', 'B', 'C']);
+
+    app.promoteQueued('s1', 2); // C 提到队首
+    expect(app.queueOf('s1').map((m) => m.text), ['C', 'A', 'B']);
+
+    expect(app.editQueued('s1', 1, 'C'), isFalse, reason: '改成与队内其他条重复 → 拒绝');
+    expect(app.editQueued('s1', 1, 'A2'), isTrue);
+    expect(app.queueOf('s1').map((m) => m.text), ['C', 'A2', 'B']);
+
+    app.removeQueued('s1', 0);
+    expect(app.queueOf('s1').map((m) => m.text), ['A2', 'B']);
+  });
+
+  test('自动消化:complete 后自动推队首;开关关着就排队不动', () async {
+    await openEmpty();
+    app.enqueue('排队消息A');
+    app.sendChat('第一轮');
+    channel.serverPush({'kind': 'complete', 'seq': 2, 'sessionId': 's1'});
+    await pump(const Duration(milliseconds: 600)); // 400ms 消化定时器
+    final sent = channel.sent.whereType<Map>().toList();
+    expect(sent.any((m) => m['type'] == 'chat.send' && m['content'] == '排队消息A'), isTrue,
+        reason: '回复结束自动推下一条');
+    expect(app.queueCount('s1'), 0);
+    expect(app.chat.running, isTrue, reason: '推出去的消息带乐观行,回合开跑');
+
+    // 关掉自动消化:排队不动
+    app.enqueue('排队消息B');
+    app.setAutoConsume('s1', on: false);
+    channel.serverPush({'kind': 'complete', 'seq': 9, 'sessionId': 's1'});
+    await pump(const Duration(milliseconds: 600));
+    expect(app.queueCount('s1'), 1, reason: '开关关:只排队不推');
+    expect(channel.sent.any((m) => m['type'] == 'chat.send' && m['content'] == '排队消息B'), isFalse);
+  });
+
+  test('interruptAndSend:先 abort,等落定后发送', () async {
+    await openEmpty();
+    app.sendChat('第一轮'); // running = true(乐观)
+    final f = app.interruptAndSend('插队消息');
+    await pump(const Duration(milliseconds: 30));
+    expect(channel.sent.any((m) => m['type'] == 'chat.abort'), isTrue, reason: '先打断');
+    channel.serverPush({'kind': 'complete', 'seq': 2, 'sessionId': 's1'}); // 回合落定
+    final ok = await f;
+    expect(ok, isTrue);
+    expect(channel.sent.any((m) => m['type'] == 'chat.send' && m['content'] == '插队消息'), isTrue,
+        reason: '落定后立即发送');
+  });
+
+  test('删除会话清空其队列', () async {
+    await openEmpty();
+    http.responder = (c) => switch (c.path) {
+          '/api/sessions' => <Map>[],
+          _ => null,
+        };
+    app.enqueue('会随会话消失');
+    expect(app.queueCount('s1'), 1);
+    await app.deleteSession('s1');
+    expect(app.queueCount('s1'), 0);
+  });
+
   test('createSession 建完拉列表并返回会话行', () async {
     http.responder = (c) => switch (c.path) {
           '/api/sessions' when c.method == 'POST' => {'id': 'new1', 'title': 'hi'},

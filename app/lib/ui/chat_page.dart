@@ -72,6 +72,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _cronsOn = false; // 会话里有活跃定时任务时点亮
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
+  bool _queueExpanded = false; // 排队面板折叠/展开(折叠只显示第一条)
 
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
   Future<void> _openTasks() async {
@@ -196,15 +197,75 @@ class _ChatPageState extends State<ChatPage> {
           ? '我上传了附件,路径如下:\n$refs\n请处理'
           : '$text\n\n附件:\n$refs';
     }
-    _stopping = false; // 新回合开跑,停止盲区状态作废
-    // 显式带上当前 model/权限模式/思考等级:热切换双保险(服务端本来也会读 DB 最新值)
-    final ok = app.sendChat(text, model: _model, permissionMode: _mode, thinking: _thinking, images: images);
-    if (!ok) return; // 没发出去:原文留在输入框,改改就能重发,不再凭空消失
+    if (chat.running) {
+      _showRunConflictDialog(text, images); // 正在回复:排队 / 打断立即发送
+      return;
+    }
+    _consumeComposer(() {
+      _stopping = false; // 新回合开跑,停止盲区状态作废
+      // 显式带上当前 model/权限模式/思考等级:热切换双保险(服务端本来也会读 DB 最新值)
+      final ok = app.sendChat(text, model: _model, permissionMode: _mode, thinking: _thinking, images: images);
+      if (!ok) showToast(context, '发送失败:原文已留在输入框');
+    });
+  }
+
+  /// 清空输入区(发出去或已入队后调用)。
+  void _consumeComposer(VoidCallback action) {
+    action();
     _input.clear();
     _pendingImages.value = const [];
     _pendingFiles.value = const [];
     HapticFeedback.lightImpact();
-    FocusScope.of(context).unfocus(); // 发完收起键盘,别压着半屏看回复
+    FocusScope.of(context).unfocus(); // 收起键盘,别压着半屏看回复
+  }
+
+  /// 正在回复时点发送:中央弹窗二选一——排队(等回复结束自动推)或立即发送(打断当前)。
+  Future<void> _showRunConflictDialog(String text, List<String> images) async {
+    final choice = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: BorderSide(color: ZT.edge, width: 1.4),
+        ),
+        title: Row(children: [
+          Icon(Icons.hourglass_top_rounded, size: 18, color: ZT.primaryDeep),
+          const SizedBox(width: 8),
+          Text('会话正在回复', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: ZT.ink)),
+        ]),
+        content: Text(
+          '这条消息要排队等回复结束,还是打断当前回复立即发送?',
+          style: TextStyle(fontSize: 13.5, height: 1.5, color: ZT.inkSoft),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'queue'),
+            child: Text('排队', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'now'),
+            child: Text('立即发送', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'queue') {
+      final r = app.enqueue(text, images: images);
+      if (r == 'duplicate') {
+        showToast(context, '队列里已有相同消息,没有重复加入');
+        return;
+      }
+      _consumeComposer(() {});
+      showToast(context, '已排队,回复结束后自动发送');
+    } else if (choice == 'now') {
+      _consumeComposer(() {});
+      unawaited(app.interruptAndSend(text,
+          model: _model, permissionMode: _mode, thinking: _thinking, images: images));
+      showToast(context, '正在打断当前回复…');
+    }
   }
 
   /// 附件入口弹层:拍照 / 相册 / 文件 三选一(点选即执行)。
@@ -807,6 +868,7 @@ class _ChatPageState extends State<ChatPage> {
                 );
               },
             ),
+          if (!_searching) _queueBar(),
           if (!_searching) _composer(),
           if (!_searching) _quickBar(planOn, subsOn || bgOn),
         ]),
@@ -1209,6 +1271,156 @@ class _ChatPageState extends State<ChatPage> {
           ),
       ],
     );
+  }
+
+  /// 发送排队面板:会话 running 时发的消息在这里排队,回复结束可自动消化(开关)。
+  /// 每条:📌置顶 / ✏️修改 / ⚡打断立即发送 / 🗑️删除;默认折叠只显示第一条。
+  Widget _queueBar() {
+    final sid = widget.sessionId;
+    final q = app.queueOf(sid);
+    if (q.isEmpty) return const SizedBox.shrink();
+    final auto = app.autoConsumeOf(sid);
+    final shown = _queueExpanded ? q : q.take(1).toList();
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: ZT.lemon,
+        border: Border(
+          top: BorderSide(color: ZT.line, width: 1.1),
+          bottom: BorderSide(color: ZT.line, width: 1.1),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 2, 6, 2),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _queueExpanded = !_queueExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.low_priority_rounded, size: 14, color: ZT.inkSoft),
+                const SizedBox(width: 6),
+                Text('排队中 ${q.length} 条',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ZT.inkSoft)),
+                Icon(_queueExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    size: 16, color: ZT.inkSoft),
+              ]),
+            ),
+          ),
+          const Spacer(),
+          Text('自动消化', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: ZT.inkFaint)),
+          SizedBox(
+            height: 30,
+            child: Switch(
+              value: auto,
+              activeThumbColor: ZT.primary,
+              onChanged: (v) => app.setAutoConsume(sid, on: v),
+            ),
+          ),
+        ]),
+        for (var i = 0; i < shown.length; i++)
+          Row(children: [
+            Expanded(
+              child: Text(
+                shown[i].text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, height: 1.35, color: ZT.ink),
+              ),
+            ),
+            if (i > 0)
+              _queueIcon(sid, i, Icons.push_pin_outlined, '置顶', ZT.inkSoft),
+            _queueIcon(sid, i, Icons.edit_outlined, '修改', ZT.inkSoft),
+            _queueIcon(sid, i, Icons.bolt_rounded, '打断并立即发送', ZT.primaryDeep),
+            _queueIcon(sid, i, Icons.delete_outline_rounded, '删除', ZT.rose),
+          ]),
+        if (!_queueExpanded && q.length > 1)
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _queueExpanded = true),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+              child: Text('… 还有 ${q.length - 1} 条,点开展开',
+                  style: TextStyle(fontSize: 11.5, color: ZT.inkFaint)),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  Widget _queueIcon(String sid, int index, IconData icon, String tip, Color color) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      tooltip: tip,
+      icon: Icon(icon, size: 17, color: color),
+      onPressed: () => _onQueueAction(sid, index, tip),
+    );
+  }
+
+  Future<void> _onQueueAction(String sid, int index, String tip) async {
+    final q = app.queueOf(sid);
+    if (index >= q.length) return;
+    final m = q[index];
+    switch (tip) {
+      case '置顶':
+        app.promoteQueued(sid, index);
+      case '修改':
+        await _editQueuedDialog(sid, index, m);
+      case '打断并立即发送':
+        unawaited(app.sendQueuedNow(sid, index,
+            model: _model, permissionMode: _mode, thinking: _thinking));
+        showToast(context, '正在打断当前回复…');
+      case '删除':
+        app.removeQueued(sid, index);
+    }
+  }
+
+  /// 编辑排队文案:改成与队内其他条重复时拒绝并提示。
+  Future<void> _editQueuedDialog(String sid, int index, QueuedMessage m) async {
+    final ctrl = TextEditingController(text: m.text);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: ZT.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          side: BorderSide(color: ZT.edge, width: 1.4),
+        ),
+        title: Text('修改排队消息', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: ZT.ink)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLines: 4,
+          minLines: 1,
+          style: TextStyle(fontSize: 13.5, color: ZT.ink),
+          decoration: InputDecoration(
+            hintText: '修改要发送的内容',
+            border: const OutlineInputBorder(),
+            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: ZT.primary, width: 1.4)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消', style: TextStyle(fontWeight: FontWeight.w700, color: ZT.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('保存', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+          ),
+        ],
+      ),
+    );
+    if (saved != true || !mounted) return;
+    final text = ctrl.text.trim();
+    if (text.isEmpty) {
+      showToast(context, '内容为空,没有修改');
+      return;
+    }
+    if (!app.editQueued(sid, index, text)) {
+      showToast(context, '队列里已有相同消息,修改未生效');
+    }
   }
 
   Widget _sessionHeader() {
