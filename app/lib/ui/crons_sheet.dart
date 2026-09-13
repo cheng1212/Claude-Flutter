@@ -301,18 +301,26 @@ class _CronsPanelState extends State<CronsPanel> {
   }
 
   /// 统一的操作包装:转圈 → 执行 → 提示 → 刷新。
-  Future<void> _act(String id, Future<void> Function() op, String okMsg) async {
+  /// [op] 返回要显示的提示语(删除要区分"已通知/未通知",固定文案说不准)。
+  Future<void> _act(String id, Future<String> Function() op) async {
     if (_busyId != null) return;
     setState(() => _busyId = id);
     try {
-      await op();
-      if (mounted) showToast(context, okMsg);
+      final msg = await op();
+      if (mounted) showToast(context, msg);
     } on Object catch (e) {
       if (mounted) showToast(context, '操作失败: ${_shortError(e)}');
     } finally {
       if (mounted) setState(() => _busyId = null);
       await _load();
     }
+  }
+
+  /// 删除任务:如实区分"已通知会话撤销"与"那边没有进程、任务随之失效"。
+  /// Claude Code 的定时任务只活在 CLI 进程里,zcode 删镜像不代表它停了。
+  Future<String> _deleteCron(String id) async {
+    final notified = await widget.app.deleteCron(id);
+    return notified ? '已删除,并已通知该会话撤销' : '已从列表删除(该会话无活跃进程,任务已随之失效)';
   }
 
   @override
@@ -341,11 +349,19 @@ class _CronsPanelState extends State<CronsPanel> {
         return CronCard(
           c: c,
           busy: _busyId == id,
-          onToggle: () => _act(id, () => widget.app.setCronActive(id, active: paused),
-              paused ? '已恢复' : '已暂停'),
-          onRunNow: () => _act(id, () => widget.app.runCronNow(id), '已触发运行'),
-          onRestart: () => _act(id, () => widget.app.restartCron(id), '已重启,计数清零'),
-          onDelete: () => _act(id, () => widget.app.deleteCron(id), '已删除'),
+          onToggle: () => _act(id, () async {
+            await widget.app.setCronActive(id, active: paused);
+            return paused ? '已恢复' : '已暂停';
+          }),
+          onRunNow: () => _act(id, () async {
+            await widget.app.runCronNow(id);
+            return '已触发运行';
+          }),
+          onRestart: () => _act(id, () async {
+            await widget.app.restartCron(id);
+            return '已重启,计数清零';
+          }),
+          onDelete: () => _act(id, () => _deleteCron(id)),
           onHistory: () => showCronHistory(context, widget.app, id),
         );
       },
@@ -383,18 +399,23 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
     super.dispose();
   }
 
-  Future<void> _act(String id, Future<void> Function() op, String okMsg) async {
+  Future<void> _act(String id, Future<String> Function() op) async {
     if (_busyId != null) return;
     setState(() => _busyId = id);
     try {
-      await op();
-      if (mounted) showToast(context, okMsg);
+      final msg = await op();
+      if (mounted) showToast(context, msg);
     } on Object catch (e) {
       if (mounted) showToast(context, '操作失败: ${_shortError(e)}');
     } finally {
       if (mounted) setState(() => _busyId = null);
       setState(() => _future = widget.app.crons(includePaused: true));
     }
+  }
+
+  Future<String> _deleteCron(String id) async {
+    final notified = await widget.app.deleteCron(id);
+    return notified ? '已删除,并已通知该会话撤销' : '已从列表删除(该会话无活跃进程,任务已随之失效)';
   }
 
   @override
@@ -441,11 +462,19 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
                       c: c,
                       busy: _busyId == id,
                       sessionLabel: '${c['session_title'] ?? ''}',
-                      onToggle: () => _act(id, () => widget.app.setCronActive(id, active: paused),
-                          paused ? '已恢复' : '已暂停'),
-                      onRunNow: () => _act(id, () => widget.app.runCronNow(id), '已触发运行'),
-                      onRestart: () => _act(id, () => widget.app.restartCron(id), '已重启,计数清零'),
-                      onDelete: () => _act(id, () => widget.app.deleteCron(id), '已删除'),
+                      onToggle: () => _act(id, () async {
+                        await widget.app.setCronActive(id, active: paused);
+                        return paused ? '已恢复' : '已暂停';
+                      }),
+                      onRunNow: () => _act(id, () async {
+                        await widget.app.runCronNow(id);
+                        return '已触发运行';
+                      }),
+                      onRestart: () => _act(id, () async {
+                        await widget.app.restartCron(id);
+                        return '已重启,计数清零';
+                      }),
+                      onDelete: () => _act(id, () => _deleteCron(id)),
                       onHistory: () => showCronHistory(context, widget.app, id),
                     );
                   },

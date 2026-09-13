@@ -18,6 +18,8 @@ export type AppOptions = {
   onRestart?: () => void;
   /** 「立即运行」定时任务:与调度器共用同一条触发管线(index 侧包 gateway.triggerSession) */
   triggerSession?: (sessionId: string, prompt: string) => boolean;
+  /** 面板删定时任务时,让活着的那条 CLI 也撤销它的 session-only 任务(返回是否已通知) */
+  cancelCronInCli?: (sessionId: string, cron: string, prompt: string) => boolean;
   /** 实际源码目录(index 侧用 import.meta.url 推出):/api/health 暴露,用于自证跑的是哪棵树 */
   sourceDir?: string;
   /** 进程启动时刻(ISO),同健康检查暴露 */
@@ -103,7 +105,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     });
   }
   if (opts.db && opts.routesPath) {
-    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot, onRestart: opts.onRestart, triggerSession: opts.triggerSession });
+    registerHttpRoutes(app, { db: opts.db, routesPath: opts.routesPath, onSessionDeleted: opts.onSessionDeleted, onSessionPatched: opts.onSessionPatched, isRunning: opts.isRunning, isAwaiting: opts.isAwaiting, backgrounds: opts.backgrounds, projectsRoot: opts.projectsRoot, onRestart: opts.onRestart, triggerSession: opts.triggerSession, cancelCronInCli: opts.cancelCronInCli });
   }
   if (opts.webDir) {
     // SPA 静态托管:非 /api 的 GET → webDir 下文件,未命中回 index.html(前端路由刷新不 404)。
