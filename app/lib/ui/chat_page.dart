@@ -112,6 +112,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
   bool _animatingToBottom = false; // 回到底部动画进行中(此时禁止补偿,防互相打断)
   int _planRowCount = -1; // 上次算计划时的行数(derivePlanSteps 全量扫描的缓存键)
+  int _compensateRows = -1; // 上次补偿时的行数(识别换底:暴涨时不补偿,防把人弹飞)
   bool _thinkingExpanded = false; // 流式思考区:展开看全文(默认一行摘要)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
@@ -150,6 +151,7 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     app.addListener(_onApp);
     _planRowCount = -1; // 新会话:计划缓存作废(行数可能恰好相同)
+    _compensateRows = -1; // 补偿基准同理作废
     app.openSession(widget.sessionId);
     // 定时任务徽标进页面拉一次即可;放 build 里会随每帧重绘反复打接口
     app.crons(sessionId: widget.sessionId).then((list) {
@@ -191,8 +193,12 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 滚离底部看历史期间的一次性锁位:回合进行中新增内容会把正在读的内容挪走。
-  /// 帧末量 maxScrollExtent 差值(reverse 列表 = 底部侧新增量),只在
-  /// 「不在底部 + 非拖动 + 回合在跑 + 没在做回底动画」时补偿;一帧只排一次。
+  /// 量**内容总高度**(maxScrollExtent + viewportDimension)而不是 maxScrollExtent,
+  /// 只在「不在底部 + 非拖动 + 回合在跑 + 没在做回底动画」时补偿;一帧只排一次。
+  ///
+  /// 为什么用内容总高度:maxScrollExtent = 内容高度 − **视口**高度,而流式面板
+  /// 一长高视口就变 → 被误当成"内容增长"补一笔,表现成"手停下看历史还是会滑,
+  /// 滑得不多"(实测反馈)。改用总高度后,视口变化不再触发补偿。
   void _queueScrollCompensation() {
     if (_compensateQueued || _dragging || !chat.running || _animatingToBottom) return;
     if (!_listCtrl.hasClients) return;
@@ -200,14 +206,22 @@ class _ChatPageState extends State<ChatPage> {
     // 那时 offset 在几像素到几十像素之间,用 60px 阈值会漏补偿 —— 表现就是
     // "不把我拉到底,但内容一点点往下移"(实测反馈)。
     if (_listCtrl.position.pixels <= kBottomPx) return;
-    final before = _listCtrl.position.maxScrollExtent;
+    final pos0 = _listCtrl.position;
+    // 换底(内容整体替换)不补偿:行数一次性暴涨时 maxScrollExtent 也跟着暴涨,
+    // 按差值补等于把用户弹飞几屏("向下闪几屏",实测反馈);而且换底后看的内容
+    // 已经不是同一批,锚定本身就没意义。
+    final rowsNow = chat.rows.length;
+    final jumped = _compensateRows >= 0 && (rowsNow - _compensateRows).abs() > kMaxFreshRows;
+    _compensateRows = rowsNow;
+    if (jumped) return;
+    final before = pos0.maxScrollExtent + pos0.viewportDimension; // 内容总高度
     _compensateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _compensateQueued = false;
       if (!mounted || !_listCtrl.hasClients || _dragging || _animatingToBottom) return;
       final pos = _listCtrl.position;
       if (pos.pixels <= kBottomPx) return; // 已经回到底部:让它自然跟随
-      final delta = pos.maxScrollExtent - before;
+      final delta = (pos.maxScrollExtent + pos.viewportDimension) - before;
       if (!shouldLockScroll(
         offset: pos.pixels,
         delta: delta,
