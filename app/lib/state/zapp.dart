@@ -323,9 +323,17 @@ class ZApp extends ChangeNotifier {
   Future<void> openSession(String id) async {
     // 同会话刷新时保留待审批卡片:审批请求不落库,REST 重建不出来;
     // 丢了卡片没人能批,服务端 runtime 会一直等(INTERACTIVE 工具无超时)→ 会话卡死。
+    final switching = currentSessionId != id;
     final keepPermission = currentSessionId == id ? chat.pendingPermission : null;
+    final liveBeforeLoad = currentSessionId == id ? chat : null;
     currentSessionId = id;
-    chat = const ChatState();
+    if (switching) {
+      chat = const ChatState(); // 切会话:先清,等首屏
+    } else {
+      // 同会话刷新:旧内容原地保留(stale-while-revalidate)。先清空再拉的话,
+      // 网络一抖(实测:WS 掉线与 REST 超时同秒发生)拉取失败 = 列表全白,即
+      // 「回复中突然卡住/白屏」的根因;保留旧内容最坏也就是旧数据+一条错误提示。
+    }
     historyLoading = true;
     error = null;
     _dropDeltas(); // 旧会话的在途流式尾巴不跟进新会话
@@ -333,7 +341,7 @@ class ZApp extends ChangeNotifier {
     _backfill = null;
     final bf = _Backfill(id);
     _backfill = bf; // 先挂缓冲再拉取:补齐窗口内到达的 WS 事件留底,换底重放不丢
-    ZLog.i('open', 'openSession $id (token=$token)');
+    ZLog.i('open', 'openSession $id (token=$token, switching=$switching)');
     notifyListeners();
     try {
       final first = await _api.messages(id, limit: 500, offset: 0);
@@ -347,6 +355,7 @@ class ZApp extends ChangeNotifier {
       if (keepPermission != null && st.pendingPermission == null) {
         st = _withPermission(st, keepPermission);
       }
+      if (liveBeforeLoad != null) st = _keepLiveState(st, liveBeforeLoad);
       chat = st;
       historyLoading = false;
       _armBlankWatchdog();
@@ -381,19 +390,9 @@ class ZApp extends ChangeNotifier {
       _backfill = null;
       ZLog.i('open', 'swap rows=${full.rows.length} lastSeq=${full.lastSeq}');
       if (currentSessionId == id) {
-        // 换底不能把 subscribed/实时事件已设定的 running 冲掉:保留它,
-        // 重建本身不推断 running(_replay 已归零),实时态只由 subscribed/终态事件驱动。
-        full = ChatState(
-          rows: full.rows,
-          lastSeq: full.lastSeq,
-          running: chat.running,
-          streamingText: full.streamingText,
-          streamingThinking: full.streamingThinking,
-          usage: full.usage,
-          pendingPermission: full.pendingPermission,
-          upstreamPhase: full.upstreamPhase,
-          upstreamAt: full.upstreamAt,
-        );
+        // 换底不能把 subscribed/实时事件已设定的 running 冲掉:保留它
+        // (重建本身不推断 running,实时态只由 subscribed/终态事件驱动)。
+        full = _keepLiveState(full, chat);
         chat = full;
         notifyListeners();
       }
@@ -402,9 +401,26 @@ class ZApp extends ChangeNotifier {
       _backfill = null;
       historyLoading = false;
       error = '$e';
-      ZLog.e('open', 'openSession $id 失败: $e(rows 保持空,等用户重试)');
+      // 同会话刷新失败:旧内容仍在(不再白屏);切换失败:留在空态+错误条
+      ZLog.e('open', 'openSession $id 失败: $e(${switching ? '新会话,留空态' : '旧内容原地保留'})');
       notifyListeners();
     }
+  }
+
+  /// 重建态叠加实时态:REST/_replay 重建不推断 running,换底时以会话当前的
+  /// 实时字段(subscribed/终态/上游相位)为准,只取 rows/lastSeq/用量/审批卡。
+  ChatState _keepLiveState(ChatState fresh, ChatState live) {
+    return ChatState(
+      rows: fresh.rows,
+      lastSeq: fresh.lastSeq,
+      running: live.running,
+      streamingText: fresh.streamingText,
+      streamingThinking: fresh.streamingThinking,
+      usage: fresh.usage,
+      pendingPermission: fresh.pendingPermission,
+      upstreamPhase: fresh.upstreamPhase,
+      upstreamAt: fresh.upstreamAt,
+    );
   }
 
   /// 消息页(rows)→ 出站事件列表 + 最大 seq。

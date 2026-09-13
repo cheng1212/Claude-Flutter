@@ -188,7 +188,7 @@ void main() {
     };
     final opening = app.openSession('s1');
     await pump();
-    expect(app.chat.rows, isEmpty, reason: '刷新先清屏,乐观行此刻已不在');
+    expect(app.chat.rows.length, 1, reason: '刷新期间旧内容原地保留(不再清屏白屏),乐观行用户可见');
     // ③ 服务器落库 + 回显:刷新窗口内到达 → 落进 _backfill.extra
     channel.serverPush({'kind': 'text', 'role': 'user', 'content': '我刚发的', 'seq': 2, 'sessionId': 's1'});
     await pump();
@@ -552,6 +552,76 @@ void main() {
     expect(app.queueCount('s1'), 1);
     await app.deleteSession('s1');
     expect(app.queueCount('s1'), 0);
+  });
+
+  test('同会话刷新失败:旧内容原地保留(白屏根治)', () async {
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => {
+              'messages': [
+                {'seq': 1, 'meta': {'kind': 'text', 'role': 'user', 'seq': 1, 'content': '历史消息'}},
+              ],
+              'total': 1,
+            },
+        };
+    await app.bootstrap();
+    await app.openSession('s1');
+    expect(app.chat.rows.length, 1);
+    // 刷新:让 messages 请求失败(模拟网络抖动/REST 超时)
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => Exception('网络抖动'),
+        };
+    await app.openSession('s1');
+    expect(app.chat.rows.length, 1, reason: '刷新失败不清空旧内容——「回复中白屏卡住」根治');
+    expect(app.error, isNotNull);
+    expect(app.historyLoading, isFalse);
+  });
+
+  test('切会话失败:新会话留空态,不残留上一个会话的行', () async {
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => {
+              'messages': [
+                {'seq': 1, 'meta': {'kind': 'text', 'role': 'user', 'seq': 1, 'content': 's1 的消息'}},
+              ],
+              'total': 1,
+            },
+        };
+    await app.bootstrap();
+    await app.openSession('s1');
+    expect(app.chat.rows.length, 1);
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => Exception('超时'),
+        };
+    await app.openSession('s2');
+    expect(app.chat.rows, isEmpty, reason: '切会话不允许显示上一个会话的内容');
+    expect(app.error, isNotNull);
+  });
+
+  test('同会话刷新保留 running 实时态(首屏与换底都不冲掉)', () async {
+    http.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          _ => {
+              'messages': [
+                {'seq': 1, 'meta': {'kind': 'text', 'role': 'user', 'seq': 1, 'content': 'q'}},
+              ],
+              'total': 1,
+            },
+        };
+    await app.bootstrap();
+    await app.openSession('s1');
+    app.sendChat('正在回复中');
+    expect(app.chat.running, isTrue);
+    await app.openSession('s1'); // 同会话刷新
+    expect(app.chat.running, isTrue, reason: '刷新不得把实时 running 冲成假空闲');
+    expect(app.chat.rows.length, 1, reason: 'REST 是权威:刷新后以服务器行为准,本地乐观行被替换');
   });
 
   test('createSession 建完拉列表并返回会话行', () async {
