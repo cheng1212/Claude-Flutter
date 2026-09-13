@@ -313,9 +313,13 @@ class ZApp extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshSessions() async {
+  /// 手动刷新:把成败**报给调用方**(页面据此给可见反馈——转圈/条数/失败原因)。
+  Future<({bool ok, int count, String? error})> refreshSessions() async {
+    final before = error;
     await _loadSessions();
     notifyListeners();
+    final failed = error != null && error != before;
+    return (ok: !failed, count: sessions.length, error: failed ? error : null);
   }
 
   /// 打开(或重开刷新)会话:首屏只等最新一页立即上屏,老消息后台补齐后整体换底。
