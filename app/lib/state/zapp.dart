@@ -10,6 +10,11 @@ import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
 
+/// 打开会话时后台补页的上限(每页 500 条 → 最多 1 万条老消息)。
+/// 再往前的历史就不是"打开会话"该干的事了:无限拉会把主线程占满、
+/// 让后续请求超时(实测 8678 行 = 17 页,server 0.13s 返回 app 却报 20s 超时)。
+const int kMaxBackfillPages = 20;
+
 /// 排队中的消息(会话 running 时发的、等上一轮结束后再推的消息)。
 class QueuedMessage {
   const QueuedMessage({required this.id, required this.text, this.images = const []});
@@ -368,7 +373,19 @@ class ZApp extends ChangeNotifier {
     ZLog.i('open', 'openSession $id (token=$token, switching=$switching)');
     notifyListeners();
     try {
-      final first = await _api.messages(id, limit: 500, offset: 0);
+      // 首屏失败自动重试一次:主线程被大会话占满时,HTTP 响应回调会被排到队尾
+      // 而误判超时 —— 不该因此直接落到"空态白屏",等 600ms 主线程喘过来再试。
+      Future<({List<Map<String, dynamic>> messages, int total})> fetchFirst() async {
+        try {
+          return await _api.messages(id, limit: 500, offset: 0);
+        } on Object catch (e) {
+          ZLog.w('open', '首屏失败,600ms 后重试: $e', dedupeKey: 'first-retry-$id');
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          return await _api.messages(id, limit: 500, offset: 0);
+        }
+      }
+
+      final first = await fetchFirst();
       if (token != _openToken) return;
       ZLog.i('open', 'first page rows=${first.messages.length} total=${first.total}');
       final (headEvents, maxSeq) = _histEvents(first);
@@ -396,14 +413,27 @@ class ZApp extends ChangeNotifier {
           first.total <= first.messages.length ? null : _minSeqOf(headEvents);
       // 后台补齐老消息:按 seq 锚点翻更旧页——offset 分页期间若新消息插入(更高 seq),
       // 窗口会整体上移、整段漏掉;锚点(比当前最小 seq 更旧)免疫漂移,翻到底为止。
+      var pages = 0;
       while (beforeSeq != null) {
         final hist = await _api.messages(id, limit: 500, beforeSeq: beforeSeq);
         if (token != _openToken || _backfill != bf) return;
+        pages += 1;
         final (older, _) = _histEvents(hist);
         if (older.isEmpty) break;
         bf.older.addAll(older);
         beforeSeq = _minSeqOf(older);
         if (hist.messages.length < 500) break; // 不足一页 = 已翻到最旧
+        // 每页之间让出一次事件循环:大会话要拉十几页(实测 8678 行 = 17 页),
+        // 连续解析+归约把主线程占满,后续请求的响应回调被排到队尾 ——
+        // server 明明 0.13 秒就返回了,app 却报 20 秒超时 → openSession 失败 → 白屏。
+        // 让出一帧让 HTTP 回调和渲染有机会插进来。
+        await Future<void>.delayed(Duration.zero);
+        if (pages >= kMaxBackfillPages) {
+          // 兜底:超大会话不再无限拉,首屏那 500 条已够看;更旧的等高人手动上滑再补。
+          ZLog.w('open', 'backfill 达上限 $pages 页(共 ${bf.older.length} 条老消息),停止继续拉',
+              dedupeKey: 'backfill-cap');
+          break;
+        }
       }
       var full = _replay([...headEvents, ...bf.older, ...bf.extra], maxSeq);
       final livePermission = currentSessionId == id ? chat.pendingPermission : null;
