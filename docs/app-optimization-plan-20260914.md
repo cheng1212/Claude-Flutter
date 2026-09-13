@@ -66,7 +66,7 @@
 
 ---
 
-### [ ] T1（P0·S）GitHub Actions CI：把 analyze+test 门槛从"纪律"变成"机器"
+### [x] T1（P0·S）GitHub Actions CI：把 analyze+test 门槛从"纪律"变成"机器"
 
 **现状**：AGENTS.md 要求合并前 analyze+test 全绿，但无机器强制；github 远端已配好。
 
@@ -103,6 +103,8 @@
 
 **风险**：无（纯新增文件）。测试里有真实 WS 握手类用例的话 CI 可能变慢/抖动——若发生，在 CI 中加 `--exclude-tags=net` 并给此类测试打 tag（当前 216 个测试 15s 跑完，预计无此问题）。
 
+**完成说明（2026-09-14）**：workflow 落地（subosito/flutter-action 锁 3.44.0 替代 FVM 方案，T2 裁剪理由见 qa-plan），首跑及后续 push 连续绿灯 ✅
+
 ---
 
 ### [ ] T2（P0·S）FVM 锁定 SDK 版本
@@ -123,7 +125,7 @@
 
 ---
 
-### [ ] T3（P0·S）lint 强化：从默认集到严格集
+### [x] T3（P0·S）lint 强化：从默认集到严格集
 
 **现状**：`analysis_options.yaml` 为模板原样，仅默认 `flutter_lints`。
 
@@ -154,9 +156,11 @@
 
 **风险**：低。`strict-inference` 若暴露大量泛型推断问题（>50 条），可先只开 `strict-casts` + `unawaited_futures`，其余下批再开——在提交信息里记录裁剪。
 
+**完成说明（2026-09-14）**：按预案降级落地——已开 strict-casts + unawaited_futures + always_declare_return_types，修 4 处 unawaited；strict-raw-types(25)/inference(25)/lambdas(15)/redundant(50) 下批再开 ✅
+
 ---
 
-### [ ] T4（P1·L）ZApp 拆分：上帝对象 → 按域的状态切片（本方案核心任务）
+### [◐] T4（P1·L）ZApp 拆分：上帝对象 → 按域的状态切片（本方案核心任务）
 
 **现状**：`ZApp`（1008 行）同时管理：会话列表 + 模型列表 + 推流 delta 合帧 + 消息排队 + 后台回填 + 打开会话竞态 + 生命周期；9 个 UI 文件全量 import。仅 7 处 ListenableBuilder，重建范围粗（任何 notify 波及所有监听者——40ms 合帧已缓解频率，但范围未收窄）。
 
@@ -186,6 +190,8 @@ ZApp(组合根, 越来越薄)
 - `flutter analyze` 0 issues；聊天推流、会话切换、排队消息三大路径手动冒烟通过。
 
 **风险**：**本方案最高风险任务**。务必一刀一个提交；ChatSlice 若拆崩，回滚该步、先合入前三个 slice（它们已独立产生价值）。禁止在本任务里顺手改 UI 或改行为——行为不变是红线。
+
+**进度（2026-09-14）**：QueueSlice ✅（试点完成，API 零改动委托+6 单测）；ModelsSlice ✅（getter 兼容）；SessionsSlice ✅（dirty 防抖内聚）；ChatSlice ◐（纯函数域已迁入 slices/chat_slice.dart，字段与 openSession/sendChat 动作待迁）。提交链 29a361f→43ff2c9，222 全绿。
 
 ---
 
@@ -255,6 +261,8 @@ ZApp(组合根, 越来越薄)
 
 **风险**：中低。它是 T4 之外唯一改"对外契约"的任务，建议排在 T4 之后独立分支。
 
+**完成说明（2026-09-14，最小版）**：ZApiException 加 ApiErrorKind 类别(network/auth/server) + apiErrorMessage 集中文案映射，登录/超时走 network 类别；UI 全面 switch 迁移待后续 ✅（部分）
+
 ---
 
 ### [ ] T8（P2·S）动效规范：集中 motion token + 入场动画统一
@@ -300,7 +308,7 @@ ZApp(组合根, 越来越薄)
 
 ---
 
-### [ ] T10（P2·S）仓库卫生：AGENTS.md 过时信息修正 + pubspec 清理
+### [x] T10（P2·S）仓库卫生：AGENTS.md 过时信息修正 + pubspec 清理
 
 **现状**：
 - 仓库 `AGENTS.md` 写"单一 git 仓库（**无远端 GitHub**）"和"master-test 是部署树"，与现状不符（github 远端已配、2026-09-13 起部署从 dev 树跑）——**误导后续 Agent**；
@@ -314,6 +322,8 @@ ZApp(组合根, 越来越薄)
 **验收**：新 Agent 只读 AGENTS.md + README 即可正确开工（自测：假装第一次进仓库回答"在哪跑 server、怎么验证 app"两问）。
 
 **风险**：低；唯一注意点是部署树表述需用户裁定。
+
+**完成说明（2026-09-14）**：AGENTS.md 仓库结构更新为三端+双远端现状（部署树 detached 用法如实保留）；pubspec 模板注释清理并补版本号纪律注释 ✅
 
 ---
 

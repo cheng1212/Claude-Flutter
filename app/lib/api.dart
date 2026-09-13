@@ -5,7 +5,7 @@ import 'dart:math' show min;
 import 'http_default.dart';
 import 'http_fn.dart';
 
-export 'http_fn.dart' show HttpFn, ZApiException;
+export 'http_fn.dart' show HttpFn, ZApiException, ApiErrorKind, apiErrorMessage;
 
 class ZApi {
   ZApi({required this.baseUrl, required this.token, HttpFn? http})
@@ -21,7 +21,7 @@ class ZApi {
       // 行已被清空却等不到首屏,整页白屏卡死(「回到底部」药丸是残留态)。
       return await _http(method, path, body).timeout(const Duration(seconds: 20));
     } on TimeoutException {
-      throw ZApiException('请求超时(20s): $method $path');
+      throw const ZApiException('请求超时(20s)', kind: ApiErrorKind.network);
     } on ZApiException {
       rethrow;
     } on Object catch (e) {
