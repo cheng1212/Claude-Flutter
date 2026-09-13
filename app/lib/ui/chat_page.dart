@@ -722,8 +722,7 @@ class _ChatPageState extends State<ChatPage> {
     'error': '错误',
   };
 
-  String _fmtTokens(int n) =>
-      n >= 10000 ? '${(n / 1000).toStringAsFixed(n >= 100000 ? 0 : 1)}k' : '$n';
+  String _fmtTokens(int n) => fmtTokens(n); // 按量级自适应单位(K/M/G),规则见 session_utils.fmtTokens
 
   Widget _usageSection(String title, List<Widget> rows) {
     return Padding(

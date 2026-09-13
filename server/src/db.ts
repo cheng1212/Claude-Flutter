@@ -107,7 +107,22 @@ export type SessionListRow = Omit<SessionRow, 'tags'> & {
   last_preview: string;
   last_status: string | null;
   project: string | null;
+  /** 累计消耗 Token(输入+输出+缓存读写),列表徽章直接用 */
+  totalTokens: number;
 };
+
+/** 会话累计消耗 Token:一次分组扫描 runs(JSON 字段求和),避免逐行子查询。 */
+function sessionTokenTotals(db: Db): Map<string, number> {
+  const rows = db.prepare(`
+    SELECT session_id,
+      SUM(COALESCE(json_extract(usage,'$.inputTokens'),0)
+        + COALESCE(json_extract(usage,'$.outputTokens'),0)
+        + COALESCE(json_extract(usage,'$.cacheReadInputTokens'),0)
+        + COALESCE(json_extract(usage,'$.cacheCreationInputTokens'),0)) AS total
+    FROM runs WHERE usage IS NOT NULL GROUP BY session_id
+  `).all() as { session_id: string; total: number | null }[];
+  return new Map(rows.map((r) => [r.session_id, r.total ?? 0]));
+}
 
 export function listSessions(db: Db): SessionListRow[] {
   // last_message:最后一条文本消息截 120 字做列表副标题(认会话全靠它,不全靠标题)
@@ -129,6 +144,7 @@ export function listSessions(db: Db): SessionListRow[] {
     FROM sessions s
     ORDER BY s.is_pinned DESC, s.updated_at DESC
   `).all() as (SessionRow & { __kind?: string | null; __content?: string | null; __meta?: string | null })[];
+  const tokenTotals = sessionTokenTotals(db);
   return rows.map((r) => {
     const kind = r.__kind ?? '';
     const content = r.__content ?? '';
@@ -147,7 +163,7 @@ export function listSessions(db: Db): SessionListRow[] {
     let tags: unknown = [];
     try { tags = JSON.parse(r.tags ?? '[]'); } catch { tags = []; }
     const { __kind: _k, __content: _c, __meta: _m, ...rest } = r;
-    return { ...rest, last_preview: preview, project, last_status: r.last_status ?? null, tags: tags as string[] };
+    return { ...rest, last_preview: preview, project, last_status: r.last_status ?? null, tags: tags as string[], totalTokens: tokenTotals.get(r.id) ?? 0 };
   });
 }
 

@@ -1095,6 +1095,7 @@ class _SessionsPageState extends State<SessionsPage> {
     final tags = tagsOf(s);
     final cronIso = _cronNext['${s['id']}'];
     final subagents = (s['subagentCount'] as num?)?.toInt() ?? 0;
+    final totalTokens = (fieldOf(s, ['totalTokens', 'total_tokens']) as num?)?.toInt() ?? 0;
 
     return HardCard(
       color: _picking && checked ? ZT.primary.withValues(alpha: 0.10) : ZT.surface,
@@ -1148,6 +1149,7 @@ class _SessionsPageState extends State<SessionsPage> {
               if ('${s['source'] ?? ''}' == 'local') _pill('本地', 'local'),
               if (subagents > 0) _pill('子代理 $subagents', 'subagent'),
               if (model.isNotEmpty) _pill(model, 'model', maxWidth: 120),
+              if (totalTokens > 0) _pill('⚡ ${fmtTokens(totalTokens)}', 'model', maxWidth: 96),
               if (project.isNotEmpty) _pill(project, 'project', maxWidth: 96),
               for (final t in tags.take(2)) _pill(t, 'tag', maxWidth: 88),
             ]),

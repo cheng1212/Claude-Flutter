@@ -132,6 +132,20 @@ describe('会话管理增强', () => {
     const t2 = listSessions(db).find(r => r.id === s2.id) as unknown as { last_preview: string };
     expect(t2.last_preview).toBe('🔧 Bash');
   });
+
+  it('listSessions 附带累计 totalTokens(输入+输出+缓存读写,跨 run 求和;无 run 为 0)', () => {
+    const db = openDb(':memory:');
+    const s = createSession(db, { title: '用量' });
+    const r1 = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, r1.id, { status: 'success', usage: { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 200, cacheCreationInputTokens: 10 } });
+    const r2 = createRun(db, s.id, 'glm-5.3-flash');
+    finishRun(db, r2.id, { status: 'success', usage: { inputTokens: 30, outputTokens: 20 } });
+    const row = listSessions(db).find(r => r.id === s.id) as unknown as { totalTokens: number };
+    expect(row.totalTokens).toBe(410); // (100+50+200+10) + (30+20)
+    const bare = createSession(db, { title: '没跑过' });
+    const bareRow = listSessions(db).find(r => r.id === bare.id) as unknown as { totalTokens: number };
+    expect(bareRow.totalTokens).toBe(0);
+  });
 });
 
 describe('会话导出', () => {

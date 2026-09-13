@@ -16,6 +16,17 @@ dynamic fieldOf(Map<String, dynamic> s, List<String> keys) {
   return null;
 }
 
+/// Token 数按量级自适应单位(不是一律转兆):
+/// <1000 原数(`872`);百万内 K(`1.2K`/`482K`);十亿内 M 即兆(`12.3M`/`104.8M`);
+/// 再往上 G。数值 ≥100(该单位)取整,否则留一位小数。
+String fmtTokens(num n) {
+  if (n < 1000) return '$n';
+  String f(double v) => v >= 100 ? v.round().toString() : v.toStringAsFixed(1);
+  if (n < 1000000) return '${f(n / 1000)}K';
+  if (n < 1000000000) return '${f(n / 1000000)}M';
+  return '${f(n / 1000000000)}G';
+}
+
 List<String> tagsOf(Map<String, dynamic> s) {
   final raw = fieldOf(s, ['tags']);
   if (raw is List) return [for (final t in raw) '$t'];
