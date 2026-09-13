@@ -320,17 +320,6 @@ class ZApp extends ChangeNotifier {
   /// 选择器打开时的兜底重拉,成功后刷新状态。
   Future<List<Map<String, dynamic>>> apiGroups() => modelsSlice.reloadGroups();
 
-  Future<void> _loadSessions({bool silent = false}) async {
-    try {
-      sessions = await _api.sessions();
-    } on Object catch (e) {
-      // 后台自动刷新(定时/事件驱动)失败保持静默:一次 REST 抖动不该在聊天页顶上弹错误条
-      if (!silent) error = '$e';
-    } finally {
-      sessionsLoaded = true;
-    }
-  }
-
   /// 手动刷新:把成败**报给调用方**(页面据此给可见反馈——转圈/条数/失败原因)。
   Future<({bool ok, int count, String? error})> refreshSessions() async {
     final before = error;
