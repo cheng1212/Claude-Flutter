@@ -51,8 +51,8 @@ export function modelGroupOf(modelId: string): { id: string; label: string } {
   if (id.startsWith('zcode-')) return { id: 'zcode', label: 'ZCode 中转' };
   if (id.startsWith('go-') || id.startsWith('anthropic/go-')) return { id: 'opencode', label: 'OpenCode' };
   if (id.includes('glm')) return { id: 'zhipu', label: '智谱 GLM' };
-  // -nim 结尾是 NVIDIA 托管,要在 deepseek 之前判
-  if (/nvidia|nemotron|minimax|-nim$/.test(id)) return { id: 'nvidia', label: '英伟达' };
+  // -nim 结尾是 NVIDIA 托管,要在 deepseek 之前判;nv- 前缀 = 4002 轮询代理模型(nv-gpt-oss-20b 不含 nemotron)
+  if (/^nv-|nvidia|nemotron|minimax|-nim$/.test(id)) return { id: 'nvidia', label: '英伟达' };
   if (id.includes('deepseek')) return { id: 'deepseek', label: '深度求索' };
   return { id: 'other', label: '其他' };
 }
