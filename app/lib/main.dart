@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'debug_log.dart';
 import 'ui/chat_page.dart';
 import 'state/zapp.dart';
 import 'theme.dart';
@@ -16,6 +17,7 @@ import 'ws.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ZLog.install(); // 诊断日志:框架异常/主线程卡顿自动留证,设置里可复制
   await Notify.init();
   runApp(const ZCodeApp());
 }

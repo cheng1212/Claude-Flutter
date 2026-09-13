@@ -1,4 +1,5 @@
 // zcode-server REST 客户端(Bearer token)。HTTP 实现按平台条件导入。
+import 'dart:async' show TimeoutException;
 import 'dart:convert' show base64Encode;
 import 'dart:math' show min;
 import 'http_default.dart';
@@ -16,7 +17,11 @@ class ZApi {
 
   Future<Object?> _call(String method, String path, Object? body) async {
     try {
-      return await _http(method, path, body);
+      // 20s 超时:没有它,服务器挂起时 openSession 的 await 永不返回——
+      // 行已被清空却等不到首屏,整页白屏卡死(「回到底部」药丸是残留态)。
+      return await _http(method, path, body).timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      throw ZApiException('请求超时(20s): $method $path');
     } on ZApiException {
       rethrow;
     } on Object catch (e) {
