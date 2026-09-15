@@ -3,6 +3,7 @@ import { query as defaultQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { ThinkingConfig } from '@anthropic-ai/claude-agent-sdk';
 import { transformMessage } from './transform.js';
 import { startsBackgroundWork, type ProtocolEvent } from './types.js';
+import { sanitizeCliError } from './cli-error-sanitize.js';
 import { resolveClaudeExecutable } from './cli-path.js';
 
 type AnyRecord = Record<string, unknown>;
@@ -471,7 +472,9 @@ export class SessionRuntime {
             emitTerminal(1, true);
           } else if (!terminalSent) {
             const message = error instanceof Error ? error.message : String(error);
-            this.opts.emit({ kind: 'error', content: message });
+            // 上游/SDK 的内部诊断帧不直接怼给用户(实测天书):原文落日志,用户拿可读提示
+            const message2 = sanitizeCliError(message);
+            this.opts.emit({ kind: 'error', content: message2 });
             emitTerminal(1, false);
           }
         } finally {
