@@ -217,6 +217,22 @@ class _ChatPageState extends State<ChatPage> {
     _queueAnchorGrowth(delta);
   }
 
+  /// 从 [root] 向下找最近的 [RenderAbstractViewport]。
+  ///
+  /// 为什么不用 [RenderAbstractViewport.of]:`ScrollPosition.context` 的
+  /// notificationContext 指向 Scrollable 自己的 RawGestureDetector,而它包在
+  /// 视口**外面** —— 拿它向上找永远找不到(debug 断言 / release 抛 TypeError),
+  /// 于是每次内容变化都炸一次、锚定形同虚设。向下的第一个视口才是要的那个。
+  RenderAbstractViewport? _viewportUnder(RenderObject? root) {
+    if (root == null) return null;
+    if (root is RenderAbstractViewport) return root;
+    RenderAbstractViewport? found;
+    root.visitChildren((child) {
+      found ??= _viewportUnder(child);
+    });
+    return found;
+  }
+
   /// 采样视口顶(最旧端)第一条可见**历史行**。头部槽(计划面板/加载提示)
   /// 与流式区(列表外)不锚:头部槽身份不稳,锚它会引入抖动。
   /// 找不到可锚行返回 null,基线保持原样。
@@ -225,8 +241,8 @@ class _ChatPageState extends State<ChatPage> {
     final pos = _listCtrl.position;
     if (!pos.hasContentDimensions || !pos.hasPixels) return null;
     final ctx = pos.context.notificationContext;
-    final viewport = RenderAbstractViewport.of(ctx?.findRenderObject());
-    if (viewport is! RenderBox) return null;
+    final viewport = _viewportUnder(ctx?.findRenderObject());
+    if (viewport == null) return null;
     RenderSliverMultiBoxAdaptor? sliver;
     viewport.visitChildren((child) {
       if (sliver == null && child is RenderSliverMultiBoxAdaptor) sliver = child;
