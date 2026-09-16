@@ -1457,6 +1457,16 @@ class _ChatPageState extends State<ChatPage> {
   // ------------------------------------------------- 行级长按菜单 / 多选
 
   /// 行级手势层:长按弹动作菜单;多选态下点行 = 勾选。
+  IconData _actionIcon(RowAction a) => switch (a) {
+        RowAction.copyAll => Icons.content_copy_rounded,
+        RowAction.copyPlain => Icons.subject_rounded,
+        RowAction.selectText => Icons.text_fields_rounded,
+        RowAction.quote => Icons.format_quote_rounded,
+        RowAction.multiSelect => Icons.checklist_rounded,
+        RowAction.copyToolInput => Icons.data_object_rounded,
+        RowAction.copyToolOutput => Icons.output_rounded,
+      };
+
   ///
   /// 包在**列表层**而不是各行 widget 内部:一处覆盖全部行类型(用户/助手/思考/
   /// 工具/报错),而且长按气泡留白也算数 —— 原来只有精确长按在文字上才有反应
@@ -1492,24 +1502,55 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 长按浮出动作菜单(微信式:贴着按下的位置,越界由 showMenu 自己收敛)。
+  /// 长按动作栏:Telegram 式底部弹层(全宽大按钮,手指友好,不遮内容不越界)。
+  /// 旧 showMenu 浮窗小菜单贴按压点弹出,下半屏翻转遮挡、菜单项小难点 —— 已弃。
   Future<void> _openRowMenu(ChatRow data, Offset at) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (overlay == null) return;
-    final action = await showMenu<RowAction>(
+    final items = rowMenuFor(data);
+    final action = await showModalBottomSheet<RowAction>(
       context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(at.dx, at.dy, 1, 1),
-        Offset.zero & overlay.size,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
       ),
-      items: [
-        for (final item in rowMenuFor(data))
-          PopupMenuItem<RowAction>(
-            value: item.action,
-            height: 42,
-            // 不写死颜色:文案样式由 theme.popupMenuTheme 按亮暗主题给
-            child: Text(item.label),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+            child: Row(children: [
+              Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: ShapeDecoration(
+                    color: ZT.surfaceHi,
+                    shape: StadiumBorder(side: ZT.inkSide(w: 1)),
+                  ),
+                  child: Text(rowRoleLabel(data),
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: ZT.inkSoft))),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(data is ToolRow ? data.toolName : '消息操作',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          color: ZT.inkFaint,
+                          fontFamily: ZT.mono))),
+            ]),
           ),
-      ],
+          const Divider(height: 1),
+          for (final item in items)
+            ListTile(
+              leading: Icon(_actionIcon(item.action), size: 20, color: ZT.primary),
+              title: Text(item.label,
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+              dense: true,
+              onTap: () => Navigator.pop(context, item.action),
+            ),
+        ]),
+      ),
     );
     if (action == null || !mounted) return;
     await _runRowAction(data, action);
