@@ -304,21 +304,6 @@ abstract final class ZT {
           side: inkSide(),
         ),
       ),
-      // 长按动作菜单(chat_page 的长按菜单是目前唯一的 showMenu):沿用 snackBar
-      // 的双主题口径 —— 柑橘=墨底白字,奶油=白底墨字;item 文案不写死颜色,
-      // 由这里的 textStyle 统一给(PopupMenuItem 会拿它做 DefaultTextStyle)。
-      popupMenuTheme: PopupMenuThemeData(
-        color: _palette.neoShadow ? ZT.ink : surface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 6,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(radius),
-          side: inkSide(),
-        ),
-        textStyle: _palette.neoShadow
-            ? TextStyle(color: ZT.onInk, fontSize: 13.5, fontWeight: FontWeight.w600)
-            : sansStyle.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600),
-      ),
       dialogTheme: DialogThemeData(
         backgroundColor: surface,
         titleTextStyle: sansStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w700),

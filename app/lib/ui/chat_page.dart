@@ -22,10 +22,8 @@ import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'tasks_sheet.dart';
-import 'text_select_sheet.dart';
 import 'toast.dart';
 import '../ws.dart';
-import 'row_actions.dart';
 import 'rows.dart';
 
 /// 单张图片字节上限:超过的整张跳过(data URI 要进 WS 消息体)。
@@ -105,13 +103,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
   bool _queueExpanded = false; // 排队面板折叠/展开(折叠只显示第一条)
-
-  /// 多选批量复制:长按任意消息 → 菜单「多选」进入。
-  /// 收集的是**行对象本身**(按 identical 判身份),不引额外 id —— 与
-  /// chat_scroll_anchor.dart 判行身份的做法一致;行被换底重建时选中自然失效,
-  /// 这正是我们要的语义(旧行已经不存在了)。
-  bool _picking = false;
-  final Set<ChatRow> _picked = <ChatRow>{};
 
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
   Future<void> _openTasks() async {
@@ -249,7 +240,8 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted || !_listCtrl.hasClients) return null;
     final pos = _listCtrl.position;
     if (!pos.hasContentDimensions || !pos.hasPixels) return null;
-    final viewport = _viewportUnder(pos.context.notificationContext?.findRenderObject());
+    final ctx = pos.context.notificationContext;
+    final viewport = _viewportUnder(ctx?.findRenderObject());
     if (viewport == null) return null;
     RenderSliverMultiBoxAdaptor? sliver;
     viewport.visitChildren((child) {
@@ -1205,25 +1197,23 @@ class _ChatPageState extends State<ChatPage> {
     final bgOn = deriveBackgrounds(chat.rows).isNotEmpty;
     return Scaffold(
       backgroundColor: ZT.bg,
-      appBar: _picking
-          ? _pickingAppBar()
-          : AppBar(
-              title: Row(children: [
-                Expanded(
-                  child: Text(_title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.2)),
-                ),
-                // Token 总量只在会话列表卡片上显示(用户要求聊天页不显示,避免标题拥挤)
-                const SizedBox(width: 8),
-                StatusChip(phase: _phase(), compact: true),
-              ]),
-              actions: const [],
-            ),
+      appBar: AppBar(
+        title: Row(children: [
+          Expanded(
+            child: Text(_title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2)),
+          ),
+          // Token 总量只在会话列表卡片上显示(用户要求聊天页不显示,避免标题拥挤)
+          const SizedBox(width: 8),
+          StatusChip(phase: _phase(), compact: true),
+        ]),
+        actions: const [],
+      ),
       body: SafeArea(
         child: Column(children: [
           if (app.socket.state == ZSocketState.reconnecting) _reconnectStrip(),
@@ -1327,10 +1317,9 @@ class _ChatPageState extends State<ChatPage> {
                 );
               },
             ),
-          if (!_searching && !_picking) _queueBar(),
-          if (!_searching && !_picking) _composer(),
-          if (!_searching && !_picking) _quickBar(planOn, subsOn || bgOn),
-          if (!_searching && _picking) _batchBar(),
+          if (!_searching) _queueBar(),
+          if (!_searching) _composer(),
+          if (!_searching) _quickBar(planOn, subsOn || bgOn),
         ]),
       ),
     );
@@ -1454,199 +1443,6 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  // ------------------------------------------------- 行级长按菜单 / 多选
-
-  /// 行级手势层:长按弹动作菜单;多选态下点行 = 勾选。
-  ///
-  /// 包在**列表层**而不是各行 widget 内部:一处覆盖全部行类型(用户/助手/思考/
-  /// 工具/报错),而且长按气泡留白也算数 —— 原来只有精确长按在文字上才有反应
-  /// (SelectableText 的原生选字菜单),长按留白、图片消息、卡片空白处一律没反应,
-  /// 用户的体感就是「长按没反应」。行内文字已一并改为不可选中(见 rows.dart
-  /// MarkdownBody.selectable 的说明),长按手势才能完整归这里。
-  Widget _wrapRow(ChatRow data, Widget row) {
-    if (_picking) {
-      final on = _picked.contains(data);
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _togglePick(data),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 11, right: 8),
-            child: Icon(
-              on ? Icons.check_circle_rounded : Icons.circle_outlined,
-              size: 17,
-              color: on ? ZT.primary : ZT.inkFaint,
-            ),
-          ),
-          Expanded(child: row),
-        ]),
-      );
-    }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      // 用按下的**全局坐标**定位菜单,不做 RenderBox 换算:行在 reverse 列表里被
-      // 回收/复用,拿 box 反而容易算歪。
-      onLongPressStart: (d) => _openRowMenu(data, d.globalPosition),
-      child: row,
-    );
-  }
-
-  /// 长按浮出动作菜单(微信式:贴着按下的位置,越界由 showMenu 自己收敛)。
-  Future<void> _openRowMenu(ChatRow data, Offset at) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (overlay == null) return;
-    final action = await showMenu<RowAction>(
-      context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(at.dx, at.dy, 1, 1),
-        Offset.zero & overlay.size,
-      ),
-      items: [
-        for (final item in rowMenuFor(data))
-          PopupMenuItem<RowAction>(
-            value: item.action,
-            height: 42,
-            // 不写死颜色:文案样式由 theme.popupMenuTheme 按亮暗主题给
-            child: Text(item.label),
-          ),
-      ],
-    );
-    if (action == null || !mounted) return;
-    await _runRowAction(data, action);
-  }
-
-  Future<void> _runRowAction(ChatRow data, RowAction action) async {
-    switch (action) {
-      case RowAction.selectText:
-        await showTextSelectSheet(
-          context,
-          title: rowRoleLabel(data),
-          text: selectableTextFor(data),
-        );
-      case RowAction.quote:
-        if (chat.running) {
-          showToast(context, '当前回合运行中,结束后再引用发送');
-          return;
-        }
-        app.sendChat(
-            '【引用 ${rowRoleLabel(data)} 的消息】\n${rowCopyText(data)}\n\n请基于以上内容继续');
-      case RowAction.multiSelect:
-        _enterPicking(data);
-      case RowAction.copyAll:
-      case RowAction.copyPlain:
-      case RowAction.copyToolInput:
-      case RowAction.copyToolOutput:
-        final text = copyPayloadFor(data, action) ?? '';
-        if (text.trim().isEmpty) {
-          showToast(context, '这条没有可复制的文字');
-          return;
-        }
-        await _copyText(text);
-    }
-  }
-
-  Future<void> _copyText(String text) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    await HapticFeedback.selectionClick();
-    if (mounted) showToast(context, '已复制');
-  }
-
-  void _enterPicking(ChatRow first) => setState(() {
-        _picking = true;
-        _picked
-          ..clear()
-          ..add(first);
-      });
-
-  void _exitPicking() => setState(() {
-        _picking = false;
-        _picked.clear();
-      });
-
-  void _togglePick(ChatRow row) => setState(() {
-        if (!_picked.remove(row)) _picked.add(row);
-      });
-
-  void _pickAll() => setState(() {
-        final all = chat.rows.toSet();
-        if (all.isNotEmpty && _picked.containsAll(all)) {
-          _picked.clear();
-        } else {
-          _picked
-            ..clear()
-            ..addAll(all);
-        }
-      });
-
-  /// 复制已选:按**时间正序**(聊天顺序,不是勾选顺序)拼接,带角色前缀。
-  Future<void> _copyPicked() async {
-    final ordered = chat.rows.where(_picked.contains).toList();
-    if (ordered.isEmpty) {
-      showToast(context, '还没选消息');
-      return;
-    }
-    await _copyText(composeSelection(ordered));
-    if (mounted) _exitPicking();
-  }
-
-  /// 多选态的顶部条(替换普通标题):对齐会话页 _pickingAppBar 的既有做法。
-  AppBar _pickingAppBar() {
-    final all = chat.rows;
-    final allPicked = all.isNotEmpty && _picked.length >= all.length;
-    return AppBar(
-      leading: IconButton(
-        tooltip: '退出多选',
-        icon: const Icon(Icons.close_rounded, size: 22),
-        onPressed: _exitPicking,
-      ),
-      title: Text('已选 ${_picked.length} / ${all.length}',
-          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900, color: ZT.ink)),
-      actions: [
-        IconButton(
-          tooltip: allPicked ? '取消全选' : '全选',
-          icon: Icon(allPicked ? Icons.deselect_rounded : Icons.select_all_rounded,
-              size: 21),
-          onPressed: _pickAll,
-        ),
-        const SizedBox(width: 4),
-      ],
-    );
-  }
-
-  /// 多选态的底部条:替换输入区(批量选择时不该还能打字/发消息)。
-  Widget _batchBar() {
-    final enabled = _picked.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
-      child: Opacity(
-        opacity: enabled ? 1 : 0.45,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(ZT.radius),
-          onTap: enabled ? _copyPicked : null,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 11),
-            decoration: ShapeDecoration(
-              color: ZT.primary,
-              shape: StadiumBorder(
-                  side: BorderSide(width: 1.4, color: ZT.primaryDeep)),
-              shadows: enabled ? ZT.hard(dx: 2, dy: 2) : null,
-            ),
-            child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.content_copy_rounded, size: 15, color: ZT.onInk),
-                  const SizedBox(width: 6),
-                  Text('复制已选 ${_picked.length} 条',
-                      style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800, color: ZT.onInk)),
-                ]),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// reversed 列表:index 0 = 最新,贴着输入框。
   Widget _list() {
     final rows = chat.rows;
@@ -1676,8 +1472,7 @@ class _ChatPageState extends State<ChatPage> {
       itemCount: rows.length + 2,
       itemBuilder: (context, i) {
         if (i < rows.length) {
-          final data = rows[rows.length - 1 - i];
-          final row = _wrapRow(data, buildChatRow(data));
+          final row = buildChatRow(rows[rows.length - 1 - i]);
           // reverse 列表 i 越小越新:新增行(未过水位)播 fade+slide 180ms 入场
           if (i < rows.length - freshFrom) {
             return TweenAnimationBuilder<double>(

@@ -9,7 +9,6 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../state/reducer.dart';
 import '../theme.dart';
-import 'row_actions.dart';
 
 
 /// 统一入口:按行类型分发。
@@ -338,12 +337,7 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
     }
     final body = MarkdownBody(
       data: widget.streaming ? balanceFences(data) : data,
-      // 行内文字**不可选中**:长按手势要让给列表层的行级菜单(见 chat_page._list),
-      // 否则长按文字会被 SelectableText 自己的识别器抢走,变成「长按文字出选字菜单、
-      // 长按空白出我们的菜单」这种看运气的行为。要选段走菜单里的「选择文字」二级页
-      // ——那是全 App 唯一保留 SelectableText 的地方(不在回收列表里,选中不会被
-      // 重建冲掉,见 flutter#124787)。
-      selectable: false,
+      selectable: true,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
       // 紧凑开发者风(用户规格 2026-09-12):正文 13.5/h1.55 w400 sans;
@@ -512,7 +506,7 @@ class _CodeBlockState extends State<_CodeBlock> {
           ),
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text(
+            child: SelectableText(
               widget.code,
               style: TextStyle(
                   fontSize: 12, height: 1.55, fontFamily: ZT.mono, color: ZT.onInk),
@@ -589,7 +583,7 @@ class _UserBubbleState extends State<UserBubble> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.row.content.isNotEmpty)
-            Text(
+            SelectableText(
               widget.row.content,
               style: TextStyle(
                   fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
@@ -812,7 +806,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
                 if (_open)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text(
+                    child: SelectableText(
                       text,
                       style: TextStyle(
                           fontSize: 12,
@@ -969,8 +963,16 @@ class _ToolCallCardState extends State<ToolCallCard> {
     );
   }
 
-  /// 展示口径与「复制调用」共用一份实现(见 row_actions.prettyToolInput)。
-  String _prettyInput(Map<String, dynamic> input) => prettyToolInput(input);
+  String _prettyInput(Map<String, dynamic> input) {
+    if (input.isEmpty) return '';
+    final one = input['command'] ?? input['file_path'] ?? input['path'] ?? input['pattern'] ?? input['prompt'];
+    if (one is String && one.isNotEmpty) return one;
+    try {
+      return const JsonEncoder.withIndent('  ').convert(input);
+    } on Object {
+      return '$input';
+    }
+  }
 }
 
 /// 运行中工具卡的走秒:数字在跳 = 命令还活着。长命令(如 flutter build)静默几分钟,
@@ -1067,7 +1069,7 @@ class _DiffView extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(6),
           child: SingleChildScrollView(
-            child: Text.rich(
+            child: SelectableText.rich(
               TextSpan(
                   children: [
                     for (final line in lines)
@@ -1111,7 +1113,7 @@ class _MonoSection extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 240),
             child: SingleChildScrollView(
-              child: Text(
+              child: SelectableText(
                 body,
                 style: TextStyle(
                     fontSize: 11,
@@ -1152,7 +1154,7 @@ class ErrorBlock extends StatelessWidget {
             size: 14, color: color),
         const SizedBox(width: 7),
         Expanded(
-          child: Text(
+          child: SelectableText(
             content,
             style: TextStyle(
                 fontSize: 12.5, height: 1.45, color: color, fontFamily: ZT.mono),
