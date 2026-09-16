@@ -429,4 +429,4 @@ export async function autoLogin(store: ZStore): Promise<boolean> {
 
 /** 登录页默认值:家里局域网的 server 地址与当前令牌,变了用户自己改。 */
 export const DEFAULT_BASE_URL = 'http://192.168.31.194:5190';
-export const DEFAULT_TOKEN = 'O4wRud_d6qcYUBhKWuZm5dkH';
+export const DEFAULT_TOKEN = '123456';

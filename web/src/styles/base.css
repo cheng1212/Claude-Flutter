@@ -43,11 +43,6 @@ body {
   transition: background-color 0.18s ease, color 0.18s ease;
 }
 
-/* 无圆点纹理的主题:atmosphere 若不是 repeating 点阵,步长不影响它 */
-html[data-ztheme='sticker'] body {
-  background-size: var(--z-bg-dot-step) var(--z-bg-dot-step);
-}
-
 h1,
 h2,
 h3,
@@ -61,6 +56,12 @@ h4 {
 button {
   font-family: inherit;
   cursor: pointer;
+}
+
+/* 键盘焦点必须看得见(WCAG 2.4.7):鼠标点击不描边,Tab 导航才描边 */
+:focus-visible {
+  outline: 2.5px solid var(--z-primary);
+  outline-offset: 2px;
 }
 
 input,

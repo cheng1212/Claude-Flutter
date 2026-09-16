@@ -67,7 +67,7 @@ export function UsagePage({ api }: { api: ZApi }) {
         {error && (
           <div className="usage__error">
             <div className="strip strip--error">用量数据加载失败:{error}</div>
-            <button type="button" className="btn-gold" style={{ marginTop: 10 }} disabled={loading} onClick={() => void reload()}>
+            <button type="button" className="btn-gold usage__retry" disabled={loading} onClick={() => void reload()}>
               重新加载
             </button>
           </div>

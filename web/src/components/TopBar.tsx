@@ -4,6 +4,9 @@ import { loadCreds, type ZStore } from '../lib/store';
 import { ZApi } from '../lib/api';
 import { PALETTES, useTheme, setTheme } from '../theme';
 
+const DARK_ID = PALETTES.find((p) => p.isDark)?.id ?? 'graphite';
+const LIGHT_ID = PALETTES.find((p) => !p.isDark)?.id ?? 'citrus';
+
 export type TopView = 'sessions' | 'chat' | 'usage';
 
 function StatusChip({ phase }: { phase: string }) {
@@ -99,14 +102,28 @@ export function TopBar({ store, view, onBack, onNewSession, onUsage }: {
         {view !== 'usage' && (
           <button type="button" className="btn-ghost btn-ghost--sm" onClick={onUsage}>用量</button>
         )}
-        <select
-          aria-label="主题"
-          className="field__input topbar__theme"
-          value={theme.id}
-          onChange={(e) => setTheme(e.target.value)}
-        >
-          {PALETTES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
+        <div className="theme-toggle" role="group" aria-label="亮暗主题切换">
+          <button
+            type="button"
+            className={theme.id === LIGHT_ID ? 'is-on' : ''}
+            aria-pressed={theme.id === LIGHT_ID}
+            aria-label="亮色主题"
+            title={`亮色 · ${LIGHT_ID === 'citrus' ? '柑橘晨光' : LIGHT_ID}`}
+            onClick={() => setTheme(LIGHT_ID)}
+          >
+            ☀
+          </button>
+          <button
+            type="button"
+            className={theme.id === DARK_ID ? 'is-on' : ''}
+            aria-pressed={theme.id === DARK_ID}
+            aria-label="暗色主题"
+            title={`暗色 · ${PALETTES.find((p) => p.isDark)?.label ?? DARK_ID}`}
+            onClick={() => setTheme(DARK_ID)}
+          >
+            🌙
+          </button>
+        </div>
         <button type="button" className="btn-ghost btn-ghost--sm" onClick={() => store.getState().logout()}>登出</button>
       </div>
     </header>

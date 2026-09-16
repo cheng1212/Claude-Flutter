@@ -20,12 +20,17 @@ export function NewSessionDialog({ store, onClose, onOpen }: {
   };
 
   return (
-    <div className="dialog-mask" role="presentation">
-      <div className="dialog" role="dialog" aria-label="新建会话">
+    <div
+      className="dialog-mask"
+      role="presentation"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+    >
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="新建会话">
         <h3 className="dialog__title">新建会话</h3>
         <label className="field">
           <span className="field__label">标题</span>
-          <input aria-label="标题" className="field__input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="可空" />
+          <input autoFocus aria-label="标题" className="field__input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="可空" />
         </label>
         <label className="field">
           <span className="field__label">模型</span>
