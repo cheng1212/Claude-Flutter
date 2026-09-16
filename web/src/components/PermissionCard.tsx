@@ -11,7 +11,7 @@ export function PermissionCard({ req, onAnswer }: {
   try { input = JSON.stringify(req.input, null, 2); } catch { input = String(req.input); }
 
   return (
-    <div className="perm deco-corners">
+    <div className="perm">
       <div className="perm__head">
         <span className="perm__badge">◆</span>
         <span className="perm__title">权限请求 · {req.toolName}</span>

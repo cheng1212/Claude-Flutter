@@ -53,13 +53,19 @@ export function App({ store }: { store: ZStore }) {
           ⚠ {error} —— 点击关闭
         </button>
       )}
-      {sub === 'usage' && api ? (
-        <UsagePage api={api} />
-      ) : currentSessionId ? (
-        <ChatPage store={store} sessionId={currentSessionId} />
-      ) : (
-        <SessionsPage store={store} onOpen={(id) => { store.setState({ currentSessionId: id }); }} />
-      )}
+      <main className="app-main">
+        {sub === 'usage' && api ? (
+          <UsagePage api={api} />
+        ) : currentSessionId ? (
+          <ChatPage store={store} sessionId={currentSessionId} />
+        ) : (
+          <SessionsPage
+            store={store}
+            onOpen={(id) => { store.setState({ currentSessionId: id }); }}
+            onNewSession={() => setShowNew(true)}
+          />
+        )}
+      </main>
       {showNew && (
         <NewSessionDialog
           store={store}

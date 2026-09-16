@@ -42,7 +42,7 @@ describe('App', () => {
   test('shows login when not authed; login reveals sessions; open reveals chat', async () => {
     const { store } = setup();
     render(<App store={store} />);
-    expect(screen.getByText('黑金终端 · 连上你电脑上的 Claude Code')).toBeTruthy();
+    expect(screen.getByText('连上你电脑上的 Claude Code')).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('服务器地址'), 'http://x:5190');
     await user.type(screen.getByLabelText('访问令牌'), 'tk');

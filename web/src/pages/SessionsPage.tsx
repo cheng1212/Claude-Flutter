@@ -16,8 +16,8 @@ function timeLabel(iso: string): string {
 }
 
 /** 会话列表:搜索/项目过滤 + 普通模式点开即聊 + 管理模式多选批量置顶/删除。 */
-export function SessionsPage({ store, onOpen }: {
-  store: ZStore; onOpen: (id: string) => void;
+export function SessionsPage({ store, onOpen, onNewSession }: {
+  store: ZStore; onOpen: (id: string) => void; onNewSession?: () => void;
 }) {
   const sessions = useStore(store, (s) => s.sessions);
   const wsState = useStore(store, (s) => s.wsState);
@@ -77,7 +77,7 @@ export function SessionsPage({ store, onOpen }: {
         </button>
       )}
       <header className="sessions__head">
-        <h2 className="page-title">会 话</h2>
+        <h2 className="page-title">会话</h2>
         <div className="sessions__actions">
           <button
             type="button"
@@ -167,7 +167,15 @@ export function SessionsPage({ store, onOpen }: {
           );
         })}
         {visible.length === 0 && sessions.length > 0 && <li className="session-empty">没有匹配的会话。</li>}
-        {sessions.length === 0 && <li className="session-empty">还没有会话,点右上角新建一个。</li>}
+        {sessions.length === 0 && (
+          <li className="session-empty">
+            <span className="session-empty__glyph" aria-hidden>◆</span>
+            <p>还没有会话</p>
+            {onNewSession && (
+              <button type="button" className="btn-gold" onClick={onNewSession}>＋ 新建第一个会话</button>
+            )}
+          </li>
+        )}
       </ul>
 
       {manage && picked.size > 0 && (
@@ -178,8 +186,13 @@ export function SessionsPage({ store, onOpen }: {
       )}
 
       {renaming && (
-        <div className="dialog-mask" role="presentation">
-          <div className="dialog" role="dialog" aria-label="重命名会话">
+        <div
+          className="dialog-mask"
+          role="presentation"
+          onClick={(e) => { if (e.target === e.currentTarget) setRenaming(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-label="重命名会话">
             <h3 className="dialog__title">重命名会话</h3>
             <label className="field">
               <span className="field__label">标题</span>

@@ -16,9 +16,11 @@ function initialId(): string {
   } catch {
     /* 隐私模式等场景 localStorage 不可用,静默回退默认 */
   }
-  // 用户没手动选过:跟随系统,深色偏好给磷光终端(唯一的深色主题)
+  // 用户没手动选过:跟随系统,深色偏好给暗色主题(isDark 标记的那套)
   try {
-    if (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches) return 'phosphor';
+    if (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches) {
+      return PALETTES.find((p) => p.isDark)?.id ?? DEFAULT_THEME_ID;
+    }
   } catch {
     /* matchMedia 不可用时回退默认 */
   }

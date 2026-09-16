@@ -25,8 +25,8 @@ export function StreamingArea({ running, streamingText, streamingThinking }: {
 
   if (!streamingText && !streamingThinking) {
     return (
-      <div className="stream-skeleton">
-        <span className="dot dot--pulse" />
+      <div className="stream-skeleton" role="status" aria-live="polite">
+        <span className="dot dot--pulse" aria-hidden />
         <span>已送达 · 正在思考</span>
         <span className="mono stream-skeleton__secs">{secs}s</span>
         {secs >= 5 && <span className="stream-skeleton__hint">模型唤醒中,冷启动可能较慢</span>}
