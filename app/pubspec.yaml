@@ -2,7 +2,7 @@
 name: zcode_app
 description: "zCode — 在手机上遥控 Claude Code(连接 zcode-server)。"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 1.5.36+56
+version: 1.5.37+57
 
 environment:
   sdk: ^3.12.0
