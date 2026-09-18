@@ -348,15 +348,17 @@ class _BackgroundsPanelState extends State<BackgroundsPanel> {
   }
 
   ({Color main, Color soft, String label, IconData icon}) _statusStyle(String status) {
+    // main/soft 一律深变体:它们落在小图标、描边与状态小字上,
+    // 鲜色系在浅底不达 4.5:1(文字)/3:1(非文本)。
     switch (status) {
       case 'running':
-        return (main: ZT.aqua, soft: ZT.aqua, label: '运行中', icon: Icons.circle_rounded);
+        return (main: ZT.aquaText, soft: ZT.aquaText, label: '运行中', icon: Icons.circle_rounded);
       case 'completed':
-        return (main: ZT.aqua, soft: ZT.aqua, label: '已完成', icon: Icons.check_circle_rounded);
+        return (main: ZT.aquaText, soft: ZT.aquaText, label: '已完成', icon: Icons.check_circle_rounded);
       case 'failed':
-        return (main: ZT.rose, soft: ZT.rose, label: '失败', icon: Icons.error_outline_rounded);
+        return (main: ZT.roseText, soft: ZT.roseText, label: '失败', icon: Icons.error_outline_rounded);
       case 'paused':
-        return (main: ZT.lemon, soft: ZT.lemon, label: '已暂停', icon: Icons.pause_circle_outline_rounded);
+        return (main: ZT.lemonText, soft: ZT.lemonText, label: '已暂停', icon: Icons.pause_circle_outline_rounded);
       case 'killed':
       case 'stopped':
         return (main: ZT.inkSoft, soft: ZT.inkFaint, label: '已停止', icon: Icons.stop_rounded);

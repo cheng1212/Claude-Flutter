@@ -65,7 +65,6 @@ class _TextSelectSheet extends StatelessWidget {
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: Icon(Icons.close_rounded, size: 18, color: ZT.inkSoft),
                 tooltip: '关闭',
-                visualDensity: VisualDensity.compact,
               ),
             ]),
             const SizedBox(height: 2),
@@ -136,11 +135,11 @@ class _CopyAllButtonState extends State<_CopyAllButton> {
     return TextButton.icon(
       onPressed: _copy,
       icon: Icon(_copied ? Icons.check_rounded : Icons.content_copy_rounded,
-          size: 15, color: _copied ? ZT.aqua : ZT.primaryDeep),
+          size: 15, color: _copied ? ZT.aquaText : ZT.primaryText),
       label: Text(_copied ? '已复制' : '复制全部',
           style: TextStyle(
               fontSize: 12, fontWeight: FontWeight.w800,
-              color: _copied ? ZT.aqua : ZT.primaryDeep)),
+              color: _copied ? ZT.aquaText : ZT.primaryText)),
       style: TextButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         minimumSize: const Size(0, 34),

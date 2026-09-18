@@ -729,7 +729,6 @@ class _SessionsPageState extends State<SessionsPage> {
               suffixIcon: _query.isEmpty
                   ? null
                   : IconButton(
-                      visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.close_rounded, size: 18),
                       onPressed: () {
                         _search.clear();
@@ -903,7 +902,7 @@ class _SessionsPageState extends State<SessionsPage> {
                                 color: _sort == value ? ZT.ink : ZT.inkSoft)),
                         const Spacer(),
                         if (_sort == value)
-                          Icon(Icons.check_rounded, size: 17, color: ZT.primaryDeep),
+                          Icon(Icons.check_rounded, size: 17, color: ZT.primaryText),
                       ]),
                     ),
                   ),
@@ -941,7 +940,7 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: () => Navigator.pop(ctx, _kAllProjects),
             child: Text('全部会话',
                 style: TextStyle(
-                    fontSize: 13.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+                    fontSize: 13.5, fontWeight: FontWeight.w800, color: ZT.primaryText)),
           ),
           const Divider(height: 14),
           if (projects.isEmpty)
@@ -1247,7 +1246,6 @@ class _SessionsPageState extends State<SessionsPage> {
           ],
           if (!_picking)
             IconButton(
-              visualDensity: VisualDensity.compact,
               icon: Icon(Icons.more_vert_rounded, size: 18, color: ZT.inkSoft),
               onPressed: () => _sessionMenu(s),
             ),
@@ -1305,7 +1303,7 @@ class _SessionsPageState extends State<SessionsPage> {
       'local': (ZT.lemon, ZT.lemon),
       'cron': (ZT.lemon, ZT.lemon),
       'subagent': (ZT.grape, ZT.grape),
-      'model': (ZT.primaryDeep, ZT.primaryDeep), // zremote:模型 chip 用深主色
+      'model': (ZT.primaryText, ZT.primaryText), // zremote:模型 chip 用深主色
       'project': (ZT.grape, ZT.grape),
       'tag': (ZT.inkSoft, ZT.inkFaint),
     };
@@ -1471,7 +1469,7 @@ class _SessionsPageState extends State<SessionsPage> {
                     child: Row(children: [
                       Icon(Icons.notifications_active_outlined, size: 16, color: ZT.primary),
                       const SizedBox(width: 8),
-                      Text('发一条测试通知', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.primaryDeep)),
+                      Text('发一条测试通知', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: ZT.primaryText)),
                       const Spacer(),
                       Text('验证铃声/震动', style: TextStyle(fontSize: 11, color: ZT.inkFaint)),
                     ]),
@@ -1559,7 +1557,7 @@ class _SessionsPageState extends State<SessionsPage> {
                       style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: t == current ? ZT.primaryDeep : ZT.inkSoft)),
+                          color: t == current ? ZT.primaryText : ZT.inkSoft)),
                 ]),
               ),
             ),
@@ -1588,7 +1586,7 @@ class _SessionsPageState extends State<SessionsPage> {
             style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                color: selected ? ZT.primaryDeep : ZT.inkSoft)),
+                color: selected ? ZT.primaryText : ZT.inkSoft)),
       ),
     );
   }
@@ -1646,7 +1644,7 @@ class _SessionsPageState extends State<SessionsPage> {
               if (dialogContext.mounted) Navigator.pop(dialogContext);
               if (context.mounted) showToast(context, '诊断日志已复制,贴给开发即可');
             },
-            child: Text('复制全部', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+            child: Text('复制全部', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryText)),
           ),
         ],
       ),

@@ -38,6 +38,20 @@ void main() {
       expect(kZCitrus.borderWidth, 1.6); // 墨线更粗
     });
 
+    test('文字安全深色变体:鲜色锚定不动,深档只新增(可达性口径)', () {
+      // zremote 锚定值原样(primaryDeep 守卫测试钉死,不许漂移)
+      expect(kZCitrus.primaryDeep, const Color(0xFFE05500));
+      // 深变体 = 对 WCAG 1.4.3(文字 4.5:1)/1.4.11(非文本 3:1)的 citrus 专属档
+      expect(kZCitrus.primaryTextSafe, const Color(0xFFB84300));
+      expect(kZCitrus.aquaDeep, const Color(0xFF0A7568));
+      expect(kZCitrus.lemonDeep, const Color(0xFF8A5E00));
+      expect(kZCitrus.roseDeep, const Color(0xFFB23338));
+      expect(kZCitrus.grapeDeep, const Color(0xFF5B3FD6));
+      // 隐藏主题未传深档 → 回落本色,行为不变
+      expect(kZCream.aquaDeep, isNull);
+      expect(ZT.palette.neoShadow, isTrue);
+    });
+
     test('原版奶油调色板保持原值不变', () {
       expect(kZCream.bg, const Color(0xFFFAF6EF));
       expect(kZCream.primary, const Color(0xFFE8590C));

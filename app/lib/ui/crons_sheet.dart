@@ -109,9 +109,9 @@ class CronCard extends StatelessWidget {
         Wrap(spacing: 6, runSpacing: 5, crossAxisAlignment: WrapCrossAlignment.center, children: [
           _chip(
             paused ? '已暂停' : '启用中',
-            fg: paused ? ZT.inkSoft : ZT.aqua,
+            fg: paused ? ZT.inkSoft : ZT.aquaText,
             bg: (paused ? ZT.inkSoft : ZT.aqua).withValues(alpha: 0.14),
-            border: (paused ? ZT.inkSoft : ZT.aqua).withValues(alpha: 0.55),
+            border: (paused ? ZT.inkSoft : ZT.aquaText).withValues(alpha: 0.55),
             bold: true,
           ),
           if (!paused)
@@ -119,9 +119,9 @@ class CronCard extends StatelessWidget {
           Text(cron, style: TextStyle(fontSize: 10.5, fontFamily: ZT.mono, color: ZT.inkFaint)),
           Text('已跑 $runCount 次', style: TextStyle(fontSize: 10.5, color: ZT.inkFaint)),
           if (lastStatus == 'skipped')
-            Text('上次跳过', style: TextStyle(fontSize: 10.5, color: ZT.lemon)),
+            Text('上次跳过', style: TextStyle(fontSize: 10.5, color: ZT.lemonText)),
           if (lastStatus == 'failed')
-            Text('上次失败', style: TextStyle(fontSize: 10.5, color: ZT.rose)),
+            Text('上次失败', style: TextStyle(fontSize: 10.5, color: ZT.roseText)),
         ]),
         const SizedBox(height: 10),
         // —— 四个操作 ——
@@ -130,7 +130,7 @@ class CronCard extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(child: _action('重启', Icons.restart_alt_rounded, ZT.ink, onTap: onRestart)),
           const SizedBox(width: 6),
-          Expanded(child: _action('删除', Icons.delete_outline_rounded, ZT.rose, onTap: onDelete)),
+          Expanded(child: _action('删除', Icons.delete_outline_rounded, ZT.roseText, onTap: onDelete)),
           const SizedBox(width: 6),
           Expanded(child: _action('执行历史', Icons.history_rounded, ZT.ink, onTap: onHistory)),
         ]),
@@ -166,13 +166,13 @@ class CronCard extends StatelessWidget {
           ),
         ),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, size: 13, color: onPrimary ? ZT.onInk : color),
+          Icon(icon, size: 13, color: onPrimary ? ZT.ink : color),
           const SizedBox(width: 4),
           Text(label,
               style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w800,
-                  color: onPrimary ? ZT.onInk : color)),
+                  color: onPrimary ? ZT.ink : color)),
         ]),
       ),
     );
@@ -225,9 +225,9 @@ Future<void> showCronHistory(BuildContext context, ZApp app, String cronId) asyn
                           final r = runs![i];
                           final st = '${r['status']}';
                           final (label, color) = switch (st) {
-                            'success' => ('成功', ZT.aqua),
-                            'skipped' => ('跳过', ZT.lemon),
-                            _ => ('失败', ZT.rose),
+                            'success' => ('成功', ZT.aquaText),
+                            'skipped' => ('跳过', ZT.lemonText),
+                            _ => ('失败', ZT.roseText),
                           };
                           return Row(children: [
                             Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
@@ -428,7 +428,7 @@ class _AllCronsSheetState extends State<AllCronsSheet> {
           sheetHandle(),
           const SizedBox(height: 10),
           Row(children: [
-            Icon(Icons.alarm_rounded, size: 18, color: ZT.lemon),
+            Icon(Icons.alarm_rounded, size: 18, color: ZT.lemonText),
             const SizedBox(width: 8),
             Text('定时任务 · 全部会话', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
           ]),

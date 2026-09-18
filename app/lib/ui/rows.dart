@@ -402,7 +402,7 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
         tableHead: TextStyle(
             fontSize: 12.5, fontWeight: FontWeight.w600, color: ZT.ink),
         tableBody: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink),
-        a: TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w600),
+        a: TextStyle(color: ZT.primaryText, fontWeight: FontWeight.w600),
         horizontalRuleDecoration: BoxDecoration(
           border: Border(top: BorderSide(width: 1, color: ZT.line)),
         ),
@@ -1041,7 +1041,7 @@ class _DiffView extends StatelessWidget {
     if (line.startsWith('+') && !line.startsWith('+++')) return ZT.aqua;
     if (line.startsWith('-') && !line.startsWith('---')) return ZT.rose;
     if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) {
-      return ZT.primaryDeep;
+      return ZT.primaryText;
     }
     return ZT.inkSoft;
   }
@@ -1136,7 +1136,8 @@ class ErrorBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = neutral ? ZT.lemon : ZT.rose;
+    // 描边/图标/标题用深变体:鲜柠檬在浅底上只有 1.5:1,不达非文本 3:1 下限
+    final color = deepOf(neutral ? ZT.lemon : ZT.rose);
     return Container(
       margin: const EdgeInsets.only(top: 8, right: 20),
       padding: const EdgeInsets.all(10),

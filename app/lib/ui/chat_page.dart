@@ -445,7 +445,7 @@ class _ChatPageState extends State<ChatPage> {
           side: BorderSide(color: ZT.edge, width: 1.4),
         ),
         title: Row(children: [
-          Icon(Icons.hourglass_top_rounded, size: 18, color: ZT.primaryDeep),
+          Icon(Icons.hourglass_top_rounded, size: 18, color: ZT.primaryText),
           const SizedBox(width: 8),
           Text('会话正在回复', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: ZT.ink)),
         ]),
@@ -460,7 +460,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, 'now'),
-            child: Text('立即发送', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+            child: Text('立即发送', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryText)),
           ),
         ],
       ),
@@ -1014,7 +1014,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx2, true),
-            child: Text('开始压缩', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+            child: Text('开始压缩', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryText)),
           ),
         ],
       ),
@@ -1286,11 +1286,11 @@ class _ChatPageState extends State<ChatPage> {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                           child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.arrow_downward_rounded, size: 14, color: ZT.primaryDeep),
+                            Icon(Icons.arrow_downward_rounded, size: 14, color: ZT.primaryText),
                             const SizedBox(width: 4),
                             Text('回到底部',
                                 style: TextStyle(
-                                    fontSize: 12, fontWeight: FontWeight.w700, color: ZT.primaryDeep)),
+                                    fontSize: 12, fontWeight: FontWeight.w700, color: ZT.primaryText)),
                           ]),
                         ),
                       ),
@@ -1669,7 +1669,7 @@ class _ChatPageState extends State<ChatPage> {
             decoration: ShapeDecoration(
               color: ZT.primary,
               shape: StadiumBorder(
-                  side: BorderSide(width: 1.4, color: ZT.primaryDeep)),
+                  side: BorderSide(width: 1.4, color: ZT.primaryText)),
               shadows: enabled ? ZT.hard(dx: 2, dy: 2) : null,
             ),
             child: Row(
@@ -1883,7 +1883,7 @@ class _ChatPageState extends State<ChatPage> {
                     shape: StadiumBorder(side: BorderSide(width: 1.2, color: ZT.primary)),
                   ),
                   child: Text('引用发送',
-                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: ZT.primaryText)),
                 ),
               ),
             ),
@@ -1936,7 +1936,7 @@ class _ChatPageState extends State<ChatPage> {
           Text(busy ? '深度思考中……(回到底部看全文)' : '正在回复……(回到底部看全文)',
               style: TextStyle(
                   fontSize: 11.5, fontWeight: FontWeight.w800,
-                  color: busy ? ZT.grape : ZT.primaryDeep)),
+                  color: busy ? ZT.grapeText : ZT.primaryText)),
         ]),
       );
     }
@@ -1954,7 +1954,7 @@ class _ChatPageState extends State<ChatPage> {
                     style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w800,
-                        color: ZT.primaryDeep,
+                        color: ZT.primaryText,
                         letterSpacing: 0.5)),
               ]),
               const SizedBox(height: 3),
@@ -2097,7 +2097,7 @@ class _ChatPageState extends State<ChatPage> {
             if (i > 0)
               _queueIcon(sid, i, Icons.push_pin_outlined, '置顶', ZT.inkSoft),
             _queueIcon(sid, i, Icons.edit_outlined, '修改', ZT.inkSoft),
-            _queueIcon(sid, i, Icons.bolt_rounded, '打断并立即发送', ZT.primaryDeep),
+            _queueIcon(sid, i, Icons.bolt_rounded, '打断并立即发送', ZT.primaryText),
             _queueIcon(sid, i, Icons.delete_outline_rounded, '删除', ZT.rose),
           ]),
         if (!_queueExpanded && q.length > 1)
@@ -2116,7 +2116,6 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _queueIcon(String sid, int index, IconData icon, String tip, Color color) {
     return IconButton(
-      visualDensity: VisualDensity.compact,
       tooltip: tip,
       icon: Icon(icon, size: 17, color: color),
       onPressed: () => _onQueueAction(sid, index, tip),
@@ -2172,7 +2171,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text('保存', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+            child: Text('保存', style: TextStyle(fontWeight: FontWeight.w800, color: ZT.primaryText)),
           ),
         ],
       ),
@@ -2827,7 +2826,7 @@ class _PermissionCardState extends State<PermissionCard> {
                 borderRadius: BorderRadius.circular(5),
               ),
               child: Text(header,
-                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: ZT.primaryDeep)),
+                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: ZT.primaryText)),
             ),
           Expanded(
             child: Text(question,
