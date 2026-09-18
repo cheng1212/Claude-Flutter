@@ -7,12 +7,8 @@
     <meta name="description" content="zCode 网页终端:在浏览器里遥控你电脑上的 Claude Code" />
     <meta name="theme-color" content="#FFF6E9" />
     <title>zCode 终端</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- 字体:改用系统栈(palettes.ts 字体变量仍保留 Outfit/JetBrains Mono 在首位,本机装有则用)。
+         Google Fonts 外链在手机/内网环境加载慢或失败,引发 FOUT 与瞬时布局超宽(2026-09-18 诊断),故移除。 -->
   </head>
   <body>
     <div id="root"></div>

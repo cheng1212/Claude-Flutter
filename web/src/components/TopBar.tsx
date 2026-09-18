@@ -125,6 +125,31 @@ export function TopBar({ store, view, onBack, onNewSession, onUsage }: {
           </button>
         </div>
         <button type="button" className="btn-ghost btn-ghost--sm" onClick={() => store.getState().logout()}>登出</button>
+        {/* 窄屏收纳菜单(≤640px):低频操作(通知/导出/用量/登出)折进「⋯」,高频(新建/主题)留在栏上。
+            副本按钮与上方原位按钮等价;桌面端 CSS 隐藏 details,原位按钮生效;功能零改动。 */}
+        {/* 菜单项点击后自动收起(details 原生不会因内部点击关闭,会挡住内容) */}
+        <details
+          className="topbar__more"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('.topbar__menu-item')) {
+              (e.currentTarget as HTMLDetailsElement).removeAttribute('open');
+            }
+          }}
+        >
+          <summary className="btn-ghost btn-ghost--sm" aria-label="更多操作">⋯</summary>
+          <div className="topbar__menu">
+            {view === 'chat' && (
+              <button type="button" className="topbar__menu-item" onClick={() => void doExport()}>导出会话</button>
+            )}
+            <button type="button" className="topbar__menu-item" onClick={() => void toggleNotify()}>
+              {notifyOn ? '通知:开' : '通知:关'}
+            </button>
+            {view !== 'usage' && (
+              <button type="button" className="topbar__menu-item" onClick={onUsage}>用量统计</button>
+            )}
+            <button type="button" className="topbar__menu-item" onClick={() => store.getState().logout()}>退出登录</button>
+          </div>
+        </details>
       </div>
     </header>
   );

@@ -137,29 +137,34 @@ export function SessionsPage({ store, onOpen, onNewSession }: {
               </button>
               {!manage && (
                 <span className="session-row__ops">
+                  {/* 窄屏时 .btn-txt 被 CSS 隐藏、按钮呈图标形态(aria-label 兜底语义);
+                      桌面端保持文字按钮不变。触控目标窄屏加高至 36px。 */}
                   <button
                     type="button"
-                    className="btn-ghost btn-ghost--sm"
+                    className="btn-ghost btn-ghost--sm session-op" data-op="rename"
                     aria-label={`重命名 ${id}`}
+                    title="改名"
                     onClick={() => setRenaming({ id, title: s.title })}
                   >
-                    改名
+                    <span className="btn-txt">改名</span>
                   </button>
                   <button
                     type="button"
-                    className="btn-ghost btn-ghost--sm"
+                    className="btn-ghost btn-ghost--sm session-op" data-op="pin"
                     aria-label={`置顶 ${id}`}
+                    title="置顶"
                     onClick={() => void store.getState().patchSession(id, { isPinned: !(Number(s.isPinned) === 1 || s.isPinned === true) })}
                   >
-                    置顶
+                    <span className="btn-txt">置顶</span>
                   </button>
                   <button
                     type="button"
-                    className="btn-ghost btn-ghost--sm danger"
+                    className="btn-ghost btn-ghost--sm danger session-op" data-op="del"
                     aria-label={`删除 ${id}`}
+                    title="删除"
                     onClick={() => void store.getState().deleteSession(id)}
                   >
-                    删除
+                    <span className="btn-txt">删除</span>
                   </button>
                 </span>
               )}
