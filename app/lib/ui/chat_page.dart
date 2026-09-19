@@ -676,6 +676,8 @@ class _ChatPageState extends State<ChatPage> {
     );
     if (picked == null || picked == current) return;
     await app.patchSession(widget.sessionId, permissionMode: picked);
+    // 跨会话记忆:下个新建会话自动沿用,不用每次重选「跳过确认」
+    await app.rememberPermissionMode(picked);
   }
 
   /// 计划弹层:AnimatedBuilder 跟着事件流走,粘性缓存防止推导源翻篇闪没。

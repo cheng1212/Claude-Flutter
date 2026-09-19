@@ -177,10 +177,11 @@ export function ChatPage({ store, sessionId }: {
   };
 
   /** 上传:分块+进度在 api 层;完成后把电脑上的路径追加进输入框,发不发由用户定。 */
-  const handleFiles = async (files: FileList | null) => {
-    if (!files?.length || !api) return;
+  const handleFiles = async (files: FileList | File[] | null) => {
+    const list = files ? Array.from(files) : [];
+    if (!list.length || !api) return;
     setUploadErr(null);
-    for (const f of files) {
+    for (const f of list) {
       try {
         setUploadPct(0);
         const bytes = new Uint8Array(await f.arrayBuffer());
@@ -194,6 +195,26 @@ export function ChatPage({ store, sessionId }: {
       }
     }
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  /** 粘贴截图/复制的图片直接进上传管线(调研口径:Gmail/Slack/ChatGPT 同款)。
+   *  关键约束:clipboardData.items 在 handler 返回后即被浏览器清空,
+   *  getAsFile() 必须在本同步栈内全部调完,异步操作只能事后做;
+   *  没有图片时不 preventDefault,纯文本/混合粘贴的默认插入行为保持不变。 */
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files: File[] = [];
+    for (const item of Array.from(e.clipboardData?.items ?? [])) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      const f = item.getAsFile();
+      if (!f) continue;
+      // 剪贴板 File 没有可靠文件名(常为 image.png):按时间戳重命名,避免同名互覆
+      const ext = f.type === 'image/jpeg' ? 'jpg' : (f.type.split('/')[1] || 'png');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      files.push(new File([f], `pasted-${stamp}-${files.length}.${ext}`, { type: f.type }));
+    }
+    if (!files.length) return;
+    e.preventDefault();
+    void handleFiles(files);
   };
 
   return (
@@ -297,7 +318,11 @@ export function ChatPage({ store, sessionId }: {
           {MODES.map((m) => (
             <button key={m.value} type="button" className={`picker__item${m.value === mode ? ' is-current' : ''}`} onClick={() => {
               setPicker('none');
-              if (m.value !== mode) void store.getState().patchSession(sessionId, { permissionMode: m.value });
+              if (m.value !== mode) {
+                void store.getState().patchSession(sessionId, { permissionMode: m.value });
+                // 跨会话记忆:下个新建会话自动沿用(与 app 端同语义)
+                localStorage.setItem('zcode.lastPermissionMode', m.value);
+              }
             }}>
               {m.label}{m.value === mode ? ' ✓' : ''}
             </button>
@@ -318,6 +343,7 @@ export function ChatPage({ store, sessionId }: {
               send();
             }
           }}
+          onPaste={onPaste}
         />
         <div className="composer__side">
           <div className="composer__chips">
