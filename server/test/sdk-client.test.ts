@@ -55,6 +55,48 @@ describe('SessionRuntime', () => {
     expect(seen.options?.resume).toBe('prov-1');
   });
 
+  it('resume 目标丢失 → 丢旧 id 降级重开:发提示、不带 resume 重试、回填新 session_created', async () => {
+    const { events, emit } = collector();
+    const calls: Record<string, unknown>[] = [];
+    let attempt = 0;
+    const queryFn: QueryFn = ({ options }) => {
+      calls.push(options as Record<string, unknown>);
+      const n = ++attempt;
+      return (async function* () {
+        if (n === 1) throw new Error('No conversation found with session ID: prov-old');
+        yield { type: 'system', subtype: 'init', session_id: 'prov-new' };
+        yield {
+          type: 'result', subtype: 'success', session_id: 'prov-new',
+          usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, duration_ms: 1,
+        };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a1', providerSessionId: 'prov-old', emit, queryFn });
+    await runtime.send('继续');
+    expect(calls).toHaveLength(2);
+    expect(calls[0].resume).toBe('prov-old');
+    expect(calls[1].resume).toBeUndefined(); // 降级后不再 resume,原地重开
+    expect(events.map((e) => e.kind)).toEqual(['error', 'session_created', 'usage', 'complete']);
+    expect((events[0] as { content: string }).content).toContain('已丢失');
+    expect(events[1]).toMatchObject({ kind: 'session_created', providerSessionId: 'prov-new' });
+    expect(runtime.currentProviderSessionId()).toBe('prov-new');
+  });
+
+  it('非 resume 场景出现同款报错不降级(防误伤、防循环)', async () => {
+    const { events, emit } = collector();
+    let calls = 0;
+    const queryFn: QueryFn = () => {
+      calls += 1;
+      return (async function* () {
+        throw new Error('No conversation found with session ID: x');
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a2', emit, queryFn });
+    await runtime.send('hi');
+    expect(calls).toBe(1);
+    expect(events.filter((e) => e.kind === 'error')).toHaveLength(1);
+  });
+
   it('canUseTool → permission_request;allow / deny 应答各自生效', async () => {
     const { events, emit } = collector();
     let captured: Record<string, unknown> | null = null;
