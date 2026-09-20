@@ -8,7 +8,7 @@ export function PlanPanel({ steps }: { steps: PlanStep[] }) {
   const active = steps.find((s) => s.inProgress);
 
   return (
-    <div className="plan deco-corners">
+    <div className="plan">
       <button type="button" className="plan__head" onClick={() => setOpen((o) => !o)}>
         <span className="plan__title">✦ 执行计划 · {done}/{steps.length}</span>
         <span className="toolcard__chev">{open ? '▾' : '▸'}</span>

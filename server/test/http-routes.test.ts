@@ -418,4 +418,35 @@ describe('export + usage 路由(审计补层:此前无直测)', () => {
     expect((per.json() as { runs: number }).runs).toBe(1);
     await app.close();
   });
+  it('分块上传:init/chunk/complete 组装;缺块 400;octet-stream 收 buffer', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't', db, routesPath: 'Z:/none.json' });
+    const s = createSession(db, { title: 'chunk' });
+    updateSession(db, s.id, { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-chunk-')) });
+    const init = await app.inject({
+      method: 'POST', url: `/api/sessions/${s.id}/upload/init`, headers: H,
+      payload: { fileName: 'big.bin', totalChunks: 2 },
+    });
+    expect(init.statusCode).toBe(200);
+    const { uploadId, have } = init.json() as { uploadId: string; have: number[] };
+    expect(have).toEqual([]);
+    const sendChunk = (i: number, data: string) => app.inject({
+      method: 'POST',
+      url: `/api/sessions/${s.id}/upload/${uploadId}/${i}`,
+      headers: { authorization: 'Bearer t', 'content-type': 'application/octet-stream' },
+      payload: Buffer.from(data),
+    });
+    expect((await sendChunk(0, 'hello ')).statusCode).toBe(200);
+    const bad = await app.inject({ method: 'POST', url: `/api/sessions/${s.id}/upload/${uploadId}/complete`, headers: H });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json()).toMatchObject({ error: '缺块 1' });
+    expect((await sendChunk(1, 'world')).statusCode).toBe(200);
+    const done = await app.inject({ method: 'POST', url: `/api/sessions/${s.id}/upload/${uploadId}/complete`, headers: H });
+    expect(done.statusCode).toBe(200);
+    const out = done.json() as { path: string; fileName: string; size: number };
+    expect(out.fileName).toBe('big.bin');
+    expect(out.size).toBe(11);
+    expect(fs.readFileSync(out.path, 'utf8')).toBe('hello world');
+    await app.close();
+  });
 });

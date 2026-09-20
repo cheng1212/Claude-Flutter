@@ -9,6 +9,7 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../state/reducer.dart';
 import '../theme.dart';
+import 'row_actions.dart';
 
 
 /// 统一入口:按行类型分发。
@@ -135,9 +136,9 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
   }
 }
 
-/// 用户气泡里的图片卡:白底圆角卡(参考 zremote/QQ/微信) — 一张一张缩略图排:
-/// 1 张=单图(稍大),2 张=并排,3 张=一行三张,4 张=两行两列;
-/// 底栏「图片 · N ›」点开全屏可左右滑动查看器。
+/// 用户气泡里的图片:一张一张独立块(对齐 zremote imageBlocks 微信式编排)——
+/// 等比显示、无边框无底色,竖图高 300 封顶收窄,横图随宽等比;
+/// 点任意一张画廊滑动看全部。
 class _UserImageCard extends StatelessWidget {
   final List<String> images;
 
@@ -145,66 +146,54 @@ class _UserImageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final n = images.length;
-    return LayoutBuilder(builder: (context, c) {
-      final maxW = c.maxWidth.isFinite && c.maxWidth > 0 ? c.maxWidth : 320.0;
-      final cardW = maxW.clamp(150.0, 340.0).toDouble();
-      const pad = 8.0;
-      const gap = 4.0;
-      final innerW = cardW - pad * 2;
-      // 宫格列数:1 张单图,2 张两列,3 张三列一行,4 张两列两行
-      final cols = n == 1 ? 1 : (n == 2 ? 2 : (n == 3 ? 3 : 2));
-      final cell = n == 1
-          ? (innerW * 0.62).clamp(120.0, 220.0)
-          : (innerW - gap * (cols - 1)) / cols;
-      final cellSize = cell.toDouble();
-      final rows = (n / cols).ceil();
-      final grid = <Widget>[];
-      for (var r = 0; r < rows; r++) {
-        final start = r * cols;
-        final end = (start + cols).clamp(start, n);
-        grid.add(Row(mainAxisSize: MainAxisSize.min, children: [
-          for (var j = start; j < end; j++) ...[
-            if (j != start) SizedBox(width: gap),
-            GestureDetector(
-              onTap: () => showChatImageViewer(context, images, initialIndex: j),
+    final maxW = MediaQuery.of(context).size.width * 0.82;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < images.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: GestureDetector(
+              onTap: () => showChatImageViewer(context, images, initialIndex: i),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: chatImageBox(images[j], cellSize, cellSize),
+                borderRadius: BorderRadius.circular(10),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxW, maxHeight: 300),
+                  child: _chatImageAuto(images[i]),
+                ),
               ),
             ),
-          ],
-        ]));
-        if (r < rows - 1) grid.add(SizedBox(height: gap));
-      }
-      return Container(
-        width: cardW,
-        padding: const EdgeInsets.all(pad),
-        decoration: ShapeDecoration(
-          color: ZT.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          shadows: ZT.hard(dx: 0, dy: 2),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: grid),
-          Divider(height: 12, thickness: 1, color: ZT.line),
-          InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => showChatImageViewer(context, images, initialIndex: 0),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Row(children: [
-                Icon(Icons.image_outlined, size: 15, color: ZT.inkSoft),
-                const SizedBox(width: 6),
-                Text('图片 · $n', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: ZT.ink)),
-                const Spacer(),
-                Icon(Icons.chevron_right_rounded, size: 17, color: ZT.inkFaint),
-              ]),
-            ),
           ),
-        ]),
+      ],
+    );
+  }
+
+  /// 等比回显:约束内 contain(竖图高 300 封顶,横图随宽等比),不裁剪。
+  Widget _chatImageAuto(String uri) {
+    final bytes = _tryDecodeDataUri(uri);
+    if (bytes == null) {
+      return Container(
+        width: 160,
+        height: 120,
+        color: ZT.line,
+        alignment: Alignment.center,
+        child: Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
       );
-    });
+    }
+    return Image.memory(
+      bytes,
+      fit: BoxFit.contain,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.low,
+      errorBuilder: (_, _, _) => Container(
+        width: 160,
+        height: 120,
+        color: ZT.line,
+        alignment: Alignment.center,
+        child: Icon(Icons.broken_image_rounded, size: 20, color: ZT.inkSoft),
+      ),
+    );
   }
 }
 
@@ -349,7 +338,12 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
     }
     final body = MarkdownBody(
       data: widget.streaming ? balanceFences(data) : data,
-      selectable: true,
+      // 行内文字**不可选中**:长按手势要让给列表层的行级菜单(见 chat_page._list),
+      // 否则长按文字会被 SelectableText 自己的识别器抢走,变成「长按文字出选字菜单、
+      // 长按空白出我们的菜单」这种看运气的行为。要选段走菜单里的「选择文字」二级页
+      // ——那是全 App 唯一保留 SelectableText 的地方(不在回收列表里,选中不会被
+      // 重建冲掉,见 flutter#124787)。
+      selectable: false,
       softLineBreak: true,
       builders: {'pre': _CodeBlockBuilder()},
       // 紧凑开发者风(用户规格 2026-09-12):正文 13.5/h1.55 w400 sans;
@@ -518,7 +512,7 @@ class _CodeBlockState extends State<_CodeBlock> {
           ),
           Padding(
             padding: const EdgeInsets.all(10),
-            child: SelectableText(
+            child: Text(
               widget.code,
               style: TextStyle(
                   fontSize: 12, height: 1.55, fontFamily: ZT.mono, color: ZT.onInk),
@@ -595,7 +589,7 @@ class _UserBubbleState extends State<UserBubble> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.row.content.isNotEmpty)
-            SelectableText(
+            Text(
               widget.row.content,
               style: TextStyle(
                   fontSize: 14, height: 1.45, color: ZT.onInk, fontFamily: ZT.mono),
@@ -818,7 +812,7 @@ class _ReasoningCardState extends State<ReasoningCard> {
                 if (_open)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: SelectableText(
+                    child: Text(
                       text,
                       style: TextStyle(
                           fontSize: 12,
@@ -975,16 +969,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
     );
   }
 
-  String _prettyInput(Map<String, dynamic> input) {
-    if (input.isEmpty) return '';
-    final one = input['command'] ?? input['file_path'] ?? input['path'] ?? input['pattern'] ?? input['prompt'];
-    if (one is String && one.isNotEmpty) return one;
-    try {
-      return const JsonEncoder.withIndent('  ').convert(input);
-    } on Object {
-      return '$input';
-    }
-  }
+  /// 展示口径与「复制调用」共用一份实现(见 row_actions.prettyToolInput)。
+  String _prettyInput(Map<String, dynamic> input) => prettyToolInput(input);
 }
 
 /// 运行中工具卡的走秒:数字在跳 = 命令还活着。长命令(如 flutter build)静默几分钟,
@@ -1081,7 +1067,7 @@ class _DiffView extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(6),
           child: SingleChildScrollView(
-            child: SelectableText.rich(
+            child: Text.rich(
               TextSpan(
                   children: [
                     for (final line in lines)
@@ -1125,7 +1111,7 @@ class _MonoSection extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 240),
             child: SingleChildScrollView(
-              child: SelectableText(
+              child: Text(
                 body,
                 style: TextStyle(
                     fontSize: 11,
@@ -1166,7 +1152,7 @@ class ErrorBlock extends StatelessWidget {
             size: 14, color: color),
         const SizedBox(width: 7),
         Expanded(
-          child: SelectableText(
+          child: Text(
             content,
             style: TextStyle(
                 fontSize: 12.5, height: 1.45, color: color, fontFamily: ZT.mono),

@@ -3,16 +3,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, RenderSliverMultiBoxAdaptor, ScrollDirection, SliverMultiBoxAdaptorParentData;
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
+import '../chat_scroll_anchor.dart';
+import '../core/motion.dart';
 import '../debug_log.dart';
 import '../panel_utils.dart';
 import '../session_utils.dart';
@@ -20,8 +22,10 @@ import '../state/reducer.dart';
 import '../state/zapp.dart';
 import '../theme.dart';
 import 'tasks_sheet.dart';
+import 'text_select_sheet.dart';
 import 'toast.dart';
 import '../ws.dart';
+import 'row_actions.dart';
 import 'rows.dart';
 
 /// 单张图片字节上限:超过的整张跳过(data URI 要进 WS 消息体)。
@@ -53,27 +57,6 @@ const int kMaxFreshRows = 30;
   if (rowCount > wm) wm = rowCount;
   return (freshFrom: freshFrom, watermark: wm);
 }
-
-/// 「算在底部」的容差(reverse 列表 offset ≤ 此值)。比「回到底部」药丸的显隐阈值
-/// (60px)小得多:药丸是"明显滚开了"才提示,而锁位补偿要覆盖"只滚了一点点看历史"
-/// 的常见情形——阈值取大就会漏补偿,表现成内容被一点点推走。
-const double kBottomPx = 4.0;
-
-/// 锁位补偿(看历史时锁住可视位置)的判定。抽成纯函数锁行为——这组条件
-/// 踩过好几次坑,每条都有实测来源:
-/// - `running`:回合没在跑就没有新增内容,不需要补
-/// - `dragging`:手指拖动中 jumpTo 会 goIdle 掉手势
-/// - `animatingToBottom`:与回底动画互相打断 → 动画永远到不了 0(表现为"卡住")
-/// - `offset > kBottomPx`:在底部就该自然跟随;但阈值不能大(60px 会漏掉"只滚一点")
-/// - `delta > 1`:只补增长(内容变多把视口顶上去了),缩小不回拉
-bool shouldLockScroll({
-  required double offset,
-  required double delta,
-  required bool dragging,
-  required bool animatingToBottom,
-  required bool running,
-}) =>
-    running && !dragging && !animatingToBottom && offset > kBottomPx && delta > 1;
 
 /// isolate 任务: picked 图片路径 → data URI 列表。必须是顶层函数(compute 要求);
 /// 读文件+base64 是纯 CPU 活,主线程做会在编码瞬间掉帧。超限单张跳过。
@@ -112,7 +95,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _compensateQueued = false; // 本帧已排过补偿(同帧多次 notify 只补一次)
   bool _animatingToBottom = false; // 回到底部动画进行中(此时禁止补偿,防互相打断)
   int _planRowCount = -1; // 上次算计划时的行数(derivePlanSteps 全量扫描的缓存键)
-  int _compensateRows = -1; // 上次补偿时的行数(识别换底:暴涨时不补偿,防把人弹飞)
   bool _thinkingExpanded = false; // 流式思考区:展开看全文(默认一行摘要)
   int _animatedUpTo = 0; // 行入场动画水位:已播过入场动画的行数(按行只播一次)
   bool _searching = false; // 聊天内搜索模式(读态:隐藏输入区,结果面板替代消息列表)
@@ -123,6 +105,13 @@ class _ChatPageState extends State<ChatPage> {
   bool _stopping = false; // 已点停止、在等 CLI 落定的窗口期(乐观反馈)
   String? _thinking; // 思考等级:low/medium/high/off;null = 模型默认(on)
   bool _queueExpanded = false; // 排队面板折叠/展开(折叠只显示第一条)
+
+  /// 多选批量复制:长按任意消息 → 菜单「多选」进入。
+  /// 收集的是**行对象本身**(按 identical 判身份),不引额外 id —— 与
+  /// chat_scroll_anchor.dart 判行身份的做法一致;行被换底重建时选中自然失效,
+  /// 这正是我们要的语义(旧行已经不存在了)。
+  bool _picking = false;
+  final Set<ChatRow> _picked = <ChatRow>{};
 
   /// 任务中心:子代理 / 后台 / 定时 三 Tab(底部「任务」磁贴呼出)。
   Future<void> _openTasks() async {
@@ -151,7 +140,8 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     app.addListener(_onApp);
     _planRowCount = -1; // 新会话:计划缓存作废(行数可能恰好相同)
-    _compensateRows = -1; // 补偿基准同理作废
+    _anchorSample = null; // 新会话:锚行基线作废(内容整体更换)
+    _followLocked = false;
     app.openSession(widget.sessionId);
     // 定时任务徽标进页面拉一次即可;放 build 里会随每帧重绘反复打接口
     app.crons(sessionId: widget.sessionId).then((list) {
@@ -188,52 +178,168 @@ class _ChatPageState extends State<ChatPage> {
         _stickyPlan = null;
       }
     }
-    _queueScrollCompensation();
+    _queueAnchorCheck();
     setState(() {});
   }
 
-  /// 滚离底部看历史期间的一次性锁位:回合进行中新增内容会把正在读的内容挪走。
-  /// 量**内容总高度**(maxScrollExtent + viewportDimension)而不是 maxScrollExtent,
-  /// 只在「不在底部 + 非拖动 + 回合在跑 + 没在做回底动画」时补偿;一帧只排一次。
-  ///
-  /// 为什么用内容总高度:maxScrollExtent = 内容高度 − **视口**高度,而流式面板
-  /// 一长高视口就变 → 被误当成"内容增长"补一笔,表现成"手停下看历史还是会滑,
-  /// 滑得不多"(实测反馈)。改用总高度后,视口变化不再触发补偿。
-  void _queueScrollCompensation() {
-    if (_compensateQueued || _dragging || !chat.running || _animatingToBottom) return;
-    if (!_listCtrl.hasClients) return;
-    // 判定用"是否在底部"而非 _listAway(60px):用户常常只滚一点点就看历史,
-    // 那时 offset 在几像素到几十像素之间,用 60px 阈值会漏补偿 —— 表现就是
-    // "不把我拉到底,但内容一点点往下移"(实测反馈)。
-    if (_listCtrl.position.pixels <= kBottomPx) return;
-    final pos0 = _listCtrl.position;
-    // 换底(内容整体替换)不补偿:行数一次性暴涨时 maxScrollExtent 也跟着暴涨,
-    // 按差值补等于把用户弹飞几屏("向下闪几屏",实测反馈);而且换底后看的内容
-    // 已经不是同一批,锚定本身就没意义。
-    final rowsNow = chat.rows.length;
-    final jumped = _compensateRows >= 0 && (rowsNow - _compensateRows).abs() > kMaxFreshRows;
-    _compensateRows = rowsNow;
-    if (jumped) return;
-    final before = pos0.maxScrollExtent + pos0.viewportDimension; // 内容总高度
+  // ── 锚行滚动锚定(对齐 zremote,治「飘来飘去/一闪一闪」)──
+  // 旧「内容总高度增量 + jumpTo 一步跳」方案已废,两大缺陷:
+  // ① 方向性:历史端内容长高(图片解码/markdown 重排)时,屏幕内容没动、
+  //    总高多了 G,按增量补会把用户往历史端推整个 G —— 「飘老远」的根因;
+  // ② 观感:jumpTo 直接改 pixels,量到的高度和下一帧实际高度常不一致,
+  //    每帧跳一次就是「一闪一闪」。
+  // 新方案:以「视口顶可见历史行(行对象 + 视口内 y)」为锚,内容变化前后
+  // 锚行 y 差就是该补的位移;身份变了(翻页/换底)重定基线一分不补 ——
+  // 换底/翻页防误补由此天然涵盖,不再需要 _compensateRows 三套散装标记。
+  // 纯函数(阈值/锁存/步进规划)在 ../chat_scroll_anchor.dart,可单测。
+
+  /// 锚行基线:上次采样(行对象 + 视口内 y);null = 不可锚,重定基线。
+  AnchorSample? _anchorSample;
+  double _coalescedAnchorDelta = 0; // 帧末合并桶:同帧多触发源只补一次(闪的来源)
+  bool _anchorFlushScheduled = false;
+  bool _anchorAnimating = false; // 单飞锁:并发 animateTo 互抢目标值就是抖动
+  Timer? _anchorAnimTimer;
+  bool _followLocked = false; // 「在看历史」锁存:锁存期间内容增长只计未读,不拽人
+
+  /// 内容变化后的锚行检查(post-frame:布局完成后才能量 y)。
+  void _queueAnchorCheck() {
+    if (_compensateQueued) return;
     _compensateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _compensateQueued = false;
-      if (!mounted || !_listCtrl.hasClients || _dragging || _animatingToBottom) return;
-      final pos = _listCtrl.position;
-      if (pos.pixels <= kBottomPx) return; // 已经回到底部:让它自然跟随
-      final delta = (pos.maxScrollExtent + pos.viewportDimension) - before;
-      if (!shouldLockScroll(
-        offset: pos.pixels,
-        delta: delta,
-        dragging: _dragging,
-        animatingToBottom: _animatingToBottom,
-        running: chat.running,
-      )) {
-        return;
+      if (!mounted || !_listCtrl.hasClients) return;
+      _anchorAgainstGrowth();
+    });
+  }
+
+  void _anchorAgainstGrowth() {
+    final next = _sampleTopRow();
+    if (next == null) return; // 锚不可用:基线保持原样,不补
+    final delta = ViewportAnchor.compensate(prev: _anchorSample, next: next);
+    _trackAnchorBaseline(); // 本次采样即新基线:下次变化的对比点
+    if (delta == null) return;
+    final pos = _listCtrl.position;
+    final gap = pos.maxScrollExtent - pos.pixels; // 距最新端
+    // 贴底且未锁存:在底部就该自然跟随(新行追加把人往下推是正确行为),锚定退场。
+    // 锁存期间即使 gap 很小也必须补 —— 用户就是要停在原地看历史。
+    if (gap <= AnchorThresholds.exitPx && !_followLocked) return;
+    _queueAnchorGrowth(delta);
+  }
+
+  /// 从 [root] 向下找最近的 [RenderAbstractViewport]。
+  ///
+  /// 为什么不用 [RenderAbstractViewport.of]:`ScrollPosition.context` 的
+  /// notificationContext 指向 Scrollable 自己的 RawGestureDetector,而它包在
+  /// 视口**外面** —— 拿它向上找永远找不到(debug 断言 / release 抛 TypeError),
+  /// 于是每次内容变化都炸一次、锚定形同虚设。向下的第一个视口才是要的那个。
+  RenderAbstractViewport? _viewportUnder(RenderObject? root) {
+    if (root == null) return null;
+    if (root is RenderAbstractViewport) return root;
+    RenderAbstractViewport? found;
+    root.visitChildren((child) {
+      found ??= _viewportUnder(child);
+    });
+    return found;
+  }
+
+  /// 采样视口顶(最旧端)第一条可见**历史行**。头部槽(计划面板/加载提示)
+  /// 与流式区(列表外)不锚:头部槽身份不稳,锚它会引入抖动。
+  /// 找不到可锚行返回 null,基线保持原样。
+  AnchorSample? _sampleTopRow() {
+    if (!mounted || !_listCtrl.hasClients) return null;
+    final pos = _listCtrl.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return null;
+    final viewport = _viewportUnder(pos.context.notificationContext?.findRenderObject());
+    if (viewport == null) return null;
+    RenderSliverMultiBoxAdaptor? sliver;
+    viewport.visitChildren((child) {
+      if (sliver == null && child is RenderSliverMultiBoxAdaptor) sliver = child;
+    });
+    final box0 = sliver;
+    if (box0 == null) return null;
+    RenderBox? topChild;
+    var topY = double.infinity;
+    box0.visitChildren((child) {
+      final box = child as RenderBox;
+      final y = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
+      if (y < topY) {
+        topY = y;
+        topChild = box;
       }
-      if (pos.userScrollDirection != ScrollDirection.idle) return; // 惯性滑动中不打断
-      ZLog.i('scroll', 'comp +${delta.toStringAsFixed(0)}px off=${pos.pixels.toStringAsFixed(0)}');
-      _listCtrl.jumpTo(math.min(pos.pixels + delta, pos.maxScrollExtent));
+    });
+    final tc = topChild;
+    if (tc == null || !tc.hasSize) return null;
+    final idx = (tc.parentData as SliverMultiBoxAdaptorParentData).index;
+    if (idx == null) return null;
+    final rows = chat.rows;
+    if (idx < 0 || idx >= rows.length) return null; // 计划面板/会话头槽:不锚
+    return AnchorSample(rows[rows.length - 1 - idx], topY); // 行对象即身份(identical)
+  }
+
+  /// 滚动期间基线实时跟随:手势/惯性/程序化滚动引起的锚行 y 变化全部吞进
+  /// 基线,绝不进补偿 —— 否则停稳后的第一帧会把整个滚动距离当「内容增量」
+  /// 回放一遍,视口被拽回滚动前。
+  void _trackAnchorBaseline() {
+    final next = _sampleTopRow();
+    if (next != null) _anchorSample = next;
+  }
+
+  /// 补偿量进帧末合并桶(同帧多触发源各算一次会跳两次)。
+  void _queueAnchorGrowth(double growth) {
+    if (growth <= 0) return;
+    _coalescedAnchorDelta += growth;
+    if (_anchorFlushScheduled) return;
+    _anchorFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _anchorFlushScheduled = false;
+      final delta = _coalescedAnchorDelta;
+      _coalescedAnchorDelta = 0;
+      if (!mounted || _dragging || _animatingToBottom) return;
+      // 贴底且未锁存:在底部自然跟随,不补
+      final pos = _listCtrl.position;
+      final gap = pos.maxScrollExtent - pos.pixels;
+      if (gap <= AnchorThresholds.exitPx && !_followLocked) return;
+      _applyAnchorGrowth(delta);
+    });
+  }
+
+  /// 补偿落位:阈值过滤 + 单步上限 + 短动画(闪烁修复核心)+ 单飞锁。
+  void _applyAnchorGrowth(double growth) {
+    if (!_listCtrl.hasClients) return;
+    final pos = _listCtrl.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return;
+    if (pos.userScrollDirection != ScrollDirection.idle) return; // 惯性中不打断
+    final step = AnchorMath.plan(growth);
+    if (step.delta == 0 && step.leftover == 0) return;
+    if (_anchorAnimating) {
+      _coalescedAnchorDelta += growth; // 并进桶里,动画结束再走
+      _scheduleAnchorFlush();
+      return;
+    }
+    if (step.leftover > 0) {
+      _coalescedAnchorDelta += step.leftover; // 超上限的欠账留给下一帧
+      _scheduleAnchorFlush();
+    }
+    final target = (pos.pixels + step.delta).clamp(0.0, pos.maxScrollExtent);
+    if ((target - pos.pixels).abs() < AnchorMath.minStepPx) return;
+    _anchorAnimating = true;
+    _anchorAnimTimer?.cancel();
+    _anchorAnimTimer = Timer(Duration(milliseconds: step.durationMs), () {
+      _anchorAnimating = false;
+      if (_coalescedAnchorDelta.abs() >= AnchorMath.minStepPx) _scheduleAnchorFlush();
+    });
+    pos.animateTo(target, duration: Duration(milliseconds: step.durationMs), curve: Curves.linear);
+  }
+
+  void _scheduleAnchorFlush() {
+    if (_anchorFlushScheduled) return;
+    _anchorFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _anchorFlushScheduled = false;
+      final delta = _coalescedAnchorDelta;
+      _coalescedAnchorDelta = 0;
+      if (!mounted || _dragging || _animatingToBottom) return;
+      if (delta.abs() >= AnchorMath.minStepPx) _applyAnchorGrowth(delta);
     });
   }
 
@@ -242,10 +348,12 @@ class _ChatPageState extends State<ChatPage> {
   /// 表现就是"点了回到底部卡住"(实测反馈;卡住只能重启)。
   Future<void> _toBottom() async {
     if (!_listCtrl.hasClients || _animatingToBottom) return;
+    _followLocked = false; // 回到底部 = 解除「在看历史」锁存
+    _anchorSample = null; // 锚行基线作废(视口内容已换)
     setState(() => _animatingToBottom = true);
     try {
       await _listCtrl.animateTo(0,
-          duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic);
+          duration: kDurPage, curve: kCurveOut);
     } on Object catch (e) {
       ZLog.w('scroll', 'animateTo 失败: $e', dedupeKey: 'toBottom');
     } finally {
@@ -415,8 +523,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 文件选择(file_picker)→ 上传到电脑 → 以路径引用入待发列表。
+  /// 上限 9(对齐 zremote:一次最多带 9 个图片/文件)。
   Future<void> _pickAndUploadFiles() async {
-    const maxFiles = 4;
+    const maxFiles = 9;
     if (_pendingFiles.value.length >= maxFiles) {
       if (mounted) showToast(context, '一次最多 $maxFiles 个文件');
       return;
@@ -441,9 +550,9 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 4 张,单张 ≤ 5MB)。
+  /// 相册选图(支持多选)→ 读字节 → base64 data URI(最多 9 张,单张 ≤ 5MB)。
   Future<void> _pickImagesFromGallery({bool camera = false}) async {
-    const maxImages = 4;
+    const maxImages = 9;
     final remaining = maxImages - _pendingImages.value.length;
     if (remaining <= 0) {
       if (mounted) showToast(context, '一次最多 $maxImages 张');
@@ -488,7 +597,7 @@ class _ChatPageState extends State<ChatPage> {
     // 分组数据还没拉到就现拉一次
     if (app.modelGroups.isEmpty) {
       try {
-        app.modelGroups = await app.apiGroups();
+        await app.apiGroups();
       } on Object {
         // 拉不到就退回一级平铺
       }
@@ -1096,23 +1205,25 @@ class _ChatPageState extends State<ChatPage> {
     final bgOn = deriveBackgrounds(chat.rows).isNotEmpty;
     return Scaffold(
       backgroundColor: ZT.bg,
-      appBar: AppBar(
-        title: Row(children: [
-          Expanded(
-            child: Text(_title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.2)),
-          ),
-          // Token 总量只在会话列表卡片上显示(用户要求聊天页不显示,避免标题拥挤)
-          const SizedBox(width: 8),
-          StatusChip(phase: _phase(), compact: true),
-        ]),
-        actions: const [],
-      ),
+      appBar: _picking
+          ? _pickingAppBar()
+          : AppBar(
+              title: Row(children: [
+                Expanded(
+                  child: Text(_title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2)),
+                ),
+                // Token 总量只在会话列表卡片上显示(用户要求聊天页不显示,避免标题拥挤)
+                const SizedBox(width: 8),
+                StatusChip(phase: _phase(), compact: true),
+              ]),
+              actions: const [],
+            ),
       body: SafeArea(
         child: Column(children: [
           if (app.socket.state == ZSocketState.reconnecting) _reconnectStrip(),
@@ -1131,6 +1242,21 @@ class _ChatPageState extends State<ChatPage> {
                   _dragging = false;
                 }
                 if (!_listCtrl.hasClients) return false;
+                // 锚行基线实时跟随滚动(手势/惯性/程序化引起的 y 变化全部吞进
+                // 基线,不进补偿 —— 否则停稳后第一帧会把滚动距离回放一遍)
+                _trackAnchorBaseline();
+                // FollowLock 意图锁存:主动滚离(>exitPx)上锁,滚回 ≤releasePx 解锁
+                final gap = _listCtrl.position.maxScrollExtent - _listCtrl.offset;
+                if (FollowLock.shouldLock(
+                    atBottomGap: gap,
+                    locked: _followLocked,
+                    maxScrollExtent: _listCtrl.position.maxScrollExtent)) {
+                  _followLocked = true;
+                } else if (_followLocked &&
+                    FollowLock.shouldRelease(
+                        atBottomGap: gap, maxScrollExtent: _listCtrl.position.maxScrollExtent)) {
+                  _followLocked = false;
+                }
                 final away = _listCtrl.offset > 60;
                 if (away != _listAway) setState(() => _listAway = away);
                 // 滑到最旧端附近:按需拉更旧的一页(打开会话只拉了最新 100 条)。
@@ -1201,9 +1327,10 @@ class _ChatPageState extends State<ChatPage> {
                 );
               },
             ),
-          if (!_searching) _queueBar(),
-          if (!_searching) _composer(),
-          if (!_searching) _quickBar(planOn, subsOn || bgOn),
+          if (!_searching && !_picking) _queueBar(),
+          if (!_searching && !_picking) _composer(),
+          if (!_searching && !_picking) _quickBar(planOn, subsOn || bgOn),
+          if (!_searching && _picking) _batchBar(),
         ]),
       ),
     );
@@ -1327,6 +1454,240 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // ------------------------------------------------- 行级长按菜单 / 多选
+
+  /// 行级手势层:长按弹动作菜单;多选态下点行 = 勾选。
+  IconData _actionIcon(RowAction a) => switch (a) {
+        RowAction.copyAll => Icons.content_copy_rounded,
+        RowAction.copyPlain => Icons.subject_rounded,
+        RowAction.selectText => Icons.text_fields_rounded,
+        RowAction.quote => Icons.format_quote_rounded,
+        RowAction.multiSelect => Icons.checklist_rounded,
+        RowAction.copyToolInput => Icons.data_object_rounded,
+        RowAction.copyToolOutput => Icons.output_rounded,
+      };
+
+  ///
+  /// 包在**列表层**而不是各行 widget 内部:一处覆盖全部行类型(用户/助手/思考/
+  /// 工具/报错),而且长按气泡留白也算数 —— 原来只有精确长按在文字上才有反应
+  /// (SelectableText 的原生选字菜单),长按留白、图片消息、卡片空白处一律没反应,
+  /// 用户的体感就是「长按没反应」。行内文字已一并改为不可选中(见 rows.dart
+  /// MarkdownBody.selectable 的说明),长按手势才能完整归这里。
+  Widget _wrapRow(ChatRow data, Widget row) {
+    if (_picking) {
+      final on = _picked.contains(data);
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _togglePick(data),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 11, right: 8),
+            child: Icon(
+              on ? Icons.check_circle_rounded : Icons.circle_outlined,
+              size: 17,
+              color: on ? ZT.primary : ZT.inkFaint,
+            ),
+          ),
+          Expanded(child: row),
+        ]),
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // 用按下的**全局坐标**定位菜单,不做 RenderBox 换算:行在 reverse 列表里被
+      // 回收/复用,拿 box 反而容易算歪。
+      onLongPressStart: (d) => _openRowMenu(data, d.globalPosition),
+      child: row,
+    );
+  }
+
+  /// 长按浮出动作菜单(微信式:贴着按下的位置,越界由 showMenu 自己收敛)。
+  /// 长按动作栏:Telegram 式底部弹层(全宽大按钮,手指友好,不遮内容不越界)。
+  /// 旧 showMenu 浮窗小菜单贴按压点弹出,下半屏翻转遮挡、菜单项小难点 —— 已弃。
+  Future<void> _openRowMenu(ChatRow data, Offset at) async {
+    final items = rowMenuFor(data);
+    final action = await showModalBottomSheet<RowAction>(
+      context: context,
+      backgroundColor: ZT.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ZT.radius)),
+        side: BorderSide(color: ZT.edge),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+            child: Row(children: [
+              Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: ShapeDecoration(
+                    color: ZT.surfaceHi,
+                    shape: StadiumBorder(side: ZT.inkSide(w: 1)),
+                  ),
+                  child: Text(rowRoleLabel(data),
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: ZT.inkSoft))),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(data is ToolRow ? data.toolName : '消息操作',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          color: ZT.inkFaint,
+                          fontFamily: ZT.mono))),
+            ]),
+          ),
+          const Divider(height: 1),
+          for (final item in items)
+            ListTile(
+              leading: Icon(_actionIcon(item.action), size: 20, color: ZT.primary),
+              title: Text(item.label,
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+              dense: true,
+              onTap: () => Navigator.pop(context, item.action),
+            ),
+        ]),
+      ),
+    );
+    if (action == null || !mounted) return;
+    await _runRowAction(data, action);
+  }
+
+  Future<void> _runRowAction(ChatRow data, RowAction action) async {
+    switch (action) {
+      case RowAction.selectText:
+        await showTextSelectSheet(
+          context,
+          title: rowRoleLabel(data),
+          text: selectableTextFor(data),
+        );
+      case RowAction.quote:
+        if (chat.running) {
+          showToast(context, '当前回合运行中,结束后再引用发送');
+          return;
+        }
+        app.sendChat(
+            '【引用 ${rowRoleLabel(data)} 的消息】\n${rowCopyText(data)}\n\n请基于以上内容继续');
+      case RowAction.multiSelect:
+        _enterPicking(data);
+      case RowAction.copyAll:
+      case RowAction.copyPlain:
+      case RowAction.copyToolInput:
+      case RowAction.copyToolOutput:
+        final text = copyPayloadFor(data, action) ?? '';
+        if (text.trim().isEmpty) {
+          showToast(context, '这条没有可复制的文字');
+          return;
+        }
+        await _copyText(text);
+    }
+  }
+
+  Future<void> _copyText(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    await HapticFeedback.selectionClick();
+    if (mounted) showToast(context, '已复制');
+  }
+
+  void _enterPicking(ChatRow first) => setState(() {
+        _picking = true;
+        _picked
+          ..clear()
+          ..add(first);
+      });
+
+  void _exitPicking() => setState(() {
+        _picking = false;
+        _picked.clear();
+      });
+
+  void _togglePick(ChatRow row) => setState(() {
+        if (!_picked.remove(row)) _picked.add(row);
+      });
+
+  void _pickAll() => setState(() {
+        final all = chat.rows.toSet();
+        if (all.isNotEmpty && _picked.containsAll(all)) {
+          _picked.clear();
+        } else {
+          _picked
+            ..clear()
+            ..addAll(all);
+        }
+      });
+
+  /// 复制已选:按**时间正序**(聊天顺序,不是勾选顺序)拼接,带角色前缀。
+  Future<void> _copyPicked() async {
+    final ordered = chat.rows.where(_picked.contains).toList();
+    if (ordered.isEmpty) {
+      showToast(context, '还没选消息');
+      return;
+    }
+    await _copyText(composeSelection(ordered));
+    if (mounted) _exitPicking();
+  }
+
+  /// 多选态的顶部条(替换普通标题):对齐会话页 _pickingAppBar 的既有做法。
+  AppBar _pickingAppBar() {
+    final all = chat.rows;
+    final allPicked = all.isNotEmpty && _picked.length >= all.length;
+    return AppBar(
+      leading: IconButton(
+        tooltip: '退出多选',
+        icon: const Icon(Icons.close_rounded, size: 22),
+        onPressed: _exitPicking,
+      ),
+      title: Text('已选 ${_picked.length} / ${all.length}',
+          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900, color: ZT.ink)),
+      actions: [
+        IconButton(
+          tooltip: allPicked ? '取消全选' : '全选',
+          icon: Icon(allPicked ? Icons.deselect_rounded : Icons.select_all_rounded,
+              size: 21),
+          onPressed: _pickAll,
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+
+  /// 多选态的底部条:替换输入区(批量选择时不该还能打字/发消息)。
+  Widget _batchBar() {
+    final enabled = _picked.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+      child: Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ZT.radius),
+          onTap: enabled ? _copyPicked : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: ShapeDecoration(
+              color: ZT.primary,
+              shape: StadiumBorder(
+                  side: BorderSide(width: 1.4, color: ZT.primaryDeep)),
+              shadows: enabled ? ZT.hard(dx: 2, dy: 2) : null,
+            ),
+            child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.content_copy_rounded, size: 15, color: ZT.onInk),
+                  const SizedBox(width: 6),
+                  Text('复制已选 ${_picked.length} 条',
+                      style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w800, color: ZT.onInk)),
+                ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// reversed 列表:index 0 = 最新,贴着输入框。
   Widget _list() {
     final rows = chat.rows;
@@ -1356,12 +1717,13 @@ class _ChatPageState extends State<ChatPage> {
       itemCount: rows.length + 2,
       itemBuilder: (context, i) {
         if (i < rows.length) {
-          final row = buildChatRow(rows[rows.length - 1 - i]);
+          final data = rows[rows.length - 1 - i];
+          final row = _wrapRow(data, buildChatRow(data));
           // reverse 列表 i 越小越新:新增行(未过水位)播 fade+slide 180ms 入场
           if (i < rows.length - freshFrom) {
             return TweenAnimationBuilder<double>(
               tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 180),
+              duration: kDurNormal,
               curve: Curves.easeOutCubic,
               builder: (context, t, child) => Opacity(
                 opacity: t,
@@ -1598,10 +1960,12 @@ class _ChatPageState extends State<ChatPage> {
               const SizedBox(height: 3),
               // 边吐字边渲染 Markdown(200ms 节流 + 未闭合围栏补闭合),
               // 与落定后的 AssistantBlock 同一渲染管线,落定瞬间不再跳变。
-              // 限高 + 内部滚动(reverse:锚定最新):长回复吃自己的空间,不再无限挤压列表。
+              // 限高 + 内部滚动(reverse:锚定最新):流式面板只当一行「正在回复」
+              // 进度条用(用户裁定 2026-09-14:1/10 屏,对齐 zremote 面板封顶标准),
+              // 长输出内部滚动跟尾,绝不挤压历史阅读区。
               ConstrainedBox(
                 constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.42),
+                    maxHeight: MediaQuery.of(context).size.height * 0.10),
                 child: SingleChildScrollView(
                   reverse: true,
                   child: MemoMarkdown(
@@ -1900,7 +2264,7 @@ class _ChatPageState extends State<ChatPage> {
             );
           },
         ),
-        // 已选图片预览条:88px 缩略图,点图滑动预览,右上角 X 移除
+        // 已选图片预览条:64px 小缩略图(对齐 zremote),点图滑动预览,右上角 X 移除
         ValueListenableBuilder<List<String>>(
           valueListenable: _pendingImages,
           builder: (context, images, _) {
@@ -1908,17 +2272,17 @@ class _ChatPageState extends State<ChatPage> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: SizedBox(
-                height: 88,
+                height: 64,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: images.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 6),
                   itemBuilder: (context, i) => Stack(children: [
                     GestureDetector(
                       onTap: () => showChatImageViewer(context, images, initialIndex: i),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: chatImageThumb(images[i], size: 88),
+                        borderRadius: BorderRadius.circular(8),
+                        child: chatImageThumb(images[i], size: 64),
                       ),
                     ),
                     Positioned(
@@ -2594,6 +2958,35 @@ class _PermissionCardState extends State<PermissionCard> {
   Widget build(BuildContext context) {
     final questions = _questions;
     final isAsk = _isAsk && questions.isNotEmpty;
+    // 正文区:问询卡是题目列表,审批卡是 JSON 输入 + 留言框。标题和按钮固定在
+    // 卡片两头,只有正文滚动 —— 题量再多「跳过/提交回答」也永远可达。
+    final body = <Widget>[
+      if (isAsk)
+        for (final q in questions) ..._questionWidgets(q)
+      else ...[
+        if (_prettyInput.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 130),
+              child: SingleChildScrollView(
+                child: SelectableText(_prettyInput,
+                    style: TextStyle(
+                        fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              ),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _message,
+            style: const TextStyle(fontSize: 12.5),
+            decoration: const InputDecoration(
+                isDense: true, hintText: '给它的留言(可空)'),
+          ),
+        ),
+      ],
+    ];
     return Container(
       decoration: BoxDecoration(
         color: ZT.surface,
@@ -2601,98 +2994,87 @@ class _PermissionCardState extends State<PermissionCard> {
         border: Border(top: BorderSide(width: 1.4, color: isAsk ? ZT.primary : ZT.lemon)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          Icon(isAsk ? Icons.help_outline_rounded : Icons.verified_user_rounded,
-              size: 15, color: isAsk ? ZT.primary : ZT.lemon),
-          const SizedBox(width: 7),
-          Expanded(
-            child: isAsk
-                // 问询卡是「模型在问你」,标题就是它要问的事 —— 别再把内部工具名
-                // AskUserQuestion 摆在标题位,那不是用户需要知道的信息。
-                ? Text(questions.length > 1 ? '需要你确认 ${questions.length} 个问题' : '需要你确认',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))
-                : Text('权限请求 · ${widget.req.toolName}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-          ),
-        ]),
-        if (isAsk)
-          for (final q in questions) ..._questionWidgets(q)
-        else ...[
-          if (_prettyInput.isNotEmpty)
+      // 高度封顶 + 正文滚动:本卡挂在聊天页 Column 里不可滚,3 问 × 4 选项曾把
+      // 整屏撑爆 —— 按钮和输入栏全被顶出屏外,跳过/提交都够不着,会话像死机。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.62),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              Icon(isAsk ? Icons.help_outline_rounded : Icons.verified_user_rounded,
+                  size: 15, color: isAsk ? ZT.primary : ZT.lemon),
+              const SizedBox(width: 7),
+              Expanded(
+                child: isAsk
+                    // 问询卡是「模型在问你」,标题就是它要问的事 —— 别再把内部工具名
+                    // AskUserQuestion 摆在标题位,那不是用户需要知道的信息。
+                    ? Text(questions.length > 1 ? '需要你确认 ${questions.length} 个问题' : '需要你确认',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))
+                    : Text('权限请求 · ${widget.req.toolName}',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+              ),
+            ]),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: body),
+              ),
+            ),
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 130),
-                child: SingleChildScrollView(
-                  child: SelectableText(_prettyInput,
-                      style: TextStyle(
-                          fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              padding: const EdgeInsets.only(top: 9),
+              child: Row(children: [
+                Expanded(
+                  child: isAsk
+                      // 问询卡上是「模型问你」,不是「申请授权」。原「拒绝」语义错位
+                      // (像在批权限);改成「跳过」——它是"这题我不答",而非否决。
+                      ? BigButton(
+                          label: '跳过',
+                          color: ZT.surfaceHi,
+                          textColor: ZT.inkSoft,
+                          onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                        )
+                      : BigButton(
+                          label: '拒绝',
+                          color: ZT.rose,
+                          textColor: Colors.white,
+                          onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                        ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: isAsk
+                      ? BigButton(
+                          label: _askReady ? '提交回答' : '请先选择',
+                          onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
+                        )
+                      : BigButton(
+                          label: '允许',
+                          onPressed: () => widget.onAnswer(true, _message.text.trim(), null),
+                        ),
+                ),
+              ]),
+            ),
+            // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
+            if (!isAsk)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: ZT.lemon,
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                    ),
+                    onPressed: () => widget.onAnswer(true, _message.text.trim(), null, true),
+                    child: Text('本会话总是允许 ${widget.req.toolName}',
+                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                  ),
                 ),
               ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: TextField(
-              controller: _message,
-              style: const TextStyle(fontSize: 12.5),
-              decoration: const InputDecoration(
-                  isDense: true, hintText: '给它的留言(可空)'),
-            ),
-          ),
-        ],
-        Padding(
-          padding: const EdgeInsets.only(top: 9),
-          child: Row(children: [
-            Expanded(
-              child: isAsk
-                  // 问询卡上是「模型问你」,不是「申请授权」。原「拒绝」语义错位
-                  // (像在批权限);改成「跳过」——它是"这题我不答",而非否决。
-                  ? BigButton(
-                      label: '跳过',
-                      color: ZT.surfaceHi,
-                      textColor: ZT.inkSoft,
-                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
-                    )
-                  : BigButton(
-                      label: '拒绝',
-                      color: ZT.rose,
-                      textColor: Colors.white,
-                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
-                    ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: isAsk
-                  ? BigButton(
-                      label: _askReady ? '提交回答' : '请先选择',
-                      onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
-                    )
-                  : BigButton(
-                      label: '允许',
-                      onPressed: () => widget.onAnswer(true, _message.text.trim(), null),
-                    ),
-            ),
-          ]),
+          ],
         ),
-        // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
-        if (!isAsk)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: ZT.lemon,
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                ),
-                onPressed: () => widget.onAnswer(true, _message.text.trim(), null, true),
-                child: Text('本会话总是允许 ${widget.req.toolName}',
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ),
-      ]),
+      ),
     );
   }
 }

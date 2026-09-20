@@ -3,6 +3,7 @@ import { query as defaultQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { ThinkingConfig } from '@anthropic-ai/claude-agent-sdk';
 import { transformMessage } from './transform.js';
 import { startsBackgroundWork, type ProtocolEvent } from './types.js';
+import { sanitizeCliError } from './cli-error-sanitize.js';
 import { resolveClaudeExecutable } from './cli-path.js';
 
 type AnyRecord = Record<string, unknown>;
@@ -43,6 +44,15 @@ type PendingEntry = {
   toolName: string;
   input: unknown;
 };
+
+/**
+ * resume 目标的 CLI 转录文件已不存在(会话曾被删除/磁盘清理),CLI 报错原文如
+ * "No conversation found with session ID: <id>"。不把这条当终态错误甩给用户,
+ * 而是降级:丢掉旧 providerSessionId 原地重开新对话,同一条消息不丢。
+ */
+export function isLostConversationError(message: string): boolean {
+  return /no conversation found with session id/i.test(message);
+}
 
 /** 看门狗"忙碌续期"上限:每次续期间隔 = approvalTimeoutMs,默认 10min × 6 = 1 小时。
  *  覆盖正常的长构建/长测试;真僵死(工具结果永远不回)最终仍会被裁。 */
@@ -122,6 +132,7 @@ export class SessionRuntime {
   private openTools = new Set<string>();
   private providerSessionId: string | null;
   private forkPending: boolean; // fork 只发生在首轮(init 采纳新 id 后清零),否则缓存 runtime 每轮 resume 都会再分叉
+  private retryPending = false; // resume 目标对话已丢失 → 降级重开一次(runTurnExclusive 消费)
   private aborted = false;
   private turnGen = 0; // 回合代数:强裁定时器不误伤下一轮
   private forceTurnFinish: (() => void) | null = null;
@@ -214,6 +225,19 @@ export class SessionRuntime {
     this.aborted = false;
     this.release?.(); // 取代上一个仍挂着的 held 流
     this.release = null;
+    this.retryPending = false;
+    await this.runTurn(text, images);
+    if (!this.retryPending) return;
+    // resume 的旧对话在磁盘上已消失(会话被删/清理过):原样重试只会永远报
+    // "No conversation found",整个会话从此报废。降级:丢掉旧 id 原地重开,
+    // 同一条消息不丢;新 id 由 init 捕获逻辑回填并发 session_created(落库换绑)。
+    this.retryPending = false;
+    this.providerSessionId = null;
+    this.forkPending = false;
+    this.opts.emit({
+      kind: 'error',
+      content: '原对话记录在磁盘上已丢失(可能被清理或删除过),已自动另起新对话继续;聊天记录里已有的消息不受影响。',
+    });
     await this.runTurn(text, images);
   }
 
@@ -471,7 +495,16 @@ export class SessionRuntime {
             emitTerminal(1, true);
           } else if (!terminalSent) {
             const message = error instanceof Error ? error.message : String(error);
-            this.opts.emit({ kind: 'error', content: message });
+            // resume 的对话文件丢了:不当终态错误、不甩给用户,signal 外层降级重开
+            // (见 runTurnExclusive);仅 resume 场景生效,杜绝同款报错误伤新会话。
+            if (isLostConversationError(message) && this.providerSessionId && !this.retryPending) {
+              this.retryPending = true;
+              finishTurn();
+              return;
+            }
+            // 上游/SDK 的内部诊断帧不直接怼给用户(实测天书):原文落日志,用户拿可读提示
+            const message2 = sanitizeCliError(message);
+            this.opts.emit({ kind: 'error', content: message2 });
             emitTerminal(1, false);
           }
         } finally {

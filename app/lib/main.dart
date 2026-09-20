@@ -116,7 +116,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _connecting = false;
-          _loginError = '连不上服务器: $e';
+          _loginError = apiErrorMessage(e);
         });
       }
       return;

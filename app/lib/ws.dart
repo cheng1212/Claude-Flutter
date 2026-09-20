@@ -248,7 +248,7 @@ class ZSocket {
     await _sub?.cancel();
     await _channel?.close();
     _channel = null;
-    if (!_events.isClosed) _events.close();
+    if (!_events.isClosed) unawaited(_events.close());
   }
 
   void _checkDisposed() {

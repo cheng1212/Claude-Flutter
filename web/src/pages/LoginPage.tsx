@@ -40,11 +40,11 @@ export function LoginPage({ initial, notice, onLogin }: {
 
   return (
     <div className="login">
-      <form className="login__panel deco-corners" onSubmit={go}>
+      <form className="login__panel" onSubmit={go}>
         <div className="login__brand">
           <span className="login__glyph">◆</span>
           <h1 className="login__title">zCode</h1>
-          <p className="login__sub">黑金终端 · 连上你电脑上的 Claude Code</p>
+          <p className="login__sub">连上你电脑上的 Claude Code</p>
         </div>
         <label className="field">
           <span className="field__label">服务器地址</span>

@@ -117,4 +117,45 @@ describe('ZApi · 默认 fetch 绑定(Ilegal invocation 防御)', () => {
     expect(seen[0]).toBeGreaterThan(0);
     expect(seen[seen.length - 1]).toBe(1);
   });
+  test('uploadFile retries 5xx with backoff and succeeds', async () => {
+    let calls = 0;
+    const f = vi.fn(async () => {
+      calls++;
+      if (calls < 3) return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({ path: 'p/x', fileName: 'a' }), { status: 200 });
+    }) as unknown as FetchFn;
+    const api = new ZApi('http://x:5190', 't', f);
+    const res = await api.uploadFile('s1', 'a', Uint8Array.from([1, 2, 3]));
+    expect(res.path).toBe('p/x');
+    expect(calls).toBe(3);
+  });
+
+  test('uploadFile does not retry on 4xx', async () => {
+    let calls = 0;
+    const f = vi.fn(async () => {
+      calls++;
+      return new Response('unauthorized', { status: 401 });
+    }) as unknown as FetchFn;
+    const api = new ZApi('http://x:5190', 't', f);
+    await expect(api.uploadFile('s1', 'a', Uint8Array.from([1]))).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+  test('uploadFile large file switches to chunk endpoints and skips have[]', async () => {
+    const bytes = Uint8Array.from({ length: 6 * 1024 * 1024 + 1 }, (_, i) => i % 251); // 9 块
+    const calls: string[] = [];
+    const f = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.endsWith('/upload/init')) return new Response(JSON.stringify({ uploadId: 'u1', have: [0] }), { status: 200 });
+      if (/\/upload\/u1\/\d+$/.test(u)) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, path: 'p/big', fileName: 'a.bin' }), { status: 200 });
+    }) as unknown as FetchFn;
+    const api = new ZApi('http://x:5190', 't', f);
+    const res = await api.uploadFile('s1', 'a.bin', bytes);
+    expect(res.path).toBe('p/big');
+    expect(calls[0]).toContain('/upload/init');
+    const chunkCalls = calls.filter((c) => /\/upload\/u1\/\d+$/.test(c));
+    expect(chunkCalls).toHaveLength(8); // 9 块,have=[0] 跳过第 0 块(断点续传)
+    expect(calls[calls.length - 1]).toContain('/upload/u1/complete');
+  });
 });

@@ -5,9 +5,12 @@ import { ZApi } from './api';
 import { ZSocket } from './socket';
 import {
   emptyChat, applyEvent, applyReplay, applyLocalUser,
-  applyPermissionAnswer, rollbackLocalUser, type ChatState,
+  applyPermissionAnswer, rollbackLocalUser, prependHistory, type ChatState,
 } from './chatState';
 import type { MessageRow, ModelGroup, SessionRow } from './protocol';
+
+/** 首屏/每页历史条数:用户定的 100 条足够日常,更旧按需加载(对齐 Flutter lazy-history)。 */
+const kFirstPageSize = 100;
 
 export type WsState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -19,7 +22,7 @@ export interface ApiLike {
   patchSession(id: string, patch: { title?: string; isPinned?: boolean; model?: string; permissionMode?: string }): Promise<void>;
   deleteSession(id: string): Promise<void>;
   deleteSessions(ids: string[]): Promise<{ deleted: number; missing: string[] }>;
-  messages(id: string, limit?: number): Promise<{ messages: MessageRow[]; total: number }>;
+  messages(id: string, limit?: number, beforeSeq?: number): Promise<{ messages: MessageRow[]; total: number }>;
   sessionUsage(id: string): Promise<unknown>;
   /** 项目列表(可选:测试假件可不实现)。 */
   projects?(): Promise<{ root: string; names: string[] }>;
@@ -63,6 +66,19 @@ export function saveCreds(c: { baseUrl: string; token: string } | null): void {
   }
 }
 
+/** 页面隐藏 + 用户开了🔔 + 已授权 → 系统通知(TopBar 开关;前台页面不打扰)。 */
+function notifyIfHidden(title: string, body: string): void {
+  try {
+    if (localStorage.getItem('zcode.notify') !== 'on') return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') return;
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body });
+    }
+  } catch {
+    /* 通知失败不影响主流程 */
+  }
+}
+
 export interface ZState {
   phase: 'login' | 'ready';
   baseUrl: string;
@@ -74,6 +90,8 @@ export interface ZState {
   currentSessionId: string | null;
   chat: ChatState;
   historyLoading: boolean;
+  /** 正在加载更旧的历史 */
+  loadingOlder: boolean;
   error: string | null;
   wsState: WsState;
   /** 登录页一次性提示(如「登录已失效,请重新登录」),登录成功即清。 */
@@ -83,6 +101,8 @@ export interface ZState {
   logout(reason?: string): void;
   refreshSessions(): Promise<void>;
   loadProjects(): Promise<void>;
+  /** 按需加载更旧的一页历史(滑到列表顶端时)。 */
+  loadOlder(): Promise<void>;
   openSession(id: string): Promise<void>;
   createSession(input?: { title?: string; model?: string }): Promise<SessionRow>;
   patchSession(id: string, patch: { title?: string; isPinned?: boolean; model?: string; permissionMode?: string }): Promise<void>;
@@ -195,8 +215,13 @@ export function createZStore(deps: {
         dirtyTimer = setTimeout(() => { void loadSessions(true); }, 250);
         return;
       }
+      // 审批等待最重要:任何会话的审批请求都提醒(页面隐藏 + 🔔开时)
+      if (kind === 'permission_request') notifyIfHidden('需要审批', `${String(ev.toolName ?? '')} 等待确认`);
       const sid = ev.sessionId as string | undefined;
       if (!sid || sid !== get().currentSessionId) return;
+      if (kind === 'text' && (ev.role as string | undefined ?? 'assistant') !== 'user') {
+        notifyIfHidden('zCode 新回复', String(ev.content ?? '').slice(0, 80));
+      }
       set({ chat: applyEvent(get().chat, ev) });
       if (kind === 'complete') void loadSessions(true);
     }
@@ -211,6 +236,7 @@ export function createZStore(deps: {
       currentSessionId: null,
       chat: emptyChat(),
       historyLoading: false,
+      loadingOlder: false,
       error: null,
       wsState: 'idle',
       notice: null,
@@ -263,9 +289,11 @@ export function createZStore(deps: {
       async openSession(id) {
         // 同会话重开保留待审批卡:审批不落库,REST 重建不出来;丢了没人能批,会话卡死。
         const keepPermission = get().currentSessionId === id ? get().chat.pendingPermission : undefined;
-        set({ currentSessionId: id, chat: emptyChat(), historyLoading: true, error: null });
+        set({ currentSessionId: id, chat: emptyChat(), historyLoading: true, loadingOlder: false, error: null });
         try {
-          const hist = await api.messages(id, 500);
+          // 首屏只拉最近一页(100 条,对齐 Flutter lazy-history):打开会话永远只花一次请求的时间,
+          // 更旧的历史点「加载更早」按需取。早先 500 条全量正是大会话白屏/定位不准的成因。
+          const hist = await api.messages(id, kFirstPageSize);
           const events: Record<string, unknown>[] = [];
           let maxSeq = 0;
           for (const row of hist.messages) {
@@ -279,12 +307,38 @@ export function createZStore(deps: {
           if (keepPermission && !chat.pendingPermission) {
             chat = { ...chat, pendingPermission: keepPermission };
           }
+          const seqs = hist.messages.map((r) => r.seq);
+          chat = { ...chat, oldestSeq: seqs.length ? Math.min(...seqs) : 0, hasMoreOlder: hist.total > hist.messages.length };
           set({ chat, historyLoading: false });
           socket.seedLastSeq(id, maxSeq > chat.lastSeq ? maxSeq : chat.lastSeq);
           socket.subscribeSession(id);
         } catch (e) {
           if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
           set({ historyLoading: false, error: String(e instanceof Error ? e.message : e) });
+        }
+      },
+
+      async loadOlder() {
+        const sid = get().currentSessionId;
+        const chat = get().chat;
+        if (!sid || get().loadingOlder || !chat.hasMoreOlder || chat.oldestSeq <= 0) return;
+        set({ loadingOlder: true });
+        try {
+          const hist = await api.messages(sid, kFirstPageSize, chat.oldestSeq);
+          const events = hist.messages
+            .map(rowEvent)
+            .filter((ev): ev is Record<string, unknown> => ev !== null)
+            .sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+          // 旧页 seq 全部 < lastSeq,不走 applyEvent 归约(会被去重清零),直接前插
+          const seqs = hist.messages.map((r) => r.seq);
+          const merged = prependHistory(get().chat, events);
+          set({
+            chat: { ...merged, oldestSeq: seqs.length ? Math.min(...seqs) : chat.oldestSeq, hasMoreOlder: hist.messages.length >= kFirstPageSize },
+            loadingOlder: false,
+          });
+        } catch (e) {
+          if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
+          set({ loadingOlder: false, error: `加载更早的消息失败: ${e instanceof Error ? e.message : e}` });
         }
       },
 
@@ -375,4 +429,4 @@ export async function autoLogin(store: ZStore): Promise<boolean> {
 
 /** 登录页默认值:家里局域网的 server 地址与当前令牌,变了用户自己改。 */
 export const DEFAULT_BASE_URL = 'http://192.168.31.194:5190';
-export const DEFAULT_TOKEN = 'O4wRud_d6qcYUBhKWuZm5dkH';
+export const DEFAULT_TOKEN = '123456';

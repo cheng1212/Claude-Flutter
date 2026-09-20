@@ -1,0 +1,31 @@
+# app CI:push/PR 涉及 app/** 时自动跑 analyze + test(T1,2026-09-14)。
+# 版本锁 3.44.0 stable(与部署树 D:\flutter 一致;FVM 暂缓,见 qa-plan)。
+name: app-ci
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - working-directory: app
+        run: flutter analyze --no-pub
+      - working-directory: app
+        run: flutter test

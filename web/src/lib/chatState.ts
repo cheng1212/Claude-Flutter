@@ -29,6 +29,10 @@ export interface ChatState {
   rows: ChatRow[];
   lastSeq: number;
   running: boolean;
+  /** 已加载的最旧 seq(按需加载锚点);0 = 没有/未加载历史 */
+  oldestSeq: number;
+  /** 是否还有更旧的历史(滑到顶时"加载更早") */
+  hasMoreOlder: boolean;
   streamingText?: string;
   streamingThinking?: string;
   usage?: UsageInfo;
@@ -36,7 +40,7 @@ export interface ChatState {
 }
 
 export function emptyChat(): ChatState {
-  return { rows: [], lastSeq: 0, running: false };
+  return { rows: [], lastSeq: 0, running: false, oldestSeq: 0, hasMoreOlder: false };
 }
 
 /** 被打断工具卡的占位结果:可辨识,迟到的真 tool_result 会覆盖它。 */
@@ -47,6 +51,8 @@ function withState(s: ChatState, patch: Partial<ChatState> & { clearStreamText?:
     rows: patch.rows ?? s.rows,
     lastSeq: patch.lastSeq ?? s.lastSeq,
     running: patch.running ?? s.running,
+    oldestSeq: patch.oldestSeq ?? s.oldestSeq,
+    hasMoreOlder: patch.hasMoreOlder ?? s.hasMoreOlder,
     streamingText: patch.clearStreamText ? undefined : (patch.streamingText ?? s.streamingText),
     streamingThinking: patch.clearStreamThinking ? undefined : (patch.streamingThinking ?? s.streamingThinking),
     usage: patch.usage ?? s.usage,
@@ -68,6 +74,15 @@ function closeDanglingTools(rows: ChatRow[]): ChatRow[] {
 }
 
 const num = (v: unknown, d = 0): number => (typeof v === 'number' ? v : d);
+
+/** 按需加载的更旧一页:事件(升序)在独立缓冲 state 里走完整 applyEvent 归约(所有 kind、
+ *  页内工具配对、error 行都与首屏同一构造逻辑,对齐 Flutter 的独立缓冲 + sink 思路),
+ *  归约出的行整体前插;不改主 state 的 lastSeq —— 旧页 seq 全部 < lastSeq 是正常的。 */
+export function prependHistory(s: ChatState, eventsAsc: Record<string, unknown>[]): ChatState {
+  let tmp = emptyChat();
+  for (const ev of eventsAsc) tmp = applyEvent(tmp, ev);
+  return withState(s, { rows: [...tmp.rows, ...s.rows] });
+}
 
 /** 单事件归约;seq <= lastSeq 的事件丢弃(重连去重),permission_request 豁免。 */
 export function applyEvent(s: ChatState, ev: Record<string, unknown>): ChatState {

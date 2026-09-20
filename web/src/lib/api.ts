@@ -82,9 +82,10 @@ export class ZApi {
     return { deleted: res.deleted ?? 0, missing: res.missing ?? [] };
   }
 
-  async messages(id: string, limit = 500): Promise<{ messages: MessageRow[]; total: number }> {
+  async messages(id: string, limit = 500, beforeSeq?: number): Promise<{ messages: MessageRow[]; total: number }> {
+    const q = beforeSeq ? `&beforeSeq=${beforeSeq}` : '';
     const res = await this.call<{ messages: MessageRow[]; total: number }>(
-      'GET', `/api/sessions/${id}/messages?limit=${limit}`);
+      'GET', `/api/sessions/${id}/messages?limit=${limit}${q}`);
     return { messages: res.messages ?? [], total: res.total ?? 0 };
   }
 
@@ -132,23 +133,66 @@ export class ZApi {
     return res.messages ?? [];
   }
 
-  /** 全局用量聚合:?range=7d|30d|all。 */
-  async usageStats(range = '7d'): Promise<Record<string, unknown> | null> {
+  /** 全局用量聚合:?range=7d|30d|all。失败抛 ApiError(调用方区分「失败」与「暂无数据」)。 */
+  async usageStats(range = '7d'): Promise<Record<string, unknown>> {
+    return this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
+  }
+
+  /** 会话导出(markdown);失败返回 null(导出是锦上添花,不弹错)。 */
+  async sessionExport(id: string): Promise<{ filename: string; markdown: string } | null> {
     try {
-      return await this.call<Record<string, unknown>>('GET', `/api/usage?range=${encodeURIComponent(range)}`);
+      return await this.call<{ filename: string; markdown: string }>('GET', `/api/sessions/${id}/export`);
     } catch {
       return null;
     }
   }
 
   /**
-   * 上传文件到会话(cwd/uploads/):分块 base64 + 进度(0~1)。
-   * 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位。
+   * 上传文件到会话(cwd/uploads/)。
+   * ≤6MB:base64 JSON 单请求(低开销);>6MB:真分块——init/chunk/complete,
+   * 每块独立 octet-stream 请求 + 逐块重试(0.8s/1.6s 退避),进度按块数。
+   * 业界对照见 docs/qa-plan-20260914.md E 节(tus/S3 类方案对个人工具过重,自建轻量分块)。
    */
   async uploadFile(
     sessionId: string, fileName: string, bytes: Uint8Array, onProgress?: (p: number) => void,
   ): Promise<{ path: string; fileName: string }> {
-    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块,与 app/lib/api.dart 同参
+    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块,必须为 3 的倍数(base64 对齐)
+    const total = Math.max(1, Math.ceil(bytes.length / chunk));
+
+    if (bytes.length > chunk * 8) {
+      const init = await this.call<{ uploadId: string; have: number[] }>(
+        'POST', `/api/sessions/${sessionId}/upload/init`,
+        { fileName, totalChunks: total },
+      );
+      const have = new Set(init.have ?? []);
+      for (let i = 0; i < total; i++) {
+        if (have.has(i)) continue; // 断点续传:服务端已收的块跳过
+        let attempt = 0;
+        for (;;) {
+          try {
+            const res = await this.f(
+              `${this.baseUrl}/api/sessions/${sessionId}/upload/${init.uploadId}/${i}`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/octet-stream' },
+                body: bytes.subarray(i * chunk, Math.min((i + 1) * chunk, bytes.length)) as unknown as BodyInit,
+              },
+            );
+            if (!res.ok) throw new ApiError(`块 ${i} 上传失败: ${res.status}`, res.status);
+            break;
+          } catch (e) {
+            const status = e instanceof ApiError ? e.status : undefined;
+            if ((typeof status === 'number' && status < 500) || attempt >= 2) throw e;
+            await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+            attempt++;
+          }
+        }
+        onProgress?.((i + 1) / total);
+      }
+      return this.call('POST', `/api/sessions/${sessionId}/upload/${init.uploadId}/complete`);
+    }
+
+    // 小文件:分块 base64 JSON 单请求(编码进度);块长必须是 3 的倍数(base64 对齐)
     let done = 0;
     let dataB64 = '';
     while (done < bytes.length) {
@@ -157,7 +201,18 @@ export class ZApi {
       done = end;
       onProgress?.(done / bytes.length);
     }
-    return this.call('POST', `/api/sessions/${sessionId}/files`, { fileName, dataB64 });
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.call('POST', `/api/sessions/${sessionId}/files`, { fileName, dataB64 });
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : undefined;
+        const retryable = typeof status !== 'number' || status >= 500; // 网络错误/服务端错才重试
+        if (!retryable || attempt >= 2) throw e;
+        await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+        attempt++;
+      }
+    }
   }
 }
 

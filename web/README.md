@@ -3,8 +3,9 @@
 zcode-server 的网页客户端,与 Flutter App(`D:\cheng\zcode\app`)共用同一个后端协议:
 REST(`/api/*`,Bearer token)+ WebSocket(鉴权、订阅、seq 续传、心跳、指数退避重连)。
 
-视觉方向:**黑金终端(Obsidian & Gold)**——深炭黑底、焦金主色、Cinzel 石刻衬线标题、
-art-deco 四角括号卡片、金粒噪点质感。
+视觉方向:**亮暗双主题**——亮色「柑橘晨光」(奶油底 + 蜜橘主色 + 墨线硬阴影 neo-brutalist),
+暗色「经典暗色」(中性灰阶 + 品牌橘,shadcn/GitHub 式的普通暗色);跟随系统深浅偏好自动选,
+顶栏 ☀/🌙 一键切换。
 
 ## 技术栈
 
@@ -13,7 +14,7 @@ Vite 5 · React 18 · TypeScript · zustand · react-markdown · vitest + @testi
 ## 启动
 
 ```powershell
-cd D:\cheng\zcode\web
+cd D:\zcode-dev\web
 npm install          # 首次
 npm run dev          # 开发: http://localhost:5173
 npm run build        # 产物: dist/
@@ -44,13 +45,12 @@ src/lib/socket.ts     WS 客户端(通道抽象可注入假件)
 src/lib/store.ts      zustand 组合层(login/openSession/sendChat/事件路由/防抖刷新)
 src/lib/planSteps.ts  计划推导
 src/pages/ src/components/  UI(只读 store 渲染)
-src/styles/           黑金主题 token + 组件样式
+src/styles/           主题 token + 组件样式
 ```
 
 设计文档:`docs/superpowers/plans/2026-09-05-zcode-web.md`(Superpowers 工作流产物)。
 
 ## 已知边界
 
-- 图片发送暂未做(协议已支持,`chat.send` 的 images 字段)
-- 用量面板、深色以外的主题未做
-- Google Fonts(Cinzel / IBM Plex)离线时回退系统字体
+- 用量面板已有;主题只保留亮/暗两套(历史探索稿见 `preview/`)
+- Google Fonts(Outfit / JetBrains Mono)离线时回退系统字体

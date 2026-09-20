@@ -1,6 +1,5 @@
 // 应用大脑:REST + WS 组合层。页面只读这里的暴露状态,变更走方法。
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -9,18 +8,16 @@ import '../debug_log.dart';
 import '../ws.dart';
 import '../notify.dart';
 import 'reducer.dart';
+import 'slices/chat_slice.dart';
+import 'slices/models_slice.dart';
+import 'slices/sessions_slice.dart';
+import 'slices/queue_slice.dart';
+
+export 'slices/queue_slice.dart' show QueuedMessage;
 
 /// 打开会话时首屏拉多少条(也是按需加载每页的大小)。
 /// 用户定的:100 条足够日常看,更旧的历史平时用不到 —— 滑到最旧端再按需拉。
 const int kFirstPageSize = 100;
-
-/// 排队中的消息(会话 running 时发的、等上一轮结束后再推的消息)。
-class QueuedMessage {
-  const QueuedMessage({required this.id, required this.text, this.images = const []});
-  final String id;
-  final String text;
-  final List<String> images;
-}
 
 class ZApp extends ChangeNotifier {
   ZApp({required this._api, required this._socket}) {
@@ -31,7 +28,6 @@ class ZApp extends ChangeNotifier {
   ZSocket _socket;
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _retry;
-  Timer? _sessionsDirtyTimer;
   bool _disposed = false;
 
   // 流式 delta 合帧缓冲:delta 按 chunk 频率(可到每秒几十条)到达,逐条 notify
@@ -44,9 +40,10 @@ class ZApp extends ChangeNotifier {
 
   // 发送排队:会话 running 时发的消息先进队列(每会话独立),回复结束按「自动消化」
   // 开关决定要不要自动推下一条。纯 app 内存态,不持久化、不过 server。
-  final Map<String, List<QueuedMessage>> _queues = {};
-  final Set<String> _autoConsumeOff = {}; // 默认开;关掉的会话记在这里
-  static int _queuedSeq = 0;
+  late final QueueSlice queue = QueueSlice(
+    onChanged: notifyListeners,
+    currentSessionId: () => currentSessionId,
+  );
 
   /// openSession 后台补齐(首屏后的老消息拉取);_onEvent 顺手给它留 WS 底。
   _Backfill? _backfill;
@@ -54,12 +51,25 @@ class ZApp extends ChangeNotifier {
   /// 打开会话的代际令牌:快速切换/重开时,旧打开流程的后续阶段全部作废。
   int _openToken = 0;
 
-  List<String> models = const [];
-  List<Map<String, dynamic>> modelGroups = const [];
-  List<Map<String, dynamic>> sessions = const [];
+  /// 模型列表切片(T4 第二刀):状态在 slice,以下 getter 保持 UI 零改动。
+  late final ModelsSlice modelsSlice = ModelsSlice(
+    onChanged: notifyListeners,
+    onError: (msg) => error = msg,
+    fetchModels: () => _api.models(),
+    fetchModelGroups: () => _api.modelGroups(),
+  );
+  List<String> get models => modelsSlice.models;
+  List<Map<String, dynamic>> get modelGroups => modelsSlice.modelGroups;
+  /// 会话列表切片(T4 第三刀):状态在 slice,以下 getter 保持 UI 零改动。
+  late final SessionsSlice sessionsSlice = SessionsSlice(
+    onChanged: notifyListeners,
+    onError: (msg) => error = msg,
+    fetchSessions: () => _api.sessions(),
+  );
+  List<Map<String, dynamic>> get sessions => sessionsSlice.sessions;
 
   /// 首次会话列表拉取完成(成败皆置):页面据此区分「加载中」与「真空空如也」
-  bool sessionsLoaded = false;
+  bool get sessionsLoaded => sessionsSlice.sessionsLoaded;
   String? currentSessionId;
   ChatState chat = const ChatState();
   bool historyLoading = false;
@@ -94,8 +104,8 @@ class ZApp extends ChangeNotifier {
         if (!_disposed) bootstrap();
       });
     }
-    await _loadModels();
-    await _loadSessions();
+    await modelsSlice.load();
+    await sessionsSlice.load();
     notifyListeners();
   }
 
@@ -166,7 +176,7 @@ class ZApp extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _retry?.cancel();
-    _sessionsDirtyTimer?.cancel();
+    sessionsSlice.dispose();
     _pendDeltaTimer?.cancel();
     _blankWatchdog?.cancel();
     _sub?.cancel();
@@ -196,18 +206,13 @@ class ZApp extends ChangeNotifier {
       return;
     }
     if (kind == 'session_created') {
-      unawaited(_loadSessions(silent: true));
+      unawaited(sessionsSlice.load(silent: true));
       return;
     }
     if (kind == 'sessions_dirty') {
       // 任一会话开跑/跑完的服务端广播:250ms 防抖合并成一次 REST,列表徽章跟着活。
       // 控制事件,无 seq,不许进 reducer。
-      _sessionsDirtyTimer?.cancel();
-      _sessionsDirtyTimer = Timer(const Duration(milliseconds: 250), () async {
-        if (_disposed) return;
-        await _loadSessions(silent: true);
-        if (!_disposed) notifyListeners();
-      });
+      sessionsSlice.scheduleDirtyReload(isAlive: () => !_disposed);
       return;
     }
     if (kind == 'context_compacted') {
@@ -251,7 +256,7 @@ class ZApp extends ChangeNotifier {
     ZLog.i('ev', '$kind seq=${ev['seq']} rows=${chat.rows.length} lastSeq=${chat.lastSeq} running=${chat.running}');
     _backfill?.extra.add(ev); // 后台补齐窗口内的实时事件留底,换底重放不丢
     if (kind == 'complete') {
-      unawaited(_loadSessions(silent: true));
+      unawaited(sessionsSlice.load(silent: true));
       _maybeAutoConsume(); // 回合落定:自动消化队首(开关开 + 队列非空才真的推)
     }
     _armBlankWatchdog();
@@ -310,37 +315,13 @@ class ZApp extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 会话
 
-  Future<void> _loadModels() async {
-    try {
-      models = await _api.models();
-      modelGroups = await _api.modelGroups();
-    } on Object catch (e) {
-      error = '$e';
-    }
-  }
-
   /// 选择器打开时的兜底重拉,成功后刷新状态。
-  Future<List<Map<String, dynamic>>> apiGroups() async {
-    modelGroups = await _api.modelGroups();
-    notifyListeners();
-    return modelGroups;
-  }
-
-  Future<void> _loadSessions({bool silent = false}) async {
-    try {
-      sessions = await _api.sessions();
-    } on Object catch (e) {
-      // 后台自动刷新(定时/事件驱动)失败保持静默:一次 REST 抖动不该在聊天页顶上弹错误条
-      if (!silent) error = '$e';
-    } finally {
-      sessionsLoaded = true;
-    }
-  }
+  Future<List<Map<String, dynamic>>> apiGroups() => modelsSlice.reloadGroups();
 
   /// 手动刷新:把成败**报给调用方**(页面据此给可见反馈——转圈/条数/失败原因)。
   Future<({bool ok, int count, String? error})> refreshSessions() async {
     final before = error;
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     final failed = error != null && error != before;
     return (ok: !failed, count: sessions.length, error: failed ? error : null);
@@ -387,20 +368,22 @@ class ZApp extends ChangeNotifier {
       final first = await fetchFirst();
       if (token != _openToken) return;
       ZLog.i('open', 'first page rows=${first.messages.length} total=${first.total}');
-      final (headEvents, maxSeq) = _histEvents(first);
+      final page = ChatSlice.histEvents(first);
+      final headEvents = page.events;
+      final maxSeq = page.maxSeq;
       // 首屏即并入留底的实时事件:REST 读取发生在落库/回显之前时,窗口内到达的
       // 回显消息只存在于 bf.extra——不并进来就会被下面这行 `chat = st` 整体覆盖,
       // 且之后无人补回(去重指针已被抬高,订阅补发不重发 ≤N)。
-      var st = _replay([...headEvents, ...bf.extra], maxSeq);
+      var st = ChatSlice.replay([...headEvents, ...bf.extra], maxSeq);
       if (keepPermission != null && st.pendingPermission == null) {
-        st = _withPermission(st, keepPermission);
+        st = ChatSlice.withPermission(st, keepPermission);
       }
-      if (liveBeforeLoad != null) st = _keepLiveState(st, liveBeforeLoad);
+      if (liveBeforeLoad != null) st = ChatSlice.keepLiveState(st, liveBeforeLoad);
       // 记住"最旧到哪"与"还有没有更旧的":用户滑到最旧端时按需再拉(见 loadOlder)。
       // 打开会话**只拉最新 kFirstPageSize 条**——按用户要求,更旧的历史平时用不到;
       // 早先的"后台一口气翻十几页"正是大会话白屏的成因(主线程被解析占满→请求超时)。
       st = copyChat(st,
-          oldestSeq: _minSeqOf(headEvents) ?? 0,
+          oldestSeq: ChatSlice.minSeqOf(headEvents) ?? 0,
           hasMoreOlder: first.total > first.messages.length);
       _backfill = null; // 首屏已并入 extra,不需要留底了
       chat = st;
@@ -422,27 +405,6 @@ class ZApp extends ChangeNotifier {
     }
   }
 
-  /// 重建态叠加实时态:REST/_replay 重建不推断 running,换底时以会话当前的
-  /// 实时字段(subscribed/终态/上游相位)为准,只取 rows/lastSeq/用量/审批卡。
-  ChatState _keepLiveState(ChatState fresh, ChatState live) {
-    return ChatState(
-      rows: fresh.rows,
-      lastSeq: fresh.lastSeq,
-      running: live.running,
-      streamingText: fresh.streamingText,
-      streamingThinking: fresh.streamingThinking,
-      usage: fresh.usage,
-      pendingPermission: fresh.pendingPermission,
-      upstreamPhase: fresh.upstreamPhase,
-      upstreamAt: fresh.upstreamAt,
-      // 实时上下文占用来自瞬态事件(不落库),重建拿不到 → 保留会话当前值
-      liveContextTokens: live.liveContextTokens,
-      // 分页锚点/是否还有更旧:首屏算出来的,别被实时态冲掉
-      oldestSeq: fresh.oldestSeq > 0 ? fresh.oldestSeq : live.oldestSeq,
-      hasMoreOlder: fresh.hasMoreOlder,
-    );
-  }
-
   /// 是否正在加载更旧的一页(UI 显示"加载更早的消息…")。
   bool loadingOlder = false;
 
@@ -460,7 +422,7 @@ class ZApp extends ChangeNotifier {
     try {
       final hist = await _api.messages(sid, limit: kFirstPageSize, beforeSeq: chat.oldestSeq);
       if (token != _openToken || currentSessionId != sid) return;
-      final (older, _) = _histEvents(hist);
+      final older = ChatSlice.histEvents(hist).events;
       if (older.isEmpty) {
         chat = copyChat(chat, hasMoreOlder: false);
         return;
@@ -475,7 +437,7 @@ class ZApp extends ChangeNotifier {
       for (final e in older) {
         tmp = applyEvent(tmp, e, sink: sink);
       }
-      final minSeq = _minSeqOf(older) ?? chat.oldestSeq;
+      final minSeq = ChatSlice.minSeqOf(older) ?? chat.oldestSeq;
       chat = copyChat(chat,
           rows: [...sink, ...chat.rows],
           oldestSeq: minSeq,
@@ -492,93 +454,10 @@ class ZApp extends ChangeNotifier {
   }
 
   /// 消息页(rows)→ 出站事件列表 + 最大 seq。
-  (List<Map<String, dynamic>>, int) _histEvents(
-      ({List<Map<String, dynamic>> messages, int total}) hist) {
-    final events = <Map<String, dynamic>>[];
-    var maxSeq = 0;
-    for (final row in hist.messages) {
-      final ev = _rowEvent(row);
-      if (ev == null) continue;
-      final sq = (row['seq'] as num?)?.toInt() ?? 0;
-      ev['seq'] = sq;
-      events.add(ev);
-      if (sq > maxSeq) maxSeq = sq;
-    }
-    return (events, maxSeq);
-  }
-
-  /// 事件列表里的最小 seq(锚点翻页的"更旧"边界);空列表返回 null。
-  int? _minSeqOf(List<Map<String, dynamic>> events) {
-    int? min;
-    for (final e in events) {
-      final s = (e['seq'] as num?)?.toInt();
-      if (s == null) continue;
-      if (min == null || s < min) min = s;
-    }
-    return min;
-  }
-
-  /// 排序重放一段事件(REST 按 seq 倒序返回,归约要按时间正序),水位抬到 maxSeq。
-  /// 不推断 running:重建的历史最后一条是 text/tool 不代表"正在跑",
-  /// running 只该由 subscribed.isProcessing + 实时终态/开始事件驱动,否则
-  /// 重放后若缺 complete(如 reload 重建)会冻结成假"运行中"、按钮卡 STOP。
-  ChatState _replay(List<Map<String, dynamic>> events, int maxSeq) {
-    events.sort((a, b) =>
-        ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
-    // 共用行缓冲:重建一个 8000 行的会话原来是 O(n²)(每行复制整表),打开要卡几秒
-    // (实测 swap 比首屏晚 4.8 秒)。走 sink 后是 O(n)。
-    final sink = <ChatRow>[];
-    var st = const ChatState();
-    for (final e in events) {
-      st = applyEvent(st, e, sink: sink);
-    }
-    // 重建一律从"空闲"起步;真实 running 由随后到达的 subscribed/实时事件设定。
-    return ChatState(
-      rows: st.rows,
-      lastSeq: st.lastSeq > maxSeq ? st.lastSeq : maxSeq,
-      streamingText: st.streamingText,
-      streamingThinking: st.streamingThinking,
-      usage: st.usage,
-      pendingPermission: st.pendingPermission,
-      upstreamPhase: st.upstreamPhase,
-      upstreamAt: st.upstreamAt,
-      running: false,
-    );
-  }
-
-  ChatState _withPermission(ChatState s, PermissionReq req) => ChatState(
-        rows: s.rows,
-        lastSeq: s.lastSeq,
-        running: s.running,
-        streamingText: s.streamingText,
-        streamingThinking: s.streamingThinking,
-        usage: s.usage,
-        pendingPermission: req,
-        // 这几个是瞬态/本地态,只换审批卡不该把它们丢掉
-        upstreamPhase: s.upstreamPhase,
-        upstreamAt: s.upstreamAt,
-        liveContextTokens: s.liveContextTokens,
-      );
-
-  /// 消息行 meta → 出站事件(可能存成 JSON 字符串或已是 Map)。
-  Map<String, dynamic>? _rowEvent(Map<String, dynamic> row) {
-    final meta = row['meta'];
-    if (meta is Map) return meta.cast<String, dynamic>();
-    if (meta is String && meta.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(meta);
-        if (decoded is Map) return decoded.cast<String, dynamic>();
-      } on FormatException {
-        return null;
-      }
-    }
-    return null;
-  }
-
   /// 新建会话,建完刷新列表,返回会话行。
   Future<Map<String, dynamic>> createSession({String? title, String? cwd, String? model}) async {
     final s = await _api.createSession(title: title, cwd: cwd, model: model);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return s;
   }
@@ -589,8 +468,8 @@ class ZApp extends ChangeNotifier {
       currentSessionId = null;
       chat = const ChatState();
     }
-    _queues.remove(id); // 会话没了,排队消息一并丢弃
-    await _loadSessions();
+    queue.discardQueues(id); // 会话没了,排队消息一并丢弃
+    await sessionsSlice.load();
     notifyListeners();
   }
 
@@ -603,9 +482,9 @@ class ZApp extends ChangeNotifier {
       chat = const ChatState();
     }
     for (final id in ids) {
-      _queues.remove(id); // 会话没了,排队消息一并丢弃
+      queue.discardQueues(id); // 会话没了,排队消息一并丢弃
     }
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return r;
   }
@@ -662,14 +541,14 @@ class ZApp extends ChangeNotifier {
 
   Future<void> patchSession(String id, {String? title, bool? isPinned, String? model, String? permissionMode, bool? archived, List<String>? tags, String? cwd}) async {
     await _api.patchSession(id, title: title, isPinned: isPinned, model: model, permissionMode: permissionMode, archived: archived, tags: tags, cwd: cwd);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
   }
 
   /// 复制会话(fork):服务端拷贝消息与配置;完成后刷新列表,返回新会话行。
   Future<Map<String, dynamic>> forkSession(String id) async {
     final row = await _api.forkSession(id);
-    await _loadSessions();
+    await sessionsSlice.load();
     notifyListeners();
     return row;
   }
@@ -875,82 +754,34 @@ class ZApp extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 发送排队
 
-  List<QueuedMessage> queueOf(String sid) => _queues[sid] ?? const [];
+  // 队列领域规则已迁入 QueueSlice(T4 试点);以下为兼容委托,UI 零改动。
+  List<QueuedMessage> queueOf(String sid) => queue.queueOf(sid);
 
-  int queueCount(String sid) => _queues[sid]?.length ?? 0;
+  int queueCount(String sid) => queue.queueCount(sid);
 
-  bool autoConsumeOf(String sid) => !_autoConsumeOff.contains(sid);
+  bool autoConsumeOf(String sid) => queue.autoConsumeOf(sid);
 
-  void setAutoConsume(String sid, {required bool on}) {
-    if (on) {
-      _autoConsumeOff.remove(sid);
-    } else {
-      _autoConsumeOff.add(sid);
-    }
-    notifyListeners();
-  }
+  void setAutoConsume(String sid, {required bool on}) => queue.setAutoConsume(sid, on: on);
 
-  /// 入队。返回 'queued' 成功 / 'duplicate' 队内已有同文消息(去重不入)。
-  String enqueue(String text, {List<String> images = const []}) {
-    final sid = currentSessionId;
-    if (sid == null) return 'queued';
-    final norm = text.trim();
-    final q = _queues.putIfAbsent(sid, () => <QueuedMessage>[]);
-    for (final m in q) {
-      if (m.text.trim() == norm && m.images.length == images.length) return 'duplicate';
-    }
-    q.add(QueuedMessage(
-      id: 'q${DateTime.now().microsecondsSinceEpoch}_${_queuedSeq++}',
-      text: text,
-      images: List<String>.of(images),
-    ));
-    notifyListeners();
-    return 'queued';
-  }
+  String enqueue(String text, {List<String> images = const []}) => queue.enqueue(text, images: images);
 
-  /// 置顶:把第 [index] 条提到队首(下一次优先推它)。
-  void promoteQueued(String sid, int index) {
-    final q = _queues[sid];
-    if (q == null || index <= 0 || index >= q.length) return;
-    q.insert(0, q.removeAt(index));
-    notifyListeners();
-  }
+  void promoteQueued(String sid, int index) => queue.promoteQueued(sid, index);
 
-  void removeQueued(String sid, int index) {
-    final q = _queues[sid];
-    if (q == null || index < 0 || index >= q.length) return;
-    q.removeAt(index);
-    if (q.isEmpty) _queues.remove(sid);
-    notifyListeners();
-  }
+  void removeQueued(String sid, int index) => queue.removeQueued(sid, index);
 
-  /// 修改排队文案;返回 false = 改成了与队内其他条重复,未生效。
-  bool editQueued(String sid, int index, String text) {
-    final q = _queues[sid];
-    if (q == null || index < 0 || index >= q.length) return true;
-    final norm = text.trim();
-    for (var i = 0; i < q.length; i++) {
-      if (i != index && q[i].text.trim() == norm) return false;
-    }
-    final old = q[index];
-    q[index] = QueuedMessage(id: old.id, text: text, images: old.images);
-    notifyListeners();
-    return true;
-  }
+  bool editQueued(String sid, int index, String text) => queue.editQueued(sid, index, text);
 
   /// 从队列取出第 [index] 条立即发送:打断当前回合,等落定(强裁兜底最长几秒)
   /// 后推出去;发送失败则塞回队首不丢。
   Future<bool> sendQueuedNow(String sid, int index,
       {String? model, String? permissionMode, String? thinking}) async {
-    final q = _queues[sid];
-    if (q == null || index < 0 || index >= q.length) return false;
-    final m = q.removeAt(index);
-    if (q.isEmpty) _queues.remove(sid);
+    final m = queue.takeQueued(sid, index);
+    if (m == null) return false;
     notifyListeners();
     final ok = await interruptAndSend(m.text,
         model: model, permissionMode: permissionMode, thinking: thinking, images: m.images);
     if (!ok && currentSessionId == sid) {
-      _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m);
+      queue.requeueFirst(sid, m);
       notifyListeners();
     }
     return ok;
@@ -973,25 +804,24 @@ class ZApp extends ChangeNotifier {
   void _maybeAutoConsume() {
     final sid = currentSessionId;
     if (sid == null || chat.running || chat.pendingPermission != null) return;
-    final q = _queues[sid];
-    if (q == null || q.isEmpty || _autoConsumeOff.contains(sid)) return;
-    final m = q.removeAt(0);
-    if (q.isEmpty) _queues.remove(sid);
+    if (queue.queueCount(sid) == 0 || !queue.autoConsumeOf(sid)) return;
+    final m = queue.takeQueued(sid, 0);
+    if (m == null) return;
     notifyListeners();
     Timer(const Duration(milliseconds: 400), () {
       if (_disposed) return;
       if (currentSessionId != sid) {
-        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 切走了:留回原会话队列
+        queue.requeueFirst(sid, m); // 切走了:留回原会话队列
         return;
       }
       if (chat.running || chat.pendingPermission != null) {
-        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 又在跑/等审批:塞回队首
+        queue.requeueFirst(sid, m); // 又在跑/等审批:塞回队首
         notifyListeners();
         return;
       }
       final ok = sendChat(m.text, images: m.images);
       if (!ok) {
-        _queues.putIfAbsent(sid, () => <QueuedMessage>[]).insert(0, m); // 没发出去(如断线):不丢
+        queue.requeueFirst(sid, m); // 没发出去(如断线):不丢
         notifyListeners();
       }
     });

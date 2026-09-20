@@ -623,7 +623,59 @@ describe('ws gateway', () => {
     rejoin.ws.close();
     await app.close();
   }, 15000);
-});
+  it('permission-response 跨端竞态:重复应答转发两次+广播照发,未知会话静默不炸', async () => {
+    const db = openDb(':memory:');
+    const app = await buildApp({ token: 't' });
+    const registry = new RunRegistry();
+    const perms: string[] = [];
+    let runtimeBuilt = false;
+    attachWsGateway(app.server, {
+      db, token: 't', registry,
+      runtimeFor: (sessionId: string) => {
+        runtimeBuilt = true;
+        return {
+          send: () => Promise.resolve(), // 回合立即结束:complete 广播进队列,断言前排干
+          answerPermission: (requestId: string) => { perms.push(requestId); },
+          abort: async () => {},
+        };
+      },
+    }) as never;
+    const port = await listen(app);
 
-// 引用 ProtocolEvent 类型,防止未使用告警
-export type { ProtocolEvent };
+    const a = await wsConnect(port);
+    const b = await wsConnect(port);
+    for (const w of [a, b]) {
+      w.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+      await w.next();
+    }
+    const s = createSession(db, { title: 'race' });
+    for (const w of [a, b]) {
+      w.ws.send(JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: s.id, lastSeq: 0 }] }));
+      expect(await w.next()).toMatchObject({ kind: 'subscribed' });
+    }
+    // 审批必然发生在有 runtime 的会话:先发一条消息让 gateway 建 runtime(真实时序)
+    a.ws.send(JSON.stringify({ type: 'chat.send', sessionId: s.id, content: 'start' }));
+    await waitFor(() => runtimeBuilt);
+    await new Promise((r) => setTimeout(r, 50));
+    a.pending().splice(0); // 排干 complete 等广播,后续断言只看 permission_resolved
+    b.pending().splice(0);
+
+    // 两端"同时"应答同一 requestId:转发语义两次都送达(最终幂等由 CLI 保证),广播两次(收卡无副作用)
+    const resp = JSON.stringify({ type: 'chat.permission-response', sessionId: s.id, requestId: 'r1', allow: true });
+    a.ws.send(resp);
+    b.ws.send(resp);
+    await waitFor(() => perms.filter((p) => p === 'r1').length === 2);
+    expect(await a.next()).toMatchObject({ kind: 'permission_resolved', requestId: 'r1' });
+    expect(await a.next()).toMatchObject({ kind: 'permission_resolved', requestId: 'r1' });
+
+    // 未知会话:静默——server 不炸,已知会话的广播仍然可达
+    b.ws.send(JSON.stringify({ type: 'chat.permission-response', sessionId: 'nope', requestId: 'x', allow: true }));
+    a.ws.send(resp);
+    expect(await a.next()).toMatchObject({ kind: 'permission_resolved', requestId: 'r1' });
+    expect(perms.filter((p) => p === 'x')).toHaveLength(0);
+
+    a.ws.close();
+    b.ws.close();
+    await app.close();
+  });
+});

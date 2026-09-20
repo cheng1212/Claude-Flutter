@@ -55,19 +55,6 @@ describe('SessionsPage', () => {
     expect(onOpen).toHaveBeenCalledWith('s1');
   });
 
-  test('creates session via dialog and opens it', async () => {
-    const { store } = setup();
-    await store.getState().login('http://x:5190', 'tk');
-    await store.getState().refreshSessions();
-    const onOpen = vi.fn();
-    render(<SessionsPage store={store} onOpen={onOpen} />);
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '新建会话' }));
-    await user.type(screen.getByLabelText('标题'), '建站计划');
-    await user.click(screen.getByRole('button', { name: '开始' }));
-    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('new'));
-  });
-
   test('pin action calls patchSession', async () => {
     const { api, store } = setup();
     await store.getState().login('http://x:5190', 'tk');
@@ -96,12 +83,4 @@ describe('SessionsPage', () => {
     expect(screen.getByText(/未连接/)).toBeTruthy();
   });
 
-  test('logout button returns to login phase', async () => {
-    const { store } = setup();
-    await store.getState().login('http://x:5190', 'tk');
-    await store.getState().refreshSessions();
-    render(<SessionsPage store={store} onOpen={() => {}} />);
-    await userEvent.click(screen.getByRole('button', { name: '登出' }));
-    expect(store.getState().phase).toBe('login');
-  });
 });

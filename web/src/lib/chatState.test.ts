@@ -2,6 +2,7 @@ import { describe, test, expect } from 'vitest';
 import {
   applyEvent, applyReplay, applyLocalUser, applyPermissionAnswer, rollbackLocalUser,
   emptyChat, K_INTERRUPTED, contextTokens,
+  prependHistory,
 } from './chatState';
 
 const text = (seq: number, content: string, role = 'assistant') =>
@@ -218,5 +219,32 @@ describe('组合函数', () => {
     const t2 = s.rows[2];
     if (t2.kind !== 'text') throw new Error('expect text row');
     expect(t2.createdAt).toBeUndefined();
+  });
+});
+
+describe('prependHistory · 按需加载旧页', () => {
+  test('旧页前插且不过 seq 去重(lastSeq 不变)', () => {
+    let s = emptyChat();
+    s = applyEvent(s, { kind: 'text', content: '新消息', seq: 100 });
+    // 旧页:seq 90/91(server 倒序返回已由调用方反转成升序)
+    const oldPage = [
+      { kind: 'text', content: '旧一', seq: 90 },
+      { kind: 'text', content: '旧二', seq: 91 },
+    ];
+    const merged = prependHistory(s, oldPage);
+    expect(merged.rows.map((r) => (r as { content: string }).content)).toEqual(['旧一', '旧二', '新消息']);
+    expect(merged.lastSeq).toBe(100); // 去重锚不被旧页污染
+  });
+
+  test('同页 tool_result 挂回同 id 工具行,孤立结果丢弃', () => {
+    const page = [
+      { kind: 'tool_use', toolId: 't1', toolName: 'Bash', toolInput: { command: 'ls' }, seq: 90 },
+      { kind: 'tool_result', toolId: 't1', content: 'ok', seq: 91 },
+      { kind: 'tool_result', toolId: 'ghost', content: '孤儿', seq: 92 },
+    ];
+    const merged = prependHistory(emptyChat(), page);
+    const tools = merged.rows.filter((r) => r.kind === 'tool');
+    expect(tools).toHaveLength(1);
+    expect((tools[0] as { result?: { content: string } }).result?.content).toBe('ok');
   });
 });

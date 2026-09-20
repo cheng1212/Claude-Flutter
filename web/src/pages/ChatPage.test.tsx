@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createZStore, type ZStore } from '../lib/store';
 import { ChatPage } from './ChatPage';
@@ -51,17 +51,16 @@ async function setup() {
 }
 
 describe('ChatPage', () => {
-  test('renders history rows and back button', async () => {
+  test('renders history rows', async () => {
     const { store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByText('你好!有什么可以帮你?')).toBeTruthy());
     expect(screen.getByText('你好')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '返回' })).toBeTruthy();
   });
 
   test('Ctrl+Enter sends message; optimistic bubble shows 发送中', async () => {
     const { socket, store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('消息输入'), '帮我看看{Control>}{Enter}{/Control}');
@@ -71,7 +70,7 @@ describe('ChatPage', () => {
 
   test('running state shows stop button; click aborts', async () => {
     const { socket, store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     store.getState().sendChat('跑一个任务');
     const stop = await screen.findByRole('button', { name: '停止' });
@@ -81,7 +80,7 @@ describe('ChatPage', () => {
 
   test('silent period skeleton appears while running without stream', async () => {
     const { store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     store.getState().sendChat('安静的任务');
     expect(await screen.findByText(/已送达/)).toBeTruthy();
@@ -90,17 +89,22 @@ describe('ChatPage', () => {
 
   test('stream delta replaces skeleton with streaming text', async () => {
     const { socket, store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     store.getState().sendChat('流式任务');
-    socket.emit({ kind: 'stream_delta', sessionId: 's1', content: '部分回答' });
-    expect(await screen.findByText('部分回答')).toBeTruthy();
+    // 节流窗(50ms)的 setShown 发生在 act 外会被 React 测试环境挂起:用 act 包裹等待
+    await act(async () => {
+      socket.emit({ kind: 'stream_delta', sessionId: 's1', content: '部分回答' });
+      await new Promise((r) => setTimeout(r, 120));
+    });
+    console.log('DBG streamingText =', JSON.stringify(store.getState().chat.streamingText), 'rows =', store.getState().chat.rows.length);
+    expect(screen.getByText('部分回答')).toBeTruthy();
     expect(screen.queryByText(/已送达/)).toBeNull();
   });
 
   test('permission card allows answering with message', async () => {
     const { socket, store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByLabelText('消息输入')).toBeTruthy());
     socket.emit({ kind: 'permission_request', sessionId: 's1', requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf /tmp/x' } });
     expect(await screen.findByText(/权限请求 · Bash/)).toBeTruthy();
@@ -112,7 +116,7 @@ describe('ChatPage', () => {
 
   test('model picker patches session model', async () => {
     const { api, store } = await setup();
-    render(<ChatPage store={store} sessionId="s1" onBack={() => {}} />);
+    render(<ChatPage store={store} sessionId="s1" />);
     await vi.waitFor(() => expect(screen.getByRole('button', { name: /模型/ })).toBeTruthy());
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /模型/ }));
