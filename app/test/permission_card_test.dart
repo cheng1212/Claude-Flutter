@@ -304,6 +304,52 @@ void main() {
     });
   });
 
+  group('超长问询卡(回归:整卡高度封顶,按钮永远可达)', () {
+    // 2026-09-21 实测:3 问 × 4 选项把聊天页 Column 撑爆,跳过/提交被顶出屏外,
+    // 会话卡死(选不了、进不了、退不出)。修复 = 卡片限高 + 正文滚动。
+    PermissionReq tall() => _askReq([
+          for (final q in const ['Q1', 'Q2', 'Q3'])
+            {
+              'question': q,
+              'options': [
+                {'label': '$q-甲', 'description': '说明 $q-甲'},
+                {'label': '$q-乙', 'description': '说明 $q-乙'},
+                {'label': '$q-丙', 'description': '说明 $q-丙'},
+                {'label': '$q-丁', 'description': '说明 $q-丁'},
+              ],
+            }
+        ]);
+
+    testWidgets('3 问 × 4 选项不溢出,跳过/请先选择按钮在屏内', (tester) async {
+      await tester.pumpWidget(_host(tall(), (_, _, _, [_ = false]) {}));
+      expect(tester.takeException(), isNull);
+      expect(find.text('跳过'), findsOneWidget);
+      expect(find.text('请先选择'), findsOneWidget);
+    });
+
+    testWidgets('正文滚动后能选最后一题的选项并提交', (tester) async {
+      Map<String, dynamic>? gotInput;
+      await tester.pumpWidget(_host(tall(), (_, _, input, [_ = false]) => gotInput = input));
+
+      // 前两题在视口内直接选;三题全答满「提交回答」才亮(_askReady 语义)
+      await tester.tap(find.text('Q1-甲'));
+      await tester.pump();
+      await tester.ensureVisible(find.text('Q2-甲'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Q2-甲'));
+      await tester.pump();
+      await tester.ensureVisible(find.text('Q3-丁'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Q3-丁'));
+      await tester.pump();
+
+      expect(find.text('提交回答'), findsOneWidget);
+      await tester.tap(find.text('提交回答'));
+      await tester.pump();
+      expect((gotInput!['answers'] as Map)['Q3'], 'Q3-丁');
+    });
+  });
+
   group('普通审批卡不受影响', () {
     testWidgets('仍显示「权限请求 · 工具名」+ 允许/拒绝 + 总是允许', (tester) async {
       await tester.pumpWidget(_host(_toolReq('Bash'), (_, _, _, [_ = false]) {}));
