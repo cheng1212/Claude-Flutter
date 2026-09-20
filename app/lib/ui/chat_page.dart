@@ -2958,6 +2958,35 @@ class _PermissionCardState extends State<PermissionCard> {
   Widget build(BuildContext context) {
     final questions = _questions;
     final isAsk = _isAsk && questions.isNotEmpty;
+    // 正文区:问询卡是题目列表,审批卡是 JSON 输入 + 留言框。标题和按钮固定在
+    // 卡片两头,只有正文滚动 —— 题量再多「跳过/提交回答」也永远可达。
+    final body = <Widget>[
+      if (isAsk)
+        for (final q in questions) ..._questionWidgets(q)
+      else ...[
+        if (_prettyInput.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 130),
+              child: SingleChildScrollView(
+                child: SelectableText(_prettyInput,
+                    style: TextStyle(
+                        fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              ),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _message,
+            style: const TextStyle(fontSize: 12.5),
+            decoration: const InputDecoration(
+                isDense: true, hintText: '给它的留言(可空)'),
+          ),
+        ),
+      ],
+    ];
     return Container(
       decoration: BoxDecoration(
         color: ZT.surface,
@@ -2965,98 +2994,87 @@ class _PermissionCardState extends State<PermissionCard> {
         border: Border(top: BorderSide(width: 1.4, color: isAsk ? ZT.primary : ZT.lemon)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          Icon(isAsk ? Icons.help_outline_rounded : Icons.verified_user_rounded,
-              size: 15, color: isAsk ? ZT.primary : ZT.lemon),
-          const SizedBox(width: 7),
-          Expanded(
-            child: isAsk
-                // 问询卡是「模型在问你」,标题就是它要问的事 —— 别再把内部工具名
-                // AskUserQuestion 摆在标题位,那不是用户需要知道的信息。
-                ? Text(questions.length > 1 ? '需要你确认 ${questions.length} 个问题' : '需要你确认',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))
-                : Text('权限请求 · ${widget.req.toolName}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-          ),
-        ]),
-        if (isAsk)
-          for (final q in questions) ..._questionWidgets(q)
-        else ...[
-          if (_prettyInput.isNotEmpty)
+      // 高度封顶 + 正文滚动:本卡挂在聊天页 Column 里不可滚,3 问 × 4 选项曾把
+      // 整屏撑爆 —— 按钮和输入栏全被顶出屏外,跳过/提交都够不着,会话像死机。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.62),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              Icon(isAsk ? Icons.help_outline_rounded : Icons.verified_user_rounded,
+                  size: 15, color: isAsk ? ZT.primary : ZT.lemon),
+              const SizedBox(width: 7),
+              Expanded(
+                child: isAsk
+                    // 问询卡是「模型在问你」,标题就是它要问的事 —— 别再把内部工具名
+                    // AskUserQuestion 摆在标题位,那不是用户需要知道的信息。
+                    ? Text(questions.length > 1 ? '需要你确认 ${questions.length} 个问题' : '需要你确认',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))
+                    : Text('权限请求 · ${widget.req.toolName}',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+              ),
+            ]),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: body),
+              ),
+            ),
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 130),
-                child: SingleChildScrollView(
-                  child: SelectableText(_prettyInput,
-                      style: TextStyle(
-                          fontSize: 11.5, height: 1.45, fontFamily: ZT.mono, color: ZT.inkSoft)),
+              padding: const EdgeInsets.only(top: 9),
+              child: Row(children: [
+                Expanded(
+                  child: isAsk
+                      // 问询卡上是「模型问你」,不是「申请授权」。原「拒绝」语义错位
+                      // (像在批权限);改成「跳过」——它是"这题我不答",而非否决。
+                      ? BigButton(
+                          label: '跳过',
+                          color: ZT.surfaceHi,
+                          textColor: ZT.inkSoft,
+                          onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                        )
+                      : BigButton(
+                          label: '拒绝',
+                          color: ZT.rose,
+                          textColor: Colors.white,
+                          onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
+                        ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: isAsk
+                      ? BigButton(
+                          label: _askReady ? '提交回答' : '请先选择',
+                          onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
+                        )
+                      : BigButton(
+                          label: '允许',
+                          onPressed: () => widget.onAnswer(true, _message.text.trim(), null),
+                        ),
+                ),
+              ]),
+            ),
+            // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
+            if (!isAsk)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: ZT.lemon,
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                    ),
+                    onPressed: () => widget.onAnswer(true, _message.text.trim(), null, true),
+                    child: Text('本会话总是允许 ${widget.req.toolName}',
+                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                  ),
                 ),
               ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: TextField(
-              controller: _message,
-              style: const TextStyle(fontSize: 12.5),
-              decoration: const InputDecoration(
-                  isDense: true, hintText: '给它的留言(可空)'),
-            ),
-          ),
-        ],
-        Padding(
-          padding: const EdgeInsets.only(top: 9),
-          child: Row(children: [
-            Expanded(
-              child: isAsk
-                  // 问询卡上是「模型问你」,不是「申请授权」。原「拒绝」语义错位
-                  // (像在批权限);改成「跳过」——它是"这题我不答",而非否决。
-                  ? BigButton(
-                      label: '跳过',
-                      color: ZT.surfaceHi,
-                      textColor: ZT.inkSoft,
-                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
-                    )
-                  : BigButton(
-                      label: '拒绝',
-                      color: ZT.rose,
-                      textColor: Colors.white,
-                      onPressed: () => widget.onAnswer(false, _message.text.trim(), null),
-                    ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: isAsk
-                  ? BigButton(
-                      label: _askReady ? '提交回答' : '请先选择',
-                      onPressed: _askReady ? () => widget.onAnswer(true, '', _askAnswers) : null,
-                    )
-                  : BigButton(
-                      label: '允许',
-                      onPressed: () => widget.onAnswer(true, _message.text.trim(), null),
-                    ),
-            ),
-          ]),
+          ],
         ),
-        // 审批疲劳的解法:连续干活时同一工具不用一遍遍点。Ask 卡不适用(每次问题不同)。
-        if (!isAsk)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: ZT.lemon,
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                ),
-                onPressed: () => widget.onAnswer(true, _message.text.trim(), null, true),
-                child: Text('本会话总是允许 ${widget.req.toolName}',
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ),
-      ]),
+      ),
     );
   }
 }
