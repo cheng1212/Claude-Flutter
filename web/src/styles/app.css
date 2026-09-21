@@ -869,3 +869,60 @@
   .composer__chips { overflow-x: auto; scrollbar-width: none; }
   .jump-latest { right: 10px; bottom: 140px; }
 }
+
+/* ============================================================
+   窄屏适配(2026-09-18 优化:对照知识库《移动端设计》《按钮与操作控件》)
+   —— ≤640px:TopBar 低频操作收进「⋯」菜单;会话行操作图标化;
+      触控目标 ≥36px;错误块紧凑化。
+   ============================================================ */
+@media (max-width: 640px) {
+  /* -- TopBar 收纳:原位低频按钮隐藏,副本进「⋯」菜单(功能等价) -- */
+  .topbar__right > .btn-ghost.btn-ghost--sm,
+  .topbar__right > .btn-ghost--sm { display: none; }   /* 通知/导出/用量/登出原位隐藏 */
+  .topbar__right > .btn-gold.btn-gold--sm { display: inline-flex; }  /* 新建保留 */
+  .theme-toggle { display: inline-flex; }               /* 主题保留 */
+
+  .topbar__more { position: relative; display: inline-block; }
+  .topbar__more > summary { list-style: none; cursor: pointer; user-select: none; }
+  .topbar__more > summary::-webkit-details-marker { display: none; }
+  .topbar__more[open] > summary { border-color: var(--z-primary); color: var(--z-primary-deep); }
+  .topbar__menu {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    min-width: 150px; display: flex; flex-direction: column;
+    background: var(--z-surface);
+    border: var(--z-border-w) solid var(--z-edge);
+    border-radius: var(--z-radius);
+    box-shadow: var(--z-shadow-md);
+    padding: 6px; z-index: 30;
+  }
+  .topbar__menu-item {
+    text-align: left; background: none; border: none; cursor: pointer;
+    font-family: var(--z-font-body); font-size: 14px; font-weight: 600;
+    color: var(--z-ink); padding: 9px 12px; border-radius: calc(var(--z-radius) - 3px);
+    min-height: 36px;
+  }
+  .topbar__menu-item:hover { background: color-mix(in srgb, var(--z-primary) 10%, var(--z-surface)); }
+
+  /* -- 会话行操作图标化:文字隐藏,::after 出图标;触控目标加高 -- */
+  .session-row__ops .session-op { min-width: 36px; min-height: 36px; padding: 0 8px; font-size: 0; }
+  .session-row__ops .session-op .btn-txt { display: none; }
+  .session-op[data-op='rename']::after { content: '✎'; font-size: 14px; }
+  .session-op[data-op='pin']::after { content: '★'; font-size: 14px; }
+  .session-op[data-op='del']::after { content: '✕'; font-size: 14px; }
+  .session-row__ops { gap: 6px; }
+
+  /* -- 错误块紧凑:少占消息流 -- */
+  .error-block { padding: 6px 10px; font-size: 12px; margin-top: 6px; }
+
+  /* -- 登录卡:小屏收边距 -- */
+  .login { padding: 16px; }
+  .login__panel { padding: 28px 22px 24px; }
+
+  /* -- 顶栏标题缩一档,给操作让位 -- */
+  .topbar__title { font-size: 15px; }
+}
+
+/* 桌面端(>640px)「⋯」菜单永不显示 */
+@media (min-width: 640.1px) {
+  .topbar__more { display: none; }
+}

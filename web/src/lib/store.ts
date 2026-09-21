@@ -344,6 +344,15 @@ export function createZStore(deps: {
 
       async createSession(input = {}) {
         const row = await api.createSession(input);
+        // 权限模式跨会话记忆:server 新会话一律 default,自动沿用上次选的模式,
+        // 省得每个新会话重选一遍「跳过确认」(与 app 端 zcode.lastPermissionMode 同语义)
+        const last = localStorage.getItem('zcode.lastPermissionMode');
+        if (last && last !== 'default' && row.id) {
+          try {
+            await api.patchSession(row.id, { permissionMode: last });
+            row.permissionMode = last;
+          } catch { /* 沿用失败不挡建会话 */ }
+        }
         await loadSessions();
         return row;
       },

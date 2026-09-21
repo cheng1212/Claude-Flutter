@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../core/markdown_plain.dart';
 import '../state/reducer.dart';
 import '../theme.dart';
 import 'row_actions.dart';
@@ -402,7 +403,7 @@ class _MemoMarkdownState extends State<MemoMarkdown> {
         tableHead: TextStyle(
             fontSize: 12.5, fontWeight: FontWeight.w600, color: ZT.ink),
         tableBody: TextStyle(fontSize: 12.5, height: 1.4, color: ZT.ink),
-        a: TextStyle(color: ZT.primaryDeep, fontWeight: FontWeight.w600),
+        a: TextStyle(color: ZT.primaryText, fontWeight: FontWeight.w600),
         horizontalRuleDecoration: BoxDecoration(
           border: Border(top: BorderSide(width: 1, color: ZT.line)),
         ),
@@ -526,6 +527,49 @@ class _CodeBlockState extends State<_CodeBlock> {
 
 // -------------------------------------------------------------------- rows
 
+/// 一键复制小图标(zremote 移植):点击复制全文,1.2s 后回落(对勾=已复制)。
+/// 48dp 触控热区,视觉只有 30dp —— 不挤版面也要好按。此前是 13px 图标 +
+/// 3px padding(≈19dp 热区),用户点不中,"复制功能非常不好用"的直接原因。
+class MiniCopyButton extends StatefulWidget {
+  final String text;
+
+  const MiniCopyButton({super.key, required this.text});
+
+  @override
+  State<MiniCopyButton> createState() => _MiniCopyButtonState();
+}
+
+class _MiniCopyButtonState extends State<MiniCopyButton> {
+  bool _copied = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () async {
+        await Clipboard.setData(ClipboardData(text: widget.text));
+        if (!mounted) return;
+        setState(() => _copied = true);
+        Future.delayed(const Duration(milliseconds: 1200), () {
+          if (mounted) setState(() => _copied = false);
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: SizedBox(
+          width: 48,
+          height: 30,
+          child: Icon(
+            _copied ? Icons.check_rounded : Icons.copy_rounded,
+            size: 15,
+            color: _copied ? ZT.aqua : ZT.inkFaint,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 用户消息:右侧气泡。纯文字 = ink 深色气泡;
 /// 带图片 = 白卡即气泡(无深色底/描边,参考 zremote),文字另起 ink 小气泡。
 class UserBubble extends StatefulWidget {
@@ -541,24 +585,6 @@ class UserBubble extends StatefulWidget {
 }
 
 class _UserBubbleState extends State<UserBubble> {
-  bool _copied = false;
-  Timer? _resetTimer;
-
-  void _copy() {
-    Clipboard.setData(ClipboardData(text: widget.row.content));
-    setState(() => _copied = true);
-    _resetTimer?.cancel();
-    _resetTimer = Timer(const Duration(milliseconds: 1600), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _resetTimer?.cancel();
-    super.dispose();
-  }
-
   static ShapeDecoration _inkDeco() => ShapeDecoration(
         color: ZT.ink,
         shadows: ZT.hard(dx: 2.5, dy: 2.5),
@@ -624,25 +650,14 @@ class _UserBubbleState extends State<UserBubble> {
             mainAxisSize: MainAxisSize.min,
             children: [
               bubble,
-              if (time.isNotEmpty || _copied)
+              // 一键复制自己发的消息:ChatGPT 式小图标,点了变对勾即完成
+              MiniCopyButton(text: widget.row.content),
+              if (time.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(top: 3, right: 2),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    GestureDetector(
-                      onTap: _copy,
-                      child: Icon(
-                        _copied ? Icons.check_rounded : Icons.content_copy_rounded,
-                        size: 13,
-                        color: _copied ? ZT.aqua : ZT.inkFaint,
-                      ),
-                    ),
-                    if (time.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      Text(time,
-                          style: TextStyle(
-                              fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
-                    ],
-                  ]),
+                  padding: const EdgeInsets.only(top: 1, right: 2),
+                  child: Text(time,
+                      style: TextStyle(
+                          fontSize: 9.5, color: ZT.inkFaint, fontFamily: ZT.mono)),
                 ),
             ],
           ),
@@ -670,6 +685,8 @@ class _UserBubbleState extends State<UserBubble> {
                   decoration: _inkDeco(),
                   child: _inkChild(),
                 ),
+                if (widget.row.content.isNotEmpty)
+                  Align(alignment: Alignment.centerRight, child: MiniCopyButton(text: widget.row.content)),
               ],
             ],
           ),
@@ -693,24 +710,6 @@ class AssistantBlock extends StatefulWidget {
 }
 
 class _AssistantBlockState extends State<AssistantBlock> {
-  bool _copied = false;
-  Timer? _resetTimer;
-
-  void _copyAll() {
-    Clipboard.setData(ClipboardData(text: widget.text));
-    setState(() => _copied = true);
-    _resetTimer?.cancel();
-    _resetTimer = Timer(const Duration(milliseconds: 1600), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _resetTimer?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final text = widget.text;
@@ -725,19 +724,10 @@ class _AssistantBlockState extends State<AssistantBlock> {
           MemoMarkdown(text: text),
           const SizedBox(height: 4),
           Row(mainAxisSize: MainAxisSize.min, children: [
-            // ChatGPT 移动端模式:助手消息下方常驻一键复制(桌面是 hover,移动无 hover)
-            InkWell(
-              borderRadius: BorderRadius.circular(4),
-              onTap: _copyAll,
-              child: Padding(
-                padding: const EdgeInsets.all(3),
-                child: Icon(
-                  _copied ? Icons.check_rounded : Icons.content_copy_rounded,
-                  size: 13,
-                  color: _copied ? ZT.aqua : ZT.inkFaint,
-                ),
-              ),
-            ),
+            // ChatGPT 移动端模式:助手消息下方常驻一键复制。
+            // 口径 = 纯文本(markdownToPlain):贴到微信/备忘录不带 ** 记号;
+            // 要 Markdown 原文走长按菜单(两口径都保留)。
+            MiniCopyButton(text: markdownToPlain(text)),
             if (time.isNotEmpty) ...[
               const SizedBox(width: 8),
               Text(time,
@@ -1041,7 +1031,7 @@ class _DiffView extends StatelessWidget {
     if (line.startsWith('+') && !line.startsWith('+++')) return ZT.aqua;
     if (line.startsWith('-') && !line.startsWith('---')) return ZT.rose;
     if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) {
-      return ZT.primaryDeep;
+      return ZT.primaryText;
     }
     return ZT.inkSoft;
   }
@@ -1136,7 +1126,8 @@ class ErrorBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = neutral ? ZT.lemon : ZT.rose;
+    // 描边/图标/标题用深变体:鲜柠檬在浅底上只有 1.5:1,不达非文本 3:1 下限
+    final color = deepOf(neutral ? ZT.lemon : ZT.rose);
     return Container(
       margin: const EdgeInsets.only(top: 8, right: 20),
       padding: const EdgeInsets.all(10),

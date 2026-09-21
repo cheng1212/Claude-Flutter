@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
 import '../debug_log.dart';
@@ -455,11 +456,48 @@ class ZApp extends ChangeNotifier {
 
   /// 消息页(rows)→ 出站事件列表 + 最大 seq。
   /// 新建会话,建完刷新列表,返回会话行。
+  /// 权限模式跨会话记忆:server 端新会话一律 default(每次确认),不记的话
+  /// 每开一个新会话都得重选一遍「跳过确认」,选之前的读写还每步弹审批。
   Future<Map<String, dynamic>> createSession({String? title, String? cwd, String? model}) async {
     final s = await _api.createSession(title: title, cwd: cwd, model: model);
+    final last = await _readLastMode();
+    if (last != null && last != 'default') {
+      final id = s['id'];
+      if (id is String) {
+        try {
+          await _api.patchSession(id, permissionMode: last);
+          s['permissionMode'] = last; // 回填,聊天页 _mode 立即正确
+        } on Object {
+          // 沿用失败不挡建会话:会话还在,模式回 default 可手动再选
+        }
+      }
+    }
     await sessionsSlice.load();
     notifyListeners();
     return s;
+  }
+
+  /// 上次使用的权限模式(SharedPreferences 持久化);新建会话自动沿用。
+  static const _kLastMode = 'zcode.lastPermissionMode';
+
+  /// 模式选择器确认后调用:记住选择,下个新会话自动应用。
+  /// prefs 不可用(测试环境/插件异常)时静默放弃,只影响记忆不影响功能。
+  Future<void> rememberPermissionMode(String mode) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_kLastMode, mode);
+    } on Object {
+      // 放弃记忆
+    }
+  }
+
+  Future<String?> _readLastMode() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      return p.getString(_kLastMode);
+    } on Object {
+      return null; // 没存过/读不到:新会话维持 server 默认
+    }
   }
 
   Future<void> deleteSession(String id) async {

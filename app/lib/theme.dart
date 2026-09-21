@@ -36,6 +36,15 @@ class ZPalette {
   final Color rose; // 红(错误)
   final Color grape; // 紫(思考)
   final Color onInk; // 主色/墨色填充上的文字
+  // 文字安全的深色变体( citrus 专属):状态色直接当 10–12px 小字用对比度只有
+  // 1.5–4.2:1(WCAG 1.4.3 要求 4.5:1),深变体实测 ≥5:1。null = 回落本色,
+  // 隐藏主题(cream/sticker)不传即行为不变。非文本元素(描边/图标)同样换用,
+  // 因鲜色系对 3:1 的非文本下限也不达标(柠檬 1.5:1)。
+  final Color? aquaDeep;
+  final Color? lemonDeep;
+  final Color? roseDeep;
+  final Color? grapeDeep;
+  final Color? primaryTextSafe; // 橘的文字档;null = 回落 primaryDeep
   final double radius; // 全局圆角
   final bool neoShadow; // true = 墨线硬阴影(blur 0, neo-brutalist);false = 柔影
   final double borderWidth; // 默认描边宽度(citrus 墨线更粗更"硬")
@@ -63,6 +72,11 @@ class ZPalette {
     required this.neoShadow,
     required this.borderWidth,
     required this.cardBorderWidth,
+    this.aquaDeep,
+    this.lemonDeep,
+    this.roseDeep,
+    this.grapeDeep,
+    this.primaryTextSafe,
     this.bgDot,
     this.bgDotStep = 16,
   });
@@ -111,6 +125,14 @@ const ZPalette kZCitrus = ZPalette(
   rose: Color(0xFFE5484D),
   grape: Color(0xFF7C5CFF),
   onInk: Color(0xFFFFF6E9),
+  // 文字安全档(实测 surf/hi 双底 ≥4.98:1);鲜色锚定值不动(zremote 一致性由
+  // theme_test 守卫),深档只新增不覆盖。primaryDeep E05500 作 12px 文字实测
+  // 3.75:1 不达 WCAG 4.5:1,文字场景一律走 primaryText(=B84300)。
+  primaryTextSafe: Color(0xFFB84300),
+  aquaDeep: Color(0xFF0A7568),
+  lemonDeep: Color(0xFF8A5E00),
+  roseDeep: Color(0xFFB23338),
+  grapeDeep: Color(0xFF5B3FD6),
   radius: 14,
   neoShadow: true,
   borderWidth: 1.6,
@@ -206,6 +228,14 @@ abstract final class ZT {
   static Color get rose => _palette.rose; // 红(错误)
   static Color get grape => _palette.grape; // 紫(思考)
   static Color get onInk => _palette.onInk; // 主色填充上的文字
+
+  // 状态色的"文字安全"档:小字/图标一律用这里,鲜色只留给色点/底纹/聚焦框。
+  // 依据:WCAG 1.4.3(文字 4.5:1)/1.4.11(非文本 3:1),柑橘底上鲜色系全不达标。
+  static Color get primaryText => _palette.primaryTextSafe ?? _palette.primaryDeep;
+  static Color get aquaText => _palette.aquaDeep ?? _palette.aqua;
+  static Color get lemonText => _palette.lemonDeep ?? _palette.lemon;
+  static Color get roseText => _palette.roseDeep ?? _palette.rose;
+  static Color get grapeText => _palette.grapeDeep ?? _palette.grape;
 
   static double get radius => _palette.radius; // 全局圆角
   static double get borderWidth => _palette.borderWidth; // 默认描边宽度
@@ -402,7 +432,7 @@ class HardCard extends StatelessWidget {
     super.key,
     required this.child,
     this.color,
-    this.padding = const EdgeInsets.all(13),
+    this.padding = const EdgeInsets.all(12), // 4/8 网格(原 13)
     this.onTap,
     this.onLongPress,
     this.shadowDx = 0,
@@ -461,6 +491,8 @@ class StatusChip extends StatelessWidget {
       'done' || 'idle' || '' => (ZT.inkSoft, '空闲'),
       _ => (ZT.aqua, phase),
     };
+    // 文字与描边走深变体(WCAG 4.5:1 / 3:1),色点保留鲜色(有墨圈保对比)
+    final text = citrus ? deepOf(color) : color;
     return Container(
       padding: EdgeInsets.symmetric(
           horizontal: compact ? 7 : 9, vertical: compact ? (citrus ? 2.0 : 2.5) : (citrus ? 3.5 : 4)),
@@ -468,7 +500,7 @@ class StatusChip extends StatelessWidget {
         // citrus=zremote:白底药丸 + 彩色墨线;cream:彩底圆角矩形
         color: citrus ? ZT.surface : color.withValues(alpha: 0.12),
         shape: citrus
-            ? StadiumBorder(side: ZT.inkSide(w: 1.2, color: color))
+            ? StadiumBorder(side: ZT.inkSide(w: 1.2, color: text))
             : RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(6),
                 side: BorderSide(width: 1, color: color.withValues(alpha: 0.7)),
@@ -481,12 +513,23 @@ class StatusChip extends StatelessWidget {
             style: TextStyle(
                 fontSize: citrus ? (compact ? 10.5 : 11.5) : (compact ? 10 : 11),
                 fontWeight: FontWeight.w700,
-                color: color,
+                color: text,
                 height: citrus ? 1 : null,
                 fontFamily: ZT.sans)),
       ]),
     );
   }
+}
+
+/// 鲜色 → 同色相文字安全档(状态徽章等小组件用;深变体映射在 [ZT] 有四处,
+/// 这里收敛 vivid→deep 的换算,避免每个调用点各写一份 switch)。
+Color deepOf(Color vivid) {
+  if (identical(vivid, ZT.primary) || identical(vivid, ZT.primaryDeep)) return ZT.primaryText;
+  if (identical(vivid, ZT.aqua)) return ZT.aquaText;
+  if (identical(vivid, ZT.lemon)) return ZT.lemonText;
+  if (identical(vivid, ZT.rose)) return ZT.roseText;
+  if (identical(vivid, ZT.grape)) return ZT.grapeText;
+  return vivid;
 }
 
 /// 脉冲点:呼吸指示。控制器必须在 initState 里创建(不要用 late 懒初始化——
@@ -579,7 +622,9 @@ class BigButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
     final fill = color ?? ZT.primary;
-    final fg = textColor ?? ZT.onInk;
+    // 柑橘:墨字配鲜橘底(实测 5.89:1);白字(onInk)对鲜橘只有 2.66:1,
+    // 触质量审查红线③(文字对比 ≥4.5:1)。cream 维持白字。
+    final fg = textColor ?? (ZT.palette.neoShadow ? ZT.ink : ZT.onInk);
     final citrus = ZT.palette.neoShadow;
     final sink = citrus ? 2.5 : 2.0; // citrus=zremote 下沉量
     final button = _PressSink(
@@ -734,7 +779,9 @@ abstract final class AgentText {
   static const double headingHeight = 1.3;
   static const double codeSize = 12;
   static const double codeHeight = 1.55;
-  static const double smallSize = 9.5;
+  // 9.5 低于移动端正文字号下限(Apple HIG: iOS 最小 11pt【已证实】;10.5 为
+  // 不破工具活动行密度的折中)。
+  static const double smallSize = 10.5;
 }
 
 /// Agent 渲染间距令牌:4/8/12/16,禁 32+ 随机空白。
