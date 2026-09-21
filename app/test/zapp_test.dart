@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zcode_app/api.dart';
 import 'package:zcode_app/state/reducer.dart';
 import 'package:zcode_app/state/zapp.dart';
@@ -649,6 +650,21 @@ void main() {
     final s = await app.createSession(title: 'hi');
     expect(s['id'], 'new1');
     expect(http.calls.last.path, '/api/sessions'); // 刷新列表
+  });
+
+  test('createSession 沿用记住的权限模式(跨会话记忆)', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'zcode.lastPermissionMode': 'bypassPermissions',
+    });
+    http.responder = (c) => switch (c.path) {
+          '/api/sessions' when c.method == 'POST' => {'id': 'new2', 'title': 'hi'},
+          '/api/sessions/new2' when c.method == 'PATCH' => {'ok': true},
+          '/api/sessions' => <Map>[],
+          _ => null,
+        };
+    final s = await app.createSession(title: 'hi');
+    expect(s['permissionMode'], 'bypassPermissions'); // 回填,聊天页立即正确
+    expect(http.calls.any((c) => c.path == '/api/sessions/new2' && c.method == 'PATCH'), isTrue);
   });
 
   test('deleteSession:清当前会话状态并刷新列表', () async {
