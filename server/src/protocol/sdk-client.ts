@@ -456,6 +456,15 @@ export class SessionRuntime {
             }
             const events = transformMessage(raw);
             for (const event of events) {
+              // resume 丢失的错误除"迭代器抛异常"外,还会以 result 消息(非异常)路径到达:
+              // transform 映射为 error 事件原样甩给用户、complete 正常收尾,降级永远不触发。
+              // 与 catch 路径同款拦截:signal 外层降级重开,本次剩余事件(含 complete)作废。
+              if (event.kind === 'error'
+                && isLostConversationError(String(event.content ?? ''))
+                && this.providerSessionId && !this.retryPending) {
+                this.retryPending = true;
+                return; // finally:release + finishTurn;runTurnExclusive 见 retryPending 降级重开
+              }
               if (event.kind === 'tool_use') this.openTools.add(event.toolId);
               else if (event.kind === 'tool_result') this.openTools.delete(event.toolId);
               // 记下真实上下文占用(每次 API 请求的 prompt 大小),回合末随 usage 落库
