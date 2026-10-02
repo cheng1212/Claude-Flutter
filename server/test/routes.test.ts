@@ -16,6 +16,23 @@ describe('routes', () => {
     expect(r?.settings?.env.ANTHROPIC_AUTH_TOKEN).toBe('k');
     expect(r?.upstreamModel).toBe('glm-5.3-flash');
   });
+  it('子代理别名槽自动注入 = 本路由模型(剥掉 [1m]);主模型保留 [1m]', () => {
+    const cfg: RouteConfig = {
+      routes: { 'go-x': { baseUrl: 'http://127.0.0.1:4001', authToken: 'k', model: 'go-x[1m]' } },
+    };
+    const env = resolveModel(cfg, 'go-x')?.settings?.env ?? {};
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('go-x');
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('go-x');
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('go-x');
+    // [1m] 是 CLI 的窗口提示，只有别名槽要剥；交给 CLI 的 model 必须保留
+    expect(resolveModel(cfg, 'go-x')?.settings?.model).toBe('go-x[1m]');
+  });
+  it('subagentModel 显式给出时优先于本路由模型', () => {
+    const cfg: RouteConfig = {
+      routes: { 'go-y': { baseUrl: 'u', authToken: 'k', model: 'go-y[1m]', subagentModel: 'deepseek-v4-flash' } },
+    };
+    expect(resolveModel(cfg, 'go-y')?.settings?.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash');
+  });
   it('default / 未知模型 → 无路由(CLI 用自己的端点)', () => {
     expect(resolveModel(fixture, 'default')).toBeNull();
     expect(resolveModel(fixture, 'sonnet')).toBeNull();

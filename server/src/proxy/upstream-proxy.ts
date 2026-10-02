@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { loadRoutes, type RouteConfig, type RouteEntry } from '../routes.js';
+import { loadRoutes, strip1m, type RouteConfig, type RouteEntry } from '../routes.js';
 
 /**
  * 上游中转代理:zcode 自己的模型( routes.json 里带 relayTo 的条目 )走这里。
@@ -27,14 +27,15 @@ export type UpstreamProxyOptions = {
   onStatus?: (s: UpstreamStatus) => void;
 };
 
-/** routes.json 里带 relayTo 的条目即中转模型;按请求 model 匹配 entry.model(缺省用 key)。 */
+/** routes.json 里带 relayTo 的条目即中转模型;按请求 model 匹配 entry.model(缺省用 key),两侧都剥掉 [1m] 再比。 */
 export function resolveRelay(config: RouteConfig | null, model: string): { relay: RouteEntry; target: RouteEntry } | null {
   if (!model) return null;
   const routes = config?.routes ?? {};
+  const want = strip1m(model);
   for (const [id, entry] of Object.entries(routes)) {
     const relayTo = (entry as { relayTo?: string }).relayTo;
     if (!relayTo) continue;
-    if ((entry.model ?? id) !== model) continue;
+    if (strip1m(entry.model ?? id) !== want) continue;
     const target = routes[relayTo];
     if (!target?.baseUrl) return null; // relayTo 指了个不存在的路由:按无目标处理
     return { relay: entry, target };
@@ -98,8 +99,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: UpstreamP
   }
   const target = found.target;
 
-  // relay 条目与目标路由的 model 名不同时改写请求体,上游永远收到它自己的名字
-  const upstreamModel = target.model || model;
+  // relay 条目与目标路由的 model 名不同时改写请求体,上游永远收到它自己的名字(剥掉 [1m] 提示后缀)
+  const upstreamModel = strip1m(target.model || model);
   if (upstreamModel !== model) {
     parsed.model = upstreamModel;
     body = Buffer.from(JSON.stringify(parsed), 'utf8');
