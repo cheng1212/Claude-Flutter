@@ -20,10 +20,10 @@ describe('routes', () => {
     const cfg: RouteConfig = {
       routes: { 'go-x': { baseUrl: 'http://127.0.0.1:4001', authToken: 'k', model: 'go-x[1m]' } },
     };
-    const env = resolveModel(cfg, 'go-x')?.settings?.env ?? {};
-    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('go-x');
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('go-x');
-    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('go-x');
+    const env = resolveModel(cfg, 'go-x')?.settings?.env;
+    expect(env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('go-x');
+    expect(env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('go-x');
+    expect(env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('go-x');
     // [1m] 是 CLI 的窗口提示，只有别名槽要剥；交给 CLI 的 model 必须保留
     expect(resolveModel(cfg, 'go-x')?.settings?.model).toBe('go-x[1m]');
   });
