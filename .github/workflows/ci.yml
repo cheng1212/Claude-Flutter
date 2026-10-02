@@ -1,0 +1,69 @@
+# 三端 CI:push/PR 涉及对应目录时自动跑(2026-10-03 审计补齐 —— 此前只有 app,server/web 测试在 CI 无人跑)。
+# 版本锁:Flutter 3.44.0 stable(与本地 D:\flutter 一致);Node 22 LTS。
+name: ci
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - 'server/**'
+      - 'web/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'server/**'
+      - 'web/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - working-directory: app
+        run: flutter analyze --no-pub
+      - working-directory: app
+        run: flutter test
+
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - working-directory: server
+        run: npm ci
+      - working-directory: server
+        run: npx tsc --noEmit
+      - working-directory: server
+        run: npx vitest run
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - working-directory: web
+        run: npm ci
+      - working-directory: web
+        run: npx tsc --noEmit
+      - working-directory: web
+        run: npx vitest run

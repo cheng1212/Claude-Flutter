@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 息屏审批弹全屏通知:Android 14+ 无此声明 fullScreenIntent 降级为普通通知,
+         用户可能错过 10 分钟审批窗口(审计 #10)。Android 14 起还需用户在设置里授权。 -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <application
         android:label="zCode"
         android:usesCleartextTraffic="true"

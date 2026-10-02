@@ -1,5 +1,7 @@
 // 应用大脑:REST + WS 组合层。页面只读这里的暴露状态,变更走方法。
 import 'dart:async';
+import 'dart:convert' show base64Encode;
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,13 +22,29 @@ export 'slices/queue_slice.dart' show QueuedMessage;
 /// 用户定的:100 条足够日常看,更旧的历史平时用不到 —— 滑到最旧端再按需拉。
 const int kFirstPageSize = 100;
 
+/// 单文件上传上限:对齐 server /files 的 50MB 硬顶(413)。选文件时就地预检,
+/// 不读字节不编码,防大视频把内存顶爆(≈3.7× 文件大小的峰值)后 OOM/ANR。
+const int kMaxUploadBytes = 50 * 1024 * 1024;
+
+/// base64 编码分片大小(丢 isolate 每片一个 compute):主线程整段编码大文件
+/// 会把 UI 卡死。片长必须是 3 的倍数(base64 按 3 字节对齐,各片独立编码拼接
+/// 才不会错位),6MB 合规。
+const int kUploadEncodePiece = 6 * 1024 * 1024;
+
 class ZApp extends ChangeNotifier {
-  ZApp({required this._api, required this._socket}) {
+  ZApp({required this._api, required this._socket, this.onUnauthorized, this.maxUploadBytes = kMaxUploadBytes}) {
     _bind();
   }
 
   ZApi _api;
   ZSocket _socket;
+
+  /// 令牌失效回调(main 传「清凭据回登录页」):REST 401 或 WS 明确 unauthorized
+  /// 时由 ZApi/ZSocket 触发。透传给 relink 重建的连接对象。
+  final void Function()? onUnauthorized;
+
+  /// 上传上限(测试可调小);默认 [kMaxUploadBytes]。
+  final int maxUploadBytes;
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _retry;
   bool _disposed = false;
@@ -116,8 +134,8 @@ class ZApp extends ChangeNotifier {
     await _sub?.cancel();
     _sub = null;
     final old = _socket;
-    _api = ZApi(baseUrl: baseUrl, token: token);
-    _socket = ZSocket(uri: wsUriOf(baseUrl), token: token);
+    _api = ZApi(baseUrl: baseUrl, token: token, onUnauthorized: onUnauthorized);
+    _socket = ZSocket(uri: wsUriOf(baseUrl), token: token, onUnauthorized: onUnauthorized);
     _unbind(old);
     currentSessionId = null;
     chat = const ChatState();
@@ -685,21 +703,33 @@ class ZApp extends ChangeNotifier {
   }
 
   /// 上传文件到当前会话(电脑端 cwd/uploads/),返回 {显示名, 电脑路径}。
-  /// [onProgress] 0.0~1.0(不传则无进度);网络错误自动重试 2 次(0.8s/1.6s 退避)。
+  /// 上限 [maxUploadBytes]:超限直接拒(不读不编码不发起请求)。
+  /// base64 编码分片丢 isolate([compute]):大文件主线程整段编码会卡死 UI(审计 #9)。
+  /// [onProgress] 0.0~1.0(编码进度);网络错误自动重试 2 次(0.8s/1.6s 退避)。
   /// 失败抛错(调用方 toast)。
   Future<({String name, String path})> uploadFile(
       String fileName, List<int> bytes,
       {void Function(double progress)? onProgress}) async {
     final sid = currentSessionId;
     if (sid == null) throw Exception('未打开会话');
+    if (bytes.length > maxUploadBytes) {
+      throw Exception('文件超过 ${maxUploadBytes ~/ (1024 * 1024)}MB 上限');
+    }
+    assert(kUploadEncodePiece % 3 == 0); // base64 对齐:片长必须 3 的倍数
+    final parts = <String>[];
+    var done = 0;
+    while (done < bytes.length) {
+      final end = min(done + kUploadEncodePiece, bytes.length);
+      parts.add(await compute(base64Encode, bytes.sublist(done, end)));
+      done = end;
+      onProgress?.call(done / bytes.length);
+    }
+    final dataB64 = parts.join();
     var attempt = 0;
     while (true) {
       attempt++;
       try {
-        final path = await _api.uploadFile(sid, fileName, bytes,
-            onProgress: onProgress == null
-                ? null
-                : (p) => onProgress(p.clamp(0.0, 1.0)));
+        final path = await _api.uploadFile(sid, fileName, dataB64: dataB64);
         return (name: fileName, path: path);
       } on Object catch (e) {
         final retryable =

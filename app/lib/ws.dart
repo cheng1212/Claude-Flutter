@@ -32,6 +32,7 @@ class ZSocket {
     this.pingEvery = const Duration(seconds: 25),
     DateTime Function()? clock,
     this.onChanged,
+    this.onUnauthorized,
   })  : _factory = factory ?? ioChannelFactory,
         _now = clock ?? DateTime.now;
 
@@ -45,6 +46,10 @@ class ZSocket {
   final DateTime Function() _now;
   /// 连接状态变化回调(ZApp 挂 notifyListeners;可换绑)。
   void Function()? onChanged;
+
+  /// 服务器明确回 unauthorized(令牌错误/失效)时触发:宿主据此自动登出。
+  /// 连不上/掉线/超时不算令牌失效,不触发;并发触发可能多次,宿主侧须幂等。
+  void Function()? onUnauthorized;
 
   ZSocketState state = ZSocketState.idle;
   String? failure;
@@ -94,6 +99,9 @@ class ZSocket {
     try {
       final reply = await first.future.timeout(const Duration(seconds: 8));
       if (reply['kind'] != 'authenticated') {
+        // 服务器明确回 unauthorized = 令牌错误/失效(区别于连不上/掉线):通知宿主自动登出,
+        // 不再让 WS 无限退避重连、页面反复弹同一个错(审计 #5)
+        if ('${reply['content'] ?? ''}' == 'unauthorized') onUnauthorized?.call();
         throw ZSocketException('${reply['content'] ?? reply['kind'] ?? '鉴权失败'}');
       }
     } on Object {

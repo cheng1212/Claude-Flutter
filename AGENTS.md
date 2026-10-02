@@ -24,9 +24,10 @@
 
 1. **开工**：`cd "D:\WorkSpace\Claude Code Flutter" && git checkout -b feature/<主题>`（若 master 有新提交如文档/热修复，先 `git merge master`）
 2. **提交**：中文消息，对齐现有风格：`server:` / `app:` / `server+app:` 前缀 + 一句话讲清动机
-3. **验证**（合入 develop 前必须全绿）：
+3. **验证**（合入 develop 前必须全绿，三端都要；CI 同款门禁见 `.github/workflows/ci.yml`）：
    - server：`cd "D:\WorkSpace\Claude Code Flutter\server" && npx tsc --noEmit && npx vitest run`
    - app：`cd "D:\WorkSpace\Claude Code Flutter\app" && D:\flutter\bin\flutter.bat analyze && D:\flutter\bin\flutter.bat test`
+   - web：`cd "D:\WorkSpace\Claude Code Flutter\web" && npx tsc --noEmit && npx vitest run`（2026-10-03 起入门禁，此前只有 app 有 CI）
 4. **合入**：`git checkout develop && git merge --no-ff feature/<主题>`
 5. **发布**：`git checkout master && git merge --no-ff develop` → 打 tag `v<版本>` → 重启 server（5190/5191）→ 需要时构建 APK 发布（见交接文档）
    - **版本号纪律**：每次发版 `app/pubspec.yaml` 的 `version: X.Y.Z+build` 必须**同时递增**（语义化 X.Y.Z + 递增 build 号），不允许同版本号重复发包；版本号在 app 汉堡菜单底部可见（package_info_plus 读取）

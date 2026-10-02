@@ -23,7 +23,12 @@ HttpFn platformHttp({required String baseUrl, required String token}) {
       final text =
           await res.transform(utf8.decoder).join().timeout(const Duration(seconds: 20));
       if (res.statusCode >= 300) {
-        throw ZApiException(text.isEmpty ? res.reasonPhrase : text, status: res.statusCode);
+        throw ZApiException(
+          text.isEmpty ? res.reasonPhrase : text,
+          status: res.statusCode,
+          // 401 = 令牌失效:此前全落 server,「令牌失效请重新登录」文案与自动登出永不触发(审计 #5)
+          kind: res.statusCode == 401 ? ApiErrorKind.auth : ApiErrorKind.server,
+        );
       }
       return text.isEmpty ? null : jsonDecode(text);
     } on TimeoutException {

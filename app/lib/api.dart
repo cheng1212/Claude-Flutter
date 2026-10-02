@@ -1,19 +1,22 @@
 // zcode-server REST 客户端(Bearer token)。HTTP 实现按平台条件导入。
+// 保持纯 Dart(不 import flutter/*):tool/ 下的联调脚本直接 import 本文件。
 import 'dart:async' show TimeoutException;
-import 'dart:convert' show base64Encode;
-import 'dart:math' show min;
 import 'http_default.dart';
 import 'http_fn.dart';
 
 export 'http_fn.dart' show HttpFn, ZApiException, ApiErrorKind, apiErrorMessage;
 
 class ZApi {
-  ZApi({required this.baseUrl, required this.token, HttpFn? http})
+  ZApi({required this.baseUrl, required this.token, HttpFn? http, this.onUnauthorized})
       : _http = http ?? platformHttp(baseUrl: baseUrl, token: token);
 
   final String baseUrl; // 形如 http://192.168.x.x:5190
   final String token;
   final HttpFn _http;
+
+  /// 令牌失效回调(REST 401 时触发):宿主传「清凭据回登录页」。并发请求可能
+  /// 触发多次,宿主侧须幂等。连接不上/5xx 不算令牌失效,不触发。
+  final void Function()? onUnauthorized;
 
   Future<Object?> _call(String method, String path, Object? body) async {
     try {
@@ -22,7 +25,8 @@ class ZApi {
       return await _http(method, path, body).timeout(const Duration(seconds: 20));
     } on TimeoutException {
       throw const ZApiException('请求超时(20s)', kind: ApiErrorKind.network);
-    } on ZApiException {
+    } on ZApiException catch (e) {
+      if (e.kind == ApiErrorKind.auth) onUnauthorized?.call();
       rethrow;
     } on Object catch (e) {
       throw ZApiException('$e');
@@ -196,23 +200,10 @@ class ZApi {
     await _call('DELETE', '/api/sessions/$id', null);
   }
 
-  /// 上传文件到当前会话:bytes 走 base64 JSON 直传(server 解码存 cwd/uploads/)。
-  /// [onProgress] 按已编码比例近似上报(0.0~1.0);返回电脑上的绝对路径。
-  Future<String> uploadFile(String sessionId, String fileName, List<int> bytes,
-      {void Function(double progress)? onProgress}) async {
-    // base64 分块编码,边编码边上报进度(编码完 = 发送完,本端点为小文件直传)
-    // 块长必须是 3 的倍数:base64 按 3 字节对齐,各块独立编码拼接才不会错位;改块长务必保住这一点
-    const chunk = 3 * 256 * 1024; // 768KB 原始字节/块
-    assert(chunk % 3 == 0);
-    var done = 0;
-    final parts = <String>[];
-    while (done < bytes.length) {
-      final end = min(done + chunk, bytes.length);
-      parts.add(base64Encode(bytes.sublist(done, end)));
-      done = end;
-      onProgress?.call(done / bytes.length);
-    }
-    final dataB64 = parts.join();
+  /// 上传文件到当前会话:[dataB64] 为 base64 编码好的完整文件(编码由上层丢
+  /// isolate 分片做,本文件保持纯 Dart 不碰 compute),server 解码存 cwd/uploads/。
+  /// 返回电脑上的绝对路径。
+  Future<String> uploadFile(String sessionId, String fileName, {required String dataB64}) async {
     final res = await _call('POST', '/api/sessions/$sessionId/files',
         {'fileName': fileName, 'dataB64': dataB64});
     if (res is Map && res['path'] != null) return '${res['path']}';
