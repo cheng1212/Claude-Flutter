@@ -37,3 +37,16 @@ describe('config', () => {
     }
   });
 });
+
+describe('isWeakToken · 弱令牌判定(只告警不放行变化)', () => {
+  it('知名弱口令与短串判弱;强随机串不误报', async () => {
+    const { isWeakToken } = await import('../src/config.js');
+    expect(isWeakToken('123456')).toBe(true);
+    expect(isWeakToken('short')).toBe(true);
+    expect(isWeakToken('a'.repeat(23))).toBe(true);
+    expect(isWeakToken('a'.repeat(24))).toBe(false);
+    expect(isWeakToken('x'.repeat(40))).toBe(false);
+    // 服务器默认生成的 base64url(18 字节 → 24 字符)恰在阈值上,不该被误判
+    expect(isWeakToken('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'.slice(0, 24))).toBe(false);
+  });
+});

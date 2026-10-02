@@ -675,4 +675,38 @@ void main() {
     expect(app.chat.rows, isEmpty);
     expect(http.calls.last.path, '/api/sessions');
   });
+
+  test('uploadFile:超上限直接拒(零请求);未超走 isolate 分片编码单请求(审计 #9)', () async {
+    final myHttp = FakeHttp();
+    final socket2 = ZSocket(
+      uri: Uri.parse('ws://h:5190'),
+      token: 'tk',
+      backoffBase: const Duration(milliseconds: 5),
+      factory: (_) async => channel = FakeChannel(),
+    );
+    final app2 = ZApp(
+      api: ZApi(baseUrl: 'http://h:5190', token: 'tk', http: myHttp.fn),
+      socket: socket2,
+      maxUploadBytes: 8,
+    );
+    myHttp.responder = (c) => switch (c.path) {
+          '/api/models' => ['default'],
+          '/api/sessions' => <Map>[],
+          String p when p.endsWith('/files') => {'path': '/computer/pf/${(c.body as Map)['fileName']}'},
+          _ => {'messages': <Map>[], 'total': 0},
+        };
+    await app2.bootstrap();
+    await app2.openSession('s1');
+    // 超上限:不读不编码,更不发请求
+    await expectLater(app2.uploadFile('big.bin', List<int>.filled(9, 1)), throwsA(isA<Exception>()));
+    expect(myHttp.calls.where((c) => c.path.endsWith('/files')), isEmpty);
+    // 未超上限:分片 compute 编码 → 一次 /files,dataB64 与原字节一致
+    final bytes = List<int>.generate(6, (i) => i * 3 + 1);
+    final r = await app2.uploadFile('ok.bin', bytes);
+    expect(r.path, '/computer/pf/ok.bin');
+    final call = myHttp.calls.singleWhere((c) => c.path.endsWith('/files'));
+    expect((call.body as Map)['fileName'], 'ok.bin');
+    expect((call.body as Map)['dataB64'], base64Encode(bytes));
+    app2.dispose();
+  });
 }

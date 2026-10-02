@@ -82,6 +82,38 @@ describe('SessionRuntime', () => {
     expect(runtime.currentProviderSessionId()).toBe('prov-new');
   });
 
+  it('resume 丢失错误从 result 消息路径到达(非异常)→ 同款降级,不甩裸英文', async () => {
+    const { events, emit } = collector();
+    const calls: Record<string, unknown>[] = [];
+    let attempt = 0;
+    const queryFn: QueryFn = ({ options }) => {
+      calls.push(options as Record<string, unknown>);
+      const n = ++attempt;
+      return (async function* () {
+        if (n === 1) {
+          // CLI 某些版本把该错误作为 result 消息吐出(迭代器不抛异常)
+          yield {
+            type: 'result', subtype: 'error_during_execution', session_id: 'prov-old',
+            errors: ['No conversation found with session ID: prov-old'],
+          };
+          return;
+        }
+        yield { type: 'system', subtype: 'init', session_id: 'prov-new' };
+        yield {
+          type: 'result', subtype: 'success', session_id: 'prov-new',
+          usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, duration_ms: 1,
+        };
+      })();
+    };
+    const runtime = new SessionRuntime({ ...base, appSessionId: 'a1', providerSessionId: 'prov-old', emit, queryFn });
+    await runtime.send('继续');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].resume).toBeUndefined(); // 降级后不再 resume
+    expect(events.map((e) => e.kind)).toEqual(['error', 'session_created', 'usage', 'complete']);
+    expect((events[0] as { content: string }).content).toContain('已丢失'); // 用户看到的是友好提示
+    expect(runtime.currentProviderSessionId()).toBe('prov-new');
+  });
+
   it('非 resume 场景出现同款报错不降级(防误伤、防循环)', async () => {
     const { events, emit } = collector();
     let calls = 0;

@@ -143,6 +143,9 @@ export function createZStore(deps: {
   let socket: SocketLike;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let dirtyTimer: ReturnType<typeof setTimeout> | undefined;
+  // 打开会话的代际令牌:快速切会话 A→B 时,A 迟回的响应/失败不得覆盖 B 的状态
+  // (对齐 app zapp.dart 的 _openToken;README 声称的「切会话作废旧请求」此前只有 app 实现)。
+  let openSeq = 0;
 
   // 睡眠唤醒/切回标签页时跳过剩余退避立即重连;poke 内部自判状态,连接正常时是空操作。
   const onVisible = (): void => { if (document.visibilityState === 'visible') socket?.poke(); };
@@ -289,11 +292,13 @@ export function createZStore(deps: {
       async openSession(id) {
         // 同会话重开保留待审批卡:审批不落库,REST 重建不出来;丢了没人能批,会话卡死。
         const keepPermission = get().currentSessionId === id ? get().chat.pendingPermission : undefined;
+        const token = ++openSeq; // 代际令牌:期间切走的话,这次响应/失败整体作废
         set({ currentSessionId: id, chat: emptyChat(), historyLoading: true, loadingOlder: false, error: null });
         try {
           // 首屏只拉最近一页(100 条,对齐 Flutter lazy-history):打开会话永远只花一次请求的时间,
           // 更旧的历史点「加载更早」按需取。早先 500 条全量正是大会话白屏/定位不准的成因。
           const hist = await api.messages(id, kFirstPageSize);
+          if (token !== openSeq) return; // 期间已切走:A 的迟到响应不得覆盖 B 的状态
           const events: Record<string, unknown>[] = [];
           let maxSeq = 0;
           for (const row of hist.messages) {
@@ -310,9 +315,11 @@ export function createZStore(deps: {
           const seqs = hist.messages.map((r) => r.seq);
           chat = { ...chat, oldestSeq: seqs.length ? Math.min(...seqs) : 0, hasMoreOlder: hist.total > hist.messages.length };
           set({ chat, historyLoading: false });
+          if (token !== openSeq) return; // set 完又切走:订阅水位播种幂等,但别在新会话上下文里继续
           socket.seedLastSeq(id, maxSeq > chat.lastSeq ? maxSeq : chat.lastSeq);
           socket.subscribeSession(id);
         } catch (e) {
+          if (token !== openSeq) return; // 迟到的失败同样不覆盖新会话的 error/加载态
           if (isAuthError(e)) { get().logout('登录已失效,请重新登录'); return; }
           set({ historyLoading: false, error: String(e instanceof Error ? e.message : e) });
         }
@@ -322,9 +329,11 @@ export function createZStore(deps: {
         const sid = get().currentSessionId;
         const chat = get().chat;
         if (!sid || get().loadingOlder || !chat.hasMoreOlder || chat.oldestSeq <= 0) return;
+        const token = openSeq;
         set({ loadingOlder: true });
         try {
           const hist = await api.messages(sid, kFirstPageSize, chat.oldestSeq);
+          if (token !== openSeq || get().currentSessionId !== sid) return; // 期间切走:丢弃,别前插进别的会话
           const events = hist.messages
             .map(rowEvent)
             .filter((ev): ev is Record<string, unknown> => ev !== null)

@@ -1,9 +1,10 @@
-import type { Server } from 'node:http';
+import type { Server, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Db } from '../db.js';
 import { appendMessage, updateSession, maxSeq, createRun, finishRun, recordCronToolUse } from '../db.js';
 import { cronExpectCreate, cronResolveCreate, cronResolveDelete } from '../cron-links.js';
 import type { OutboundEvent, RunRegistry } from '../runs/run-registry.js';
+import { createAuthThrottle, type AuthThrottle } from '../auth-throttle.js';
 
 type RuntimeLike = {
   send(text: string, images?: string[]): Promise<void>;
@@ -26,6 +27,8 @@ export type WsGatewayDeps = {
     }): void;
   };
   runtimeFor(appSessionId: string, opts: { cwd?: string; model?: string | null; permissionMode?: string; thinking?: string }): RuntimeLike;
+  /** 鉴权失败限速器:不传则内部新建(与 REST 共用一个实例可由 index 注入) */
+  authThrottle?: AuthThrottle;
 };
 
 /** attachWsGateway 返回的句柄:供外部(上游代理)往已订阅客户端推瞬态状态。 */
@@ -38,7 +41,7 @@ export type WsGatewayHandle = {
   triggerSession(sessionId: string, prompt: string): boolean;
 };
 
-type StateWs = WebSocket & { authed?: boolean; subs?: Set<string>; alive?: boolean };
+type StateWs = WebSocket & { authed?: boolean; subs?: Set<string>; alive?: boolean; ip?: string };
 
 /** 单帧消息上限(32MB):4 张图(各 ≤5MB data URI)+ JSON 开销也够用,再大直接掐连接。 */
 const MAX_WS_FRAME = 32 * 1024 * 1024;
@@ -74,6 +77,7 @@ function broadcastDirty(wss: WebSocketServer, sessionId: string): void {
 
 export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayHandle {
   const wss = new WebSocketServer({ server, maxPayload: MAX_WS_FRAME });
+  const throttle = deps.authThrottle ?? createAuthThrottle();
   const runtimes = new Map<string, RuntimeLike>();
   let lastSend: string | null = null;
   // 每会话一条全局订阅(持久化+广播只做一次);refs = 订阅中的连接数
@@ -186,8 +190,9 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
   heartbeat.unref();
   wss.on('close', () => clearInterval(heartbeat));
 
-  wss.on('connection', (raw: WebSocket) => {
+  wss.on('connection', (raw: WebSocket, req: IncomingMessage) => {
     const ws = raw as StateWs;
+    ws.ip = req.socket.remoteAddress ?? 'unknown';
     const subs = new Set<string>();
     ws.subs = subs;
     ws.alive = true;
@@ -199,8 +204,18 @@ export function attachWsGateway(server: Server, deps: WsGatewayDeps): WsGatewayH
       const type = data.type as string;
 
       if (type === 'auth') {
-        ws.authed = data.token === deps.token;
-        send(ws, ws.authed ? { kind: 'authenticated' } : { kind: 'error', content: 'unauthorized' });
+        // 失败按来源限速(堵无限重试爆破弱令牌);语义与 REST 一致:
+        // 进入时已被封 → 拒为「尝试过多」;触发封禁的那次仍回 unauthorized,下一次起 429。
+        const ip = ws.ip ?? 'unknown';
+        const wasBlocked = throttle.blocked(ip);
+        if (wasBlocked) {
+          ws.authed = false;
+        } else {
+          ws.authed = data.token === deps.token;
+          if (ws.authed) throttle.reset(ip);
+          else throttle.fail(ip);
+        }
+        send(ws, ws.authed ? { kind: 'authenticated' } : { kind: 'error', content: wasBlocked ? '尝试过多,请稍后再试' : 'unauthorized' });
         if (!ws.authed) ws.close();
         return;
       }

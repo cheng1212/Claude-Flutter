@@ -532,20 +532,24 @@ class _ChatPageState extends State<ChatPage> {
     }
     // 12.x: pickFiles 返回 List<PlatformFile>(非 null);逐个转 XFile
     final result = await FilePicker.pickFiles();
-    final picked = [
-      for (final pf in result) pf.xFile,
-    ];
-    if (picked.isEmpty) return;
-    for (final f in picked.take(maxFiles - _pendingFiles.value.length)) {
+    if (result.isEmpty) return;
+    for (final pf in result.take(maxFiles - _pendingFiles.value.length)) {
+      // 大小预检(lengthSync 元数据优先,缺失才落一次 IO 的 length):超限不读字节不编码,
+      // 防大视频 readAsBytes + base64 把主线程内存顶爆后 OOM/ANR(审计 #6/#9)
+      final knownLen = pf.lengthSync();
+      if ((knownLen ?? await pf.xFile.length()) > kMaxUploadBytes) {
+        if (mounted) showToast(context, '${pf.name} 超过 ${kMaxUploadBytes ~/ (1024 * 1024)}MB,未添加');
+        continue;
+      }
       try {
-        final r = await app.uploadFile(f.name, await f.readAsBytes());
+        final r = await app.uploadFile(pf.name, await pf.xFile.readAsBytes());
         if (mounted) {
           final next = [..._pendingFiles.value, r];
           _pendingFiles.value = next;
           showToast(context, '已上传: ${r.name}');
         }
       } on Object catch (e) {
-        if (mounted) showToast(context, '${f.name} 上传失败: $e');
+        if (mounted) showToast(context, '${pf.name} 上传失败: $e');
       }
     }
   }

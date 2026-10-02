@@ -82,8 +82,17 @@ export type RuntimeOptions = {
 };
 
 /**
- * 子代理模型约束决策:Agent/Task 派发且配置了强制模型 → allow 并改写 input.model
- * (updatedInput 对模型透明,它以为是自己选的);未配置/非派发工具 → null 走正常审批。
+ * Agent/Task 工具 input.model 是**枚举**,不是自由模型名。实测:往里写 `glm-5.3-flash`
+ * 这类真实 id,CLI 直接报 "PreToolUse hook for Agent returned updatedInput that failed
+ * schema validation",每次派子代理必挂。要换子代理用的模型,只能改别名槽
+ * ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL(见 routes.ts resolveModel)。
+ */
+export const SUBAGENT_MODEL_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'inherit']);
+
+/**
+ * 子代理模型约束决策:Agent/Task 派发且配置了强制模型 → allow;
+ * forcedModel 是合法别名时才改写 input.model,是真实模型 id 时**只放行不改写**
+ * (改写会让整次派发过不了 schema 校验);未配置/非派发工具 → null 走正常审批。
  */
 export function subagentModelDecision(
   toolName: string,
@@ -93,6 +102,7 @@ export function subagentModelDecision(
   if (!forcedModel) return null;
   if (toolName !== 'Agent' && toolName !== 'Task') return null;
   const inp = (input ?? {}) as Record<string, unknown>;
+  if (!SUBAGENT_MODEL_ALIASES.has(forcedModel)) return { behavior: 'allow', updatedInput: inp };
   return { behavior: 'allow', updatedInput: { ...inp, model: forcedModel } };
 }
 
@@ -276,11 +286,11 @@ export class SessionRuntime {
     }
     if (this.providerSessionId) options.resume = this.providerSessionId;
     if (this.forkPending && this.providerSessionId) options.forkSession = true;
-    // 子代理模型强制:派 Agent/Task 时把 input.model 改写成**本会话正在用的模型**。
-    // 为什么必须用 hook 而不是 canUseTool:bypassPermissions 模式下 SDK 会跳过
-    // canUseTool(官方警告 CAN_USE_TOOL_SHADOWED),只有 PreToolUse hook 仍会被调用
-    // —— 实测(probe)在 bypass 下 hook 照样触发且 updatedInput 真的改了执行内容。
-    // 这样"哪个会话派的子代理,就用哪个会话的模型",模型自己指定的贵模型会被覆盖。
+    // 子代理派发放行:bypassPermissions 下 SDK 会跳过 canUseTool(官方警告
+    // CAN_USE_TOOL_SHADOWED),只有 PreToolUse hook 仍被调用——实测(probe)成立。
+    // 注意:子代理"用哪个模型"不再由这里改写 model 字段决定(那是枚举,写真实 id 会
+    // schema 失败),而是由 resolveModel 注入的 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL
+    // 别名槽决定 —— 效果同样是"跟本会话端点一致",但不会打断派发。
     if (model) {
       options.hooks = {
         PreToolUse: [{
@@ -292,11 +302,18 @@ export class SessionRuntime {
     return options;
   }
 
-  /** PreToolUse 拦截器:把子代理派发的 model 改写成主会话模型(对模型透明)。 */
+  /** PreToolUse 拦截器:放行子代理派发;仅当会话模型本身是合法别名时才改写 model。 */
   private forceSubagentModelHook(effectiveModel: string) {
+    const canRewrite = SUBAGENT_MODEL_ALIASES.has(effectiveModel);
     return async (input: AnyRecord): Promise<AnyRecord> => {
       const toolInput = (input.tool_input ?? {}) as AnyRecord;
       const asked = typeof toolInput.model === 'string' ? toolInput.model : '';
+      // 会话模型是真实 id(go-deepseek-v4-flash / glm-5.3-flash …)时**不能**写进 model:
+      // 那是枚举字段,写进去整次派发就 schema 失败(实测:子代理每次调用必挂)。
+      // 这种情况只放行,子代理用哪个模型由 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL 决定。
+      if (!canRewrite) {
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
+      }
       if (asked === effectiveModel) return {}; // 本来就一致:不插手
       // 只在服务端留痕,不往对话里插消息(每派一次子代理就插一条会吵)。
       // 子代理实际用了什么模型,面板从转录采样显示,可复查。
@@ -456,6 +473,15 @@ export class SessionRuntime {
             }
             const events = transformMessage(raw);
             for (const event of events) {
+              // resume 丢失的错误除"迭代器抛异常"外,还会以 result 消息(非异常)路径到达:
+              // transform 映射为 error 事件原样甩给用户、complete 正常收尾,降级永远不触发。
+              // 与 catch 路径同款拦截:signal 外层降级重开,本次剩余事件(含 complete)作废。
+              if (event.kind === 'error'
+                && isLostConversationError(String(event.content ?? ''))
+                && this.providerSessionId && !this.retryPending) {
+                this.retryPending = true;
+                return; // finally:release + finishTurn;runTurnExclusive 见 retryPending 降级重开
+              }
               if (event.kind === 'tool_use') this.openTools.add(event.toolId);
               else if (event.kind === 'tool_result') this.openTools.delete(event.toolId);
               // 记下真实上下文占用(每次 API 请求的 prompt 大小),回合末随 usage 落库
