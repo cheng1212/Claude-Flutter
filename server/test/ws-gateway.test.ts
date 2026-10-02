@@ -6,6 +6,7 @@ import { attachWsGateway } from '../src/gateway/ws-gateway.js';
 import { RunRegistry } from '../src/runs/run-registry.js';
 import { openDb, createSession, updateSession } from '../src/db.js';
 import { SessionRuntime, type QueryFn } from '../src/protocol/sdk-client.js';
+import { createAuthThrottle } from '../src/auth-throttle.js';
 import type { ProtocolEvent } from '../src/protocol/types.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -676,6 +677,40 @@ describe('ws gateway', () => {
 
     a.ws.close();
     b.ws.close();
+    await app.close();
+  });
+});
+
+describe('ws gateway · 鉴权失败限速', () => {
+  it('连续失败到阈值后,后续 auth(连对的 token)一律 尝试过多', async () => {
+    const app = await buildApp({ token: 't' });
+    attachWsGateway(app.server, {
+      db: openDb(':memory:'),
+      token: 't',
+      registry: new RunRegistry(),
+      authThrottle: createAuthThrottle({ maxFails: 2 }),
+      runtimeFor(sessionId: string) {
+        throw new Error('限速测试不需要 runtime');
+      },
+    });
+    const port = await listen(app);
+    const failOnce = async () => {
+      const c = await wsConnect(port);
+      c.ws.send(JSON.stringify({ type: 'auth', token: 'bad' }));
+      expect(await c.nextAny()).toMatchObject({ kind: 'error', content: 'unauthorized' });
+      await new Promise<void>((resolve) => c.ws.on('close', () => resolve()));
+    };
+    await failOnce();
+    await failOnce(); // 到阈值(maxFails=2)
+    const third = await wsConnect(port);
+    third.ws.send(JSON.stringify({ type: 'auth', token: 'bad' }));
+    expect(await third.nextAny()).toMatchObject({ kind: 'error', content: '尝试过多,请稍后再试' });
+    await new Promise<void>((resolve) => third.ws.on('close', () => resolve()));
+    // 封禁期内对的 token 也拒
+    const fourth = await wsConnect(port);
+    fourth.ws.send(JSON.stringify({ type: 'auth', token: 't' }));
+    expect(await fourth.nextAny()).toMatchObject({ kind: 'error', content: '尝试过多,请稍后再试' });
+    await new Promise<void>((resolve) => fourth.ws.on('close', () => resolve()));
     await app.close();
   });
 });

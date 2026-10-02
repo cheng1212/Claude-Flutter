@@ -250,7 +250,9 @@ export function registerHttpRoutes(app: FastifyInstance, deps: { db: Db; routesP
   // 文件上传(手机 → 电脑):存到会话 cwd 的 uploads/ 子目录,CLI 直接读本地文件。
   // body 为 JSON {fileName, dataB64}(base64,跨平台传输层友好);
   // 会话无 cwd 时自动创建 uploads-<sid8> 工作目录并回填会话(手机新建的会话 cwd 为 null)。
-  app.post('/api/sessions/:id/files', async (req, reply) => {
+  // bodyLimit 必须显式抬:Fastify 默认 1MiB,50MB 文件的 base64(≈67MB)会被 413 拒掉,
+  // "整文件直传"实际只剩 <750KB 能用(审计外顺手发现的隐患)。
+  app.post('/api/sessions/:id/files', { bodyLimit: 72 * 1024 * 1024 }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const session = deps.db
       .prepare('SELECT cwd FROM sessions WHERE id=?')

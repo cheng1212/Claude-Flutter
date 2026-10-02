@@ -23,6 +23,11 @@ export function defaultDataDir(): string {
   return process.env.ZCODE_DATA_DIR ?? path.join(os.homedir(), '.zcode-server');
 }
 
+/** 弱令牌判定:知名弱口令,或长度不足 24(随机串 128bit 熵不到)。只用于告警/health 暴露,不改放行逻辑。 */
+export function isWeakToken(token: string): boolean {
+  return token === '123456' || token.length < 24;
+}
+
 export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   fs.mkdirSync(dataDir, { recursive: true });
   // 静态分发目录(/download/*):放 APK 等给手机直接下载的文件,免鉴权
@@ -44,6 +49,14 @@ export function loadOrCreateConfig(dataDir = defaultDataDir()): ServerConfig {
   const token = process.env.ZCODE_TOKEN ?? (stored.token || randomBytes(18).toString('base64url'));
   if (stored.token !== token) {
     fs.writeFileSync(file, JSON.stringify({ token }, null, 2));
+  }
+  // 弱令牌启动告警:功能不动(用户 2026-09-08 明确要求的局域网自用设计),
+  // 但 0.0.0.0 + 弱令牌 = 局域网内任何设备可驱动 CLI 执行任意命令,至少要让主人知道在裸奔。
+  if (isWeakToken(token)) {
+    console.warn(
+      '[zcode-server] ⚠️ 正在以弱令牌运行:0.0.0.0 监听下,局域网内任何设备都可能凭它驱动 CLI 执行任意命令。\n' +
+      '[zcode-server]    换强令牌:设 ZCODE_TOKEN 环境变量,或删除配置文件里的 token 字段后重启(会自动生成强令牌)。',
+    );
   }
   return {
     token,

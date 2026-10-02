@@ -186,6 +186,7 @@ let shuttingDown = false;
 const shutdown = (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  cronScheduler.stop(); // 停调度器必须在停机路径上:曾误放模块顶层,30s 定时任务启动即被停、永不自动触发
   const live = [...runtimes.entries()].filter(([id]) => registry.isRunning(id));
   console.log(`[zcode-server] ${signal}: aborting ${live.length} running session(s)...`);
   for (const [, rt] of live) void rt.abort().catch(() => {});
@@ -227,6 +228,5 @@ async function restartSelf(): Promise<void> {
   }
   setTimeout(() => process.exit(0), 300).unref();
 }
-cronScheduler.stop();
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

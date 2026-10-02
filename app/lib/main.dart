@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
@@ -14,6 +15,39 @@ import 'ui/login_page.dart';
 import 'notify.dart';
 import 'ui/app_shell.dart';
 import 'ws.dart';
+
+const String _kBase = 'zcode.baseUrl';
+const String _kToken = 'zcode.token';
+const String _kTokenKey = 'zcode.token';
+/// 令牌走系统安全存储(Android Keystore 加密):shared_preferences 是明文 XML,
+/// root/备份/文件泄露即丢令牌(审计 #6)。
+const FlutterSecureStorage _tokenStore = FlutterSecureStorage();
+
+/// 读令牌:安全存储优先;空则查 prefs 旧值并**迁移**(搬进安全存储、抹掉明文副本)。
+Future<String?> readStoredToken() async {
+  try {
+    final v = await _tokenStore.read(key: _kTokenKey);
+    if (v != null && v.isNotEmpty) return v;
+  } on Object {
+    // 安全存储不可用(个别模拟器/桌面测试环境):退化读 prefs
+  }
+  try {
+    final p = await SharedPreferences.getInstance();
+    final legacy = p.getString(_kToken);
+    if (legacy != null && legacy.isNotEmpty) {
+      try {
+        await _tokenStore.write(key: _kTokenKey, value: legacy);
+        await p.remove(_kToken); // 明文副本抹掉
+      } on Object {
+        // 迁移失败不影响本次登录:下次启动再搬
+      }
+      return legacy;
+    }
+  } on Object {
+    // prefs 也不可用:当没存过处理
+  }
+  return null;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,8 +67,6 @@ class ZCodeApp extends StatefulWidget {
 final zcodeNavigatorKey = GlobalKey<NavigatorState>();
 
 class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
-  static const _kBase = 'zcode.baseUrl';
-  static const _kToken = 'zcode.token';
 
   ZApp? _app;
   String? _baseUrl;
@@ -70,7 +102,7 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
     final base = p.getString(_kBase);
-    final token = p.getString(_kToken);
+    final token = await readStoredToken();
     unawaited(ZThemeController.load()); // 主题独立加载,不阻塞连接配置
     unawaited(NotifyPrefs.load()); // 通知开关与提醒方式同上
     if (base != null && base.isNotEmpty && token != null && token.isNotEmpty) {
@@ -82,8 +114,9 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
   void _wire(String base, String token) {
     _app?.dispose();
     final app = ZApp(
-      api: ZApi(baseUrl: base, token: token),
-      socket: ZSocket(uri: ZApp.wsUriOf(base), token: token),
+      api: ZApi(baseUrl: base, token: token, onUnauthorized: _onAuthExpired),
+      socket: ZSocket(uri: ZApp.wsUriOf(base), token: token, onUnauthorized: _onAuthExpired),
+      onUnauthorized: _onAuthExpired,
     );
     // 通知点击 → 直达对应会话(通知 payload 带会话 id)
     Notify.onTap = (sessionId) {
@@ -124,15 +157,43 @@ class _ZCodeAppState extends State<ZCodeApp> with WidgetsBindingObserver {
     await probe.close();
     final p = await SharedPreferences.getInstance();
     await p.setString(_kBase, base);
-    await p.setString(_kToken, token);
+    try {
+      await _tokenStore.write(key: _kTokenKey, value: token);
+    } on Object {
+      // 安全存储写不进(个别环境):令牌只留内存,本次会话可用,下次要重登
+    }
     if (mounted) setState(() => _connecting = false);
     _wire(base, token);
+  }
+
+  /// 令牌失效(REST 401 / WS unauthorized):清令牌回登录页,不再 WS 无限重连、
+  /// 页面反复弹同一个错(审计 #5)。保留 baseUrl,重登只需补 token。
+  Future<void> _onAuthExpired() async {
+    if (_app == null) return; // 并发 401 只处理一次
+    try {
+      await _tokenStore.delete(key: _kTokenKey);
+    } on Object {
+      // 清不掉也要回登录页:下次登录覆盖
+    }
+    _app?.dispose();
+    if (mounted) {
+      setState(() {
+        _app = null;
+        _token = null;
+        _loginError = '令牌已失效,请重新登录';
+      });
+    }
   }
 
   Future<void> _logout() async {
     final p = await SharedPreferences.getInstance();
     await p.remove(_kBase);
     await p.remove(_kToken);
+    try {
+      await _tokenStore.delete(key: _kTokenKey);
+    } on Object {
+      // 同上:清不掉不阻塞登出
+    }
     _app?.dispose();
     setState(() {
       _app = null;

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_app/api.dart';
+import 'package:zcode_app/http_default.dart';
 import 'package:zcode_app/ws.dart';
 
 // ---------------------------------------------------------------- api 假件
@@ -213,6 +215,53 @@ void main() {
     await sub.cancel();
     await s.close();
   });
+
+  group('审计 #5 · 令牌失效链路', () {
+    test('REST 401 → ZApiException.kind=auth(此前全落 server,重登引导永不触发)', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() async => server.close(force: true));
+      server.listen((req) async {
+        req.response.statusCode = 401;
+        req.response.write('unauthorized');
+        await req.response.close();
+      });
+      final fn = platformHttp(baseUrl: 'http://127.0.0.1:${server.port}', token: 'x');
+      await expectLater(
+        fn('GET', '/api/sessions', null),
+        throwsA(isA<ZApiException>()
+            .having((e) => e.kind, 'kind', ApiErrorKind.auth)
+            .having((e) => e.status, 'status', 401)),
+      );
+    });
+
+    test('auth 类错误触发 onUnauthorized;非 auth 类不触发', () async {
+      final fake = FakeHttp();
+      var fired = 0;
+      final api = ZApi(baseUrl: 'http://h:5190', token: 'tk', http: fake.fn, onUnauthorized: () => fired++);
+      fake.responder = (c) => const ZApiException('unauthorized', status: 401, kind: ApiErrorKind.auth);
+      await expectLater(api.sessions(), throwsA(isA<ZApiException>()));
+      expect(fired, 1);
+      fake.responder = (c) => const ZApiException('boom', status: 500);
+      await expectLater(api.sessions(), throwsA(isA<ZApiException>()));
+      expect(fired, 1); // 5xx 不算令牌失效
+    });
+
+    test('WS 服务器明确回 unauthorized → onUnauthorized 触发', () async {
+      var fired = 0;
+      final ctrl = StreamController<Map<String, dynamic>>.broadcast();
+      final s = ZSocket(
+        uri: Uri.parse('ws://h:5190'),
+        token: 'bad',
+        backoffBase: const Duration(milliseconds: 5),
+        onUnauthorized: () => fired++,
+        factory: (_) async => _DenyChannel(ctrl),
+      );
+      await expectLater(s.connect(), throwsA(isA<ZSocketException>()));
+      expect(fired, 1); // 令牌失效信号发出,宿主据此自动登出
+      await ctrl.close();
+      await s.close();
+    });
+  });
 }
 
 Future<void> pump([Duration d = const Duration(milliseconds: 2)]) => Future.delayed(d);
@@ -248,4 +297,24 @@ class FakeChannel implements ZChannel {
   Future<void> close() async {
     serverClose();
   }
+}
+
+/// auth 永远回 unauthorized 的假通道:验证「令牌失效」识别与回调。
+class _DenyChannel implements ZChannel {
+  _DenyChannel(this._ctrl);
+  final StreamController<Map<String, dynamic>> _ctrl;
+  final sent = <Map>[];
+
+  @override
+  Stream<Map<String, dynamic>> get messages => _ctrl.stream;
+
+  @override
+  void send(Object? data) {
+    final m = data! as Map;
+    sent.add(m);
+    if (m['type'] == 'auth') _ctrl.add({'kind': 'error', 'content': 'unauthorized'});
+  }
+
+  @override
+  Future<void> close() async {}
 }

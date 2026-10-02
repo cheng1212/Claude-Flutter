@@ -262,3 +262,57 @@ describe('createZStore', () => {
     expect(store.getState().wsState).toBe('open');
   });
 });
+
+describe('openSession 代际令牌(web 端补齐,对齐 app _openToken)', () => {
+  test('切会话后,旧会话迟回的响应不覆盖新会话;订阅也不落在旧 id 上', async () => {
+    vi.useRealTimers();
+    const { api, socket, store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    const gate: { release: (() => void) | null } = { release: null };
+    api.messages = vi.fn(async (id: string) => {
+      if (id === 'slow') {
+        await new Promise<void>((r) => { gate.release = r; });
+        return {
+          total: 1,
+          messages: [{ id: 'm1', sessionId: 'slow', seq: 5, kind: 'text', role: 'assistant', content: '迟到的A', meta: JSON.stringify({ kind: 'text', seq: 5, role: 'assistant', content: '迟到的A' }), createdAt: '' }],
+        };
+      }
+      return { total: 0, messages: [] };
+    });
+    const pA = store.getState().openSession('slow');
+    await Promise.resolve();
+    expect(store.getState().historyLoading).toBe(true);
+    await store.getState().openSession('s1'); // 切到 B,立即完成
+    expect(store.getState().currentSessionId).toBe('s1');
+    expect(store.getState().historyLoading).toBe(false);
+    gate.release?.();
+    await pA;
+    const st = store.getState();
+    expect(st.currentSessionId).toBe('s1');
+    expect(st.chat.rows).toHaveLength(0); // A 的迟到行没进 B
+    expect(st.error).toBeNull();
+    expect(socket.subscribeSession).not.toHaveBeenCalledWith('slow');
+  });
+
+  test('切会话后,旧会话迟回的失败也不覆盖新会话的 error', async () => {
+    vi.useRealTimers();
+    const { api, store } = setup();
+    await store.getState().login('http://x:5190', 'tk');
+    const gate: { release: (() => void) | null } = { release: null };
+    api.messages = vi.fn(async (id: string) => {
+      if (id === 'slow') {
+        await new Promise<void>((r) => { gate.release = r; });
+        throw new Error('A 挂了');
+      }
+      return { total: 0, messages: [] };
+    });
+    const pA = store.getState().openSession('slow');
+    await Promise.resolve();
+    await store.getState().openSession('s1');
+    gate.release?.();
+    await pA;
+    expect(store.getState().currentSessionId).toBe('s1');
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().historyLoading).toBe(false);
+  });
+});

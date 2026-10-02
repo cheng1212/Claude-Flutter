@@ -18,8 +18,11 @@ HttpFn platformHttp({required String baseUrl, required String token}) {
           .timeout(const Duration(seconds: 20));
       if (res.statusCode >= 300) {
         throw ZApiException(
-            res.body.isEmpty ? (res.reasonPhrase ?? 'error') : res.body,
-            status: res.statusCode);
+          res.body.isEmpty ? (res.reasonPhrase ?? 'error') : res.body,
+          status: res.statusCode,
+          // 401 = 令牌失效:此前全落 server,「令牌失效请重新登录」文案与自动登出永不触发(审计 #5)
+          kind: res.statusCode == 401 ? ApiErrorKind.auth : ApiErrorKind.server,
+        );
       }
       return res.body.isEmpty ? null : jsonDecode(res.body);
     } on TimeoutException {
