@@ -4,6 +4,15 @@ import { memo, useState } from 'react';
 import type { ChatRow, ErrorRow, TextRow, ThinkingRow, UserRow } from '../lib/chatState';
 import { ToolCard } from './ToolCard';
 
+/** 链接协议白名单:v9 默认已拦 javascript: 等,这里显式收得更紧(仅 http/https/mailto + 相对路径),
+ *  CLI 输出是不可信文本 —— 会话里一条 `[点我](javascript:…)` 不该成为可点的 XSS 载体。 */
+export function safeUrlTransform(uri: string): string {
+  if (/^(https?:|mailto:)/i.test(uri)) return uri;
+  // 相对路径(无 scheme)放行;解析出协议但不在白名单 → 一律拆掉 href
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(uri)) return '';
+  return uri;
+}
+
 /** 本地时刻 → HH:mm(历史消息无 createdAt 就不显示,与 Flutter 行为一致)。 */
 function hhmm(iso?: string): string {
   if (!iso) return '';
@@ -33,7 +42,7 @@ export function AssistantBlock({ row }: { row: TextRow }) {
   const t = hhmm(row.createdAt);
   return (
     <div className="md md--assistant">
-      <Markdown remarkPlugins={[remarkGfm]}>{row.content}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} urlTransform={safeUrlTransform}>{row.content}</Markdown>
       {t ? <span className="row-time mono">{t}</span> : null}
     </div>
   );
